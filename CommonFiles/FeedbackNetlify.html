@@ -137,11 +137,6 @@
             const submitBtn = document.getElementById('submitBtn');
             if (!form) return;
 
-            const encode = (data) =>
-                Object.keys(data)
-                    .map((key) => encodeURIComponent(key) + '=' + encodeURIComponent(data[key]))
-                    .join('&');
-
             form.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 status.classList.remove('hidden');
@@ -149,20 +144,26 @@
                 submitBtn.disabled = true;
 
                 const formData = new FormData(form);
-                const payload = {};
+                const body = new URLSearchParams();
                 formData.forEach((value, key) => {
-                    payload[key] = value;
+                    body.append(key, value);
                 });
+                // Ensure form-name is present even if DOM changes
+                if (!body.get('form-name')) {
+                    body.append('form-name', form.getAttribute('name') || 'lesson-feedback');
+                }
 
                 try {
-                    const res = await fetch('/', {
+                    const endpoint = form.getAttribute('action') || '/';
+                    const res = await fetch(endpoint, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                        body: encode(payload),
+                        body: body.toString(),
                     });
 
                     if (res.ok) {
                         status.textContent = 'Thanks! Your feedback was sent successfully.';
+                        submitBtn.disabled = false;
                         form.reset();
                     } else {
                         throw new Error('Network response was not ok');
