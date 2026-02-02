@@ -94,7 +94,7 @@
         <div id="lessonChip" class="lesson-chip">Lesson</div>
         <p class="note">This form sends directly to Netlify for secure delivery.</p>
 
-        <form id="feedbackForm" name="lesson-feedback" method="POST" data-netlify="true" netlify-honeypot="bot-field">
+        <form id="feedbackForm" name="lesson-feedback" method="POST" action="/" data-netlify="true" netlify-honeypot="bot-field">
             <input type="hidden" name="form-name" value="lesson-feedback">
             <input type="hidden" name="lesson" id="lessonField" value="Unknown">
             <p class="hidden">
@@ -157,7 +157,10 @@
                     const endpoint = form.getAttribute('action') || '/';
                     const res = await fetch(endpoint, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        headers: { 
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                            'Accept': 'application/json'
+                        },
                         body: body.toString(),
                     });
 
