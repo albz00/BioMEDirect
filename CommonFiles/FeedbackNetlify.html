@@ -118,6 +118,7 @@
             <p id="statusMessage" class="note hidden"></p>
         </form>
     </div>
+    <iframe name="netlify-target" class="hidden" title="Netlify submission frame"></iframe>
 
     <script>
         // Populate lesson name from query string so we know which page sent the feedback
@@ -162,19 +163,29 @@
                             'Accept': 'application/json'
                         },
                         body: body.toString(),
+                        mode: 'cors',
                     });
 
-                    if (res.ok) {
+                    if (res.ok || res.type === 'opaque') {
                         status.textContent = 'Thanks! Your feedback was sent successfully.';
                         submitBtn.disabled = false;
                         form.reset();
-                    } else {
-                        throw new Error('Network response was not ok');
+                        return;
                     }
+                    throw new Error('Network response was not ok');
                 } catch (err) {
                     console.error(err);
-                    status.textContent = 'Sorry, something went wrong. Please try again.';
-                    submitBtn.disabled = false;
+                    status.textContent = 'Network uncertain—trying fallback...';
+                    try {
+                        form.target = 'netlify-target';
+                        form.submit();
+                        status.textContent = 'Sent! (fallback submission)';
+                    } catch (innerErr) {
+                        console.error(innerErr);
+                        status.textContent = 'Sorry, something went wrong. Please try again.';
+                    } finally {
+                        submitBtn.disabled = false;
+                    }
                 }
             });
         })();
