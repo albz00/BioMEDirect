@@ -131,24 +131,55 @@
             hiddenLesson.value = lesson;
         })();
 
-        // Submit via normal form post to hidden iframe (no redirect) and show status
+        // Submit via fetch + iframe fallback (no redirect) with console logging
         (function wireForm() {
             const form = document.getElementById('feedbackForm');
             const status = document.getElementById('statusMessage');
             const submitBtn = document.getElementById('submitBtn');
             if (!form) return;
 
-            form.addEventListener('submit', () => {
+            console.log('[Feedback] handler attached');
+
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
                 status.classList.remove('hidden');
                 status.textContent = 'Sending...';
                 submitBtn.disabled = true;
-                console.log('[Feedback] posting lesson-feedback to Netlify via form submit');
+                console.log('[Feedback] posting lesson-feedback to Netlify via fetch + iframe fallback');
 
-                // Re-enable after a short delay with confirmation hint
-                setTimeout(() => {
+                const formData = new FormData(form);
+                const body = new URLSearchParams();
+                formData.forEach((value, key) => body.append(key, value));
+                if (!body.get('form-name')) {
+                    body.append('form-name', form.getAttribute('name') || 'lesson-feedback');
+                }
+
+                try {
+                    const endpoint = form.getAttribute('action') || '/';
+                    const res = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                            'Accept': 'application/json'
+                        },
+                        body: body.toString(),
+                        mode: 'cors',
+                    });
+                    console.log('[Feedback] fetch response', res.type, res.status);
+                } catch (err) {
+                    console.error('[Feedback] fetch error', err);
+                }
+
+                // Always submit the form to the hidden iframe so Netlify ingests it
+                try {
+                    form.submit();
                     status.textContent = 'Submitted! Check Netlify form “lesson-feedback”.';
+                } catch (err) {
+                    console.error('[Feedback] iframe submit error', err);
+                    status.textContent = 'Submit failed. Please try again.';
+                } finally {
                     submitBtn.disabled = false;
-                }, 1500);
+                }
             });
         })();
     </script>
