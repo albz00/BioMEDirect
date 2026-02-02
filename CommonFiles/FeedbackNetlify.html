@@ -94,7 +94,7 @@
         <div id="lessonChip" class="lesson-chip">Lesson</div>
         <p class="note">This form sends directly to Netlify for secure delivery.</p>
 
-        <form id="feedbackForm" name="lesson-feedback" method="POST" action="/" data-netlify="true" netlify-honeypot="bot-field">
+        <form id="feedbackForm" name="lesson-feedback" method="POST" action="/" target="netlify-target" data-netlify="true" netlify-honeypot="bot-field">
             <input type="hidden" name="form-name" value="lesson-feedback">
             <input type="hidden" name="lesson" id="lessonField" value="Unknown">
             <p class="hidden">
@@ -131,62 +131,24 @@
             hiddenLesson.value = lesson;
         })();
 
-        // Submit via fetch to avoid Netlify default redirect
+        // Submit via normal form post to hidden iframe (no redirect) and show status
         (function wireForm() {
             const form = document.getElementById('feedbackForm');
             const status = document.getElementById('statusMessage');
             const submitBtn = document.getElementById('submitBtn');
             if (!form) return;
 
-            form.addEventListener('submit', async (e) => {
-                e.preventDefault();
+            form.addEventListener('submit', () => {
                 status.classList.remove('hidden');
                 status.textContent = 'Sending...';
                 submitBtn.disabled = true;
+                console.log('[Feedback] posting lesson-feedback to Netlify via form submit');
 
-                const formData = new FormData(form);
-                const body = new URLSearchParams();
-                formData.forEach((value, key) => {
-                    body.append(key, value);
-                });
-                // Ensure form-name is present even if DOM changes
-                if (!body.get('form-name')) {
-                    body.append('form-name', form.getAttribute('name') || 'lesson-feedback');
-                }
-
-                try {
-                    const endpoint = form.getAttribute('action') || '/';
-                    const res = await fetch(endpoint, {
-                        method: 'POST',
-                        headers: { 
-                            'Content-Type': 'application/x-www-form-urlencoded',
-                            'Accept': 'application/json'
-                        },
-                        body: body.toString(),
-                        mode: 'cors',
-                    });
-
-                    if (res.ok || res.type === 'opaque') {
-                        status.textContent = 'Thanks! Your feedback was sent successfully.';
-                        submitBtn.disabled = false;
-                        form.reset();
-                        return;
-                    }
-                    throw new Error('Network response was not ok');
-                } catch (err) {
-                    console.error(err);
-                    status.textContent = 'Network uncertain—trying fallback...';
-                    try {
-                        form.target = 'netlify-target';
-                        form.submit();
-                        status.textContent = 'Sent! (fallback submission)';
-                    } catch (innerErr) {
-                        console.error(innerErr);
-                        status.textContent = 'Sorry, something went wrong. Please try again.';
-                    } finally {
-                        submitBtn.disabled = false;
-                    }
-                }
+                // Re-enable after a short delay with confirmation hint
+                setTimeout(() => {
+                    status.textContent = 'Submitted! Check Netlify form “lesson-feedback”.';
+                    submitBtn.disabled = false;
+                }, 1500);
             });
         })();
     </script>
