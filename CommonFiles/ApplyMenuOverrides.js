@@ -24,6 +24,8 @@
             const sections = [];
             const lessons = [];
 
+            console.log('[MenuOverrides] Initializing overrides...');
+
             sectionLists.forEach(sectionEl => {
                 const header = sectionEl.querySelector('h1');
                 const originalSection = header ? header.textContent.trim() : 'Uncategorized';
@@ -41,14 +43,10 @@
                     const match = onclick.match(/window\.location\.href=['"]([^'"]+)['"]/);
                     if (!match) return;
 
-                    let path = match[1];
-                    // Normalize to TextT or TextX root, depending on current folder
-                    // CentralMenuT/X are in TextT/TextX respectively, so paths are relative.
-                    if (!path.startsWith('TextT/') && !path.startsWith('TextX/')) {
-                        // Prepend current folder (TextT or TextX)
-                        const basePrefix = window.location.pathname.includes('/TextX/') ? 'TextX/' : 'TextT/';
-                        path = basePrefix + path;
-                    }
+                    // Use the original relative path exactly as declared in the onclick.
+                    // CentralMenuT/X live under TextT/TextX, and the lesson paths are already
+                    // correctly relative from there (e.g., 'LessonsT/...', 'LessonsX/...').
+                    const path = match[1];
 
                     const originalName = button.textContent.trim();
                     lessons.push({
@@ -61,6 +59,7 @@
             });
 
             if (sections.length === 0 && lessons.length === 0) {
+                console.log('[MenuOverrides] No sections or lessons detected in DOM.');
                 return;
             }
 
@@ -78,6 +77,7 @@
             sections.forEach(sec => {
                 const override = sectionOverrides[sec.originalSection];
                 if (override) {
+                    console.log('[MenuOverrides] Applying section override', sec.originalSection, '->', override);
                     sec.headerEl.textContent = override;
                 }
             });
@@ -118,6 +118,7 @@
                 if (!lessonId) return;
                 const meta = lessonMetaById[lessonId];
                 if (meta && meta.displayName) {
+                    console.log('[MenuOverrides] Applying lesson override', lessonId, '->', meta.displayName);
                     lesson.buttonEl.textContent = meta.displayName;
                 }
             });
