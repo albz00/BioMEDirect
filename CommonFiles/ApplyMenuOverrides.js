@@ -9,14 +9,23 @@
         return;
     }
 
-    // Initialize Firestore (compat)
-    const db = firebase.firestore ? firebase.firestore() : null;
-    if (!db) {
-        console.warn('Firestore not available for menu overrides.');
-        return;
-    }
-
     document.addEventListener('DOMContentLoaded', async () => {
+        // Ensure a default app exists before trying to use Firestore
+        let db;
+        try {
+            // Throws if no default app
+            firebase.app();
+            db = firebase.firestore ? firebase.firestore() : null;
+        } catch (e) {
+            console.warn('Firebase app not initialized for menu overrides.', e);
+            return;
+        }
+
+        if (!db) {
+            console.warn('Firestore not available for menu overrides.');
+            return;
+        }
+
         try {
             // Collect all sections and lesson entries from the current menu DOM
             const sectionLists = document.querySelectorAll('ul.menuLists');
