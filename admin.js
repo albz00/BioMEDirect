@@ -681,9 +681,9 @@ async function saveLessonMetadata(lessonId) {
     const newSection = sectionInput.value.trim();
     const newName = nameInput.value.trim();
 
-    // Determine what actually changed
-    const hasLessonNameChange = newName && newName !== lesson.originalName;
-    const hasSectionNameChange = newSection && newSection !== lesson.originalSection;
+    // Determine what actually changed relative to current effective values
+    const hasLessonNameChange = newName !== lesson.name;
+    const hasSectionNameChange = newSection !== lesson.section;
 
     // If nothing changed, skip write
     if (!hasLessonNameChange && !hasSectionNameChange) {
@@ -700,23 +700,47 @@ async function saveLessonMetadata(lessonId) {
 
         // Save per-lesson display name override in lessonMetadata collection
         if (hasLessonNameChange) {
-            writes.push(
-                db.collection('lessonMetadata').doc(lessonId).set(
-                    { displayName: newName },
-                    { merge: true }
-                )
-            );
+            const lessonDocRef = db.collection('lessonMetadata').doc(lessonId);
+
+            // If user set it back to original or cleared it, remove the override field
+            if (!newName || newName === lesson.originalName) {
+                writes.push(
+                    lessonDocRef.set(
+                        { displayName: firebase.firestore.FieldValue.delete() },
+                        { merge: true }
+                    )
+                );
+            } else {
+                writes.push(
+                    lessonDocRef.set(
+                        { displayName: newName },
+                        { merge: true }
+                    )
+                );
+            }
         }
 
         // Save shared section name override in sectionNames collection,
         // keyed by the ORIGINAL section name from the menu
         if (hasSectionNameChange) {
-            writes.push(
-                db.collection('sectionNames').doc(lesson.originalSection).set(
-                    { displayName: newSection },
-                    { merge: true }
-                )
-            );
+            const sectionDocRef = db.collection('sectionNames').doc(lesson.originalSection);
+
+            // If user set it back to original or cleared it, remove the override field
+            if (!newSection || newSection === lesson.originalSection) {
+                writes.push(
+                    sectionDocRef.set(
+                        { displayName: firebase.firestore.FieldValue.delete() },
+                        { merge: true }
+                    )
+                );
+            } else {
+                writes.push(
+                    sectionDocRef.set(
+                        { displayName: newSection },
+                        { merge: true }
+                    )
+                );
+            }
         }
 
         if (writes.length > 0) {
@@ -727,12 +751,21 @@ async function saveLessonMetadata(lessonId) {
         // - lesson name only for this lesson
         // - section name for all lessons that share the same original section
         if (hasLessonNameChange) {
-            lesson.name = newName;
+            if (!newName || newName === lesson.originalName) {
+                lesson.name = lesson.originalName;
+            } else {
+                lesson.name = newName;
+            }
         }
         if (hasSectionNameChange) {
+            const effectiveSectionName =
+                !newSection || newSection === lesson.originalSection
+                    ? lesson.originalSection
+                    : newSection;
+
             lessonsData.forEach(l => {
                 if (l.originalSection === lesson.originalSection) {
-                    l.section = newSection;
+                    l.section = effectiveSectionName;
                 }
             });
         }
