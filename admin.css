@@ -474,6 +474,23 @@ html {
     border-top: 1px solid rgba(2, 232, 229, 0.3);
 }
 
+.lesson-section {
+    font-size: 0.9rem;
+    color: #9BFFFF;
+    margin-bottom: 0.25rem;
+}
+
+.lesson-original {
+    font-size: 0.8rem;
+    color: #4f58c9;
+    margin-bottom: 0.25rem;
+}
+
+.lesson-original-label {
+    font-weight: 600;
+    margin-right: 0.25rem;
+}
+
 .lesson-status {
     padding: 0.25rem 0.75rem;
     border-radius: 3px;
@@ -497,6 +514,58 @@ html {
     margin-top: 0.75rem;
     padding-top: 0.75rem;
     border-top: 1px solid rgba(2, 232, 229, 0.3);
+}
+
+.lesson-metadata-edit {
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid rgba(2, 232, 229, 0.2);
+}
+
+.metadata-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.metadata-row label {
+    font-size: 0.85rem;
+    color: #02E8E5;
+    min-width: 95px;
+}
+
+.metadata-row input[type="text"] {
+    flex: 1;
+    padding: 0.35rem 0.5rem;
+    border-radius: 3px;
+    border: 1px solid #02E8E5;
+    background-color: rgba(0, 0, 0, 0.7);
+    color: #9DFFFF;
+    font-size: 0.85rem;
+}
+
+.metadata-row input[type="text"]:focus {
+    outline: none;
+    border-color: #9BFFFF;
+    box-shadow: 0 0 6px rgba(2, 232, 229, 0.4);
+}
+
+.btn-metadata-save {
+    padding: 0.4rem 0.9rem;
+    background: #007bff;
+    color: #ffffff;
+    border-radius: 3px;
+    border: 1px solid #007bff;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.btn-metadata-save:hover {
+    background: #0056b3;
+    border-color: #0056b3;
+    box-shadow: 0 0 8px rgba(0, 123, 255, 0.5);
 }
 
 .assignment-row {

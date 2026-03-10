@@ -94,7 +94,7 @@
         <div id="lessonChip" class="lesson-chip">Lesson</div>
         <p class="note">This form sends directly to Netlify for secure delivery.</p>
 
-        <form id="feedbackForm" name="lesson-feedback" method="POST" action="/" target="netlify-target" data-netlify="true" netlify-honeypot="bot-field">
+        <form id="feedbackForm" name="lesson-feedback" method="POST" action="/" target="netlify-target" data-netlify="true" netlify-honeypot="bot-field" onsubmit="return handleFeedbackSubmit(event)">
             <input type="hidden" name="form-name" value="lesson-feedback">
             <input type="hidden" name="lesson" id="lessonField" value="Unknown">
             <p class="hidden">
@@ -121,6 +121,10 @@
     <iframe name="netlify-target" class="hidden" title="Netlify submission frame"></iframe>
 
     <script>
+        window.onerror = function (msg, src, line, col, err) {
+            console.error('[Feedback] window error', msg, src, line, col, err);
+        };
+
         // Populate lesson name from query string so we know which page sent the feedback
         (function populateLesson() {
             const params = new URLSearchParams(window.location.search);
@@ -131,29 +135,31 @@
             hiddenLesson.value = lesson;
         })();
 
-        // Submit via fetch + iframe fallback (no redirect) with console logging
-        (function wireForm() {
+        // Global handler wired via onsubmit attribute to ensure execution
+        function handleFeedbackSubmit(e) {
             const form = document.getElementById('feedbackForm');
             const status = document.getElementById('statusMessage');
             const submitBtn = document.getElementById('submitBtn');
-            if (!form) return;
+            if (!form || !status || !submitBtn) {
+                console.error('[Feedback] form/status/button missing');
+                return true; // allow native submit
+            }
 
-            console.log('[Feedback] handler attached');
+            console.log('[Feedback] handler attached and running');
+            e.preventDefault();
 
-            form.addEventListener('submit', async (e) => {
-                e.preventDefault();
-                status.classList.remove('hidden');
-                status.textContent = 'Sending...';
-                submitBtn.disabled = true;
-                console.log('[Feedback] posting lesson-feedback to Netlify via fetch + iframe fallback');
+            status.classList.remove('hidden');
+            status.textContent = 'Sending...';
+            submitBtn.disabled = true;
 
-                const formData = new FormData(form);
-                const body = new URLSearchParams();
-                formData.forEach((value, key) => body.append(key, value));
-                if (!body.get('form-name')) {
-                    body.append('form-name', form.getAttribute('name') || 'lesson-feedback');
-                }
+            const formData = new FormData(form);
+            const body = new URLSearchParams();
+            formData.forEach((value, key) => body.append(key, value));
+            if (!body.get('form-name')) {
+                body.append('form-name', form.getAttribute('name') || 'lesson-feedback');
+            }
 
+            (async () => {
                 try {
                     const endpoint = form.getAttribute('action') || '/';
                     const res = await fetch(endpoint, {
@@ -168,20 +174,21 @@
                     console.log('[Feedback] fetch response', res.type, res.status);
                 } catch (err) {
                     console.error('[Feedback] fetch error', err);
-                }
-
-                // Always submit the form to the hidden iframe so Netlify ingests it
-                try {
-                    form.submit();
-                    status.textContent = 'Submitted! Check Netlify form “lesson-feedback”.';
-                } catch (err) {
-                    console.error('[Feedback] iframe submit error', err);
-                    status.textContent = 'Submit failed. Please try again.';
                 } finally {
-                    submitBtn.disabled = false;
+                    try {
+                        form.submit();
+                        status.textContent = 'Submitted! Check Netlify form “lesson-feedback”.';
+                    } catch (err) {
+                        console.error('[Feedback] iframe submit error', err);
+                        status.textContent = 'Submit failed. Please try again.';
+                    } finally {
+                        submitBtn.disabled = false;
+                    }
                 }
-            });
-        })();
+            })();
+
+            return false;
+        }
     </script>
 </body>
 </html>

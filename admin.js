@@ -358,7 +358,7 @@ function displayAvailableVideos() {
     ).join('');
 }
 
-// Parse central menu to extract lesson paths and names
+// Parse central menu to extract section names, lesson paths and names
 async function parseCentralMenu() {
     try {
         const response = await fetch('TextT/CentralMenuT.html');
@@ -372,20 +372,27 @@ async function parseCentralMenu() {
         const doc = parser.parseFromString(html, 'text/html');
         
         const lessons = [];
-        const buttons = doc.querySelectorAll('button[onclick*="window.location.href"]');
-        
-        buttons.forEach(button => {
-            const onclick = button.getAttribute('onclick');
-            const match = onclick.match(/window\.location\.href=['"]([^'"]+)['"]/);
-            if (match) {
-                let path = match[1];
-                // Paths in menu are relative to TextT/, so prepend TextT/ if not already there
-                if (!path.startsWith('TextT/')) {
-                    path = 'TextT/' + path;
+
+        // Each section is represented by a UL with class menuLists that contains an H1 title
+        const sectionLists = doc.querySelectorAll('ul.menuLists');
+        sectionLists.forEach(sectionEl => {
+            const header = sectionEl.querySelector('h1');
+            const sectionName = header ? header.textContent.trim() : 'Uncategorized';
+
+            const buttons = sectionEl.querySelectorAll('button[onclick*="window.location.href"]');
+            buttons.forEach(button => {
+                const onclick = button.getAttribute('onclick');
+                const match = onclick && onclick.match(/window\.location\.href=['"]([^'"]+)['"]/);
+                if (match) {
+                    let path = match[1];
+                    // Paths in menu are relative to TextT/, so prepend TextT/ if not already there
+                    if (!path.startsWith('TextT/')) {
+                        path = 'TextT/' + path;
+                    }
+                    const name = button.textContent.trim();
+                    lessons.push({ path, name, section: sectionName });
                 }
-                const name = button.textContent.trim();
-                lessons.push({ path, name });
-            }
+            });
         });
         
         return lessons;
@@ -442,7 +449,7 @@ async function scanLessons() {
         console.log(`Found ${menuLessons.length} lessons in menu`);
         
         // Step 2: Extract lessonIds from each HTML file
-        setStatus('Extracting lesson IDs...', 'scanning');
+        setStatus('Extracting lesson IDs and sections...', 'scanning');
         lessonsData = [];
         const extractPromises = [];
         
@@ -453,7 +460,10 @@ async function scanLessons() {
                         return {
                             path: menuLesson.path,
                             name: menuLesson.name,
-                            lessonId: lessonId
+                            lessonId: lessonId,
+                            section: menuLesson.section || 'Uncategorized',
+                            originalName: menuLesson.name,
+                            originalSection: menuLesson.section || 'Uncategorized'
                         };
                     }
                     return null;
@@ -464,8 +474,8 @@ async function scanLessons() {
         const extractedLessons = (await Promise.all(extractPromises)).filter(l => l !== null);
         console.log(`Extracted ${extractedLessons.length} lesson IDs`);
         
-        // Step 3: Check Firestore for videoPath and check video availability
-        setStatus('Checking video availability...', 'scanning');
+        // Step 3: Check Firestore for videoPath, lesson metadata, section names, and video availability
+        setStatus('Checking video availability and metadata...', 'scanning');
         const checkPromises = [];
         
         for (const lesson of extractedLessons) {
@@ -477,13 +487,26 @@ async function scanLessons() {
                     const customVideoPath = videoPathData.videoPath || null;
                     const yellowScreen = videoPathData.yellowScreen !== undefined ? videoPathData.yellowScreen : true; // Default to true
                     
+                    // Optional lesson-level metadata overrides (display name)
+                    const metadataDoc = await db.collection('lessonMetadata').doc(lesson.lessonId).get();
+                    const metadata = metadataDoc.exists ? metadataDoc.data() : {};
+                    const displayNameOverride = metadata.displayName || null;
+
+                    // Optional section-level display name override (shared by all lessons in a section)
+                    const sectionDoc = await db.collection('sectionNames').doc(lesson.originalSection).get();
+                    const sectionData = sectionDoc.exists ? sectionDoc.data() : {};
+                    const sectionDisplayNameOverride = sectionData.displayName || null;
+                    
                     // Check if video exists
                     const videoCheck = await checkVideoAvailability(lesson.lessonId, customVideoPath);
                     
                     return {
                         path: lesson.path,
-                        name: lesson.name,
+                        name: displayNameOverride || lesson.name,
                         lessonId: lesson.lessonId,
+                        section: sectionDisplayNameOverride || lesson.section,
+                        originalName: lesson.originalName,
+                        originalSection: lesson.originalSection,
                         hasVideo: videoCheck.exists,
                         currentPath: customVideoPath || `videos/${lesson.lessonId}.mp4`,
                         error: videoCheck.error,
@@ -577,10 +600,13 @@ function displayLessons() {
             return `<option value="${video}" ${selected}>${video}</option>`;
         }).join('');
         
-        // Escape HTML in lesson name to prevent XSS
+        // Escape HTML in lesson name and section to prevent XSS
         const safeName = lesson.name.replace(/</g, '&lt;').replace(/>/g, '&gt;');
         const safeLessonId = lesson.lessonId.replace(/</g, '&lt;').replace(/>/g, '&gt;');
         const safePath = lesson.path.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const safeSection = (lesson.section || 'Uncategorized').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const safeOriginalName = (lesson.originalName || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const safeOriginalSection = (lesson.originalSection || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         
         return `
             <div class="lesson-item">
@@ -589,11 +615,29 @@ function displayLessons() {
                     <span class="lesson-status ${statusClass}">${statusText}</span>
                 </div>
                 <div class="lesson-details">
+                    <div class="lesson-section">Section: ${safeSection}</div>
+                    <div class="lesson-original">
+                        <span class="lesson-original-label">Original:</span>
+                        <span class="lesson-original-values">${safeOriginalSection} &raquo; ${safeOriginalName}</span>
+                    </div>
                     <div class="lesson-id">ID: ${safeLessonId}</div>
                     <div class="lesson-path">Path: ${safePath}</div>
                     <div class="current-video">Video: ${lesson.currentPath}</div>
                 </div>
                 <div class="lesson-assignment">
+                    <div class="lesson-metadata-edit">
+                        <div class="metadata-row">
+                            <label for="section-input-${lesson.lessonId}">Section Name:</label>
+                            <input type="text" id="section-input-${lesson.lessonId}" value="${safeSection}">
+                        </div>
+                        <div class="metadata-row">
+                            <label for="name-input-${lesson.lessonId}">Lesson Name:</label>
+                            <input type="text" id="name-input-${lesson.lessonId}" value="${safeName}">
+                        </div>
+                        <button class="btn-metadata-save" onclick="saveLessonMetadata('${lesson.lessonId}')">
+                            Save Names
+                        </button>
+                    </div>
                     <div class="assignment-row">
                         <select id="video-select-${lesson.lessonId}">
                             <option value="">${lesson.hasVideo ? 'Change video...' : 'Select a video...'}</option>
@@ -615,6 +659,94 @@ function displayLessons() {
             </div>
         `;
     }).join('');
+}
+
+async function saveLessonMetadata(lessonId) {
+    try {
+        requireAuth(); // Ensure user is authenticated
+    } catch (error) {
+        alert('Authentication required. Please log in again.');
+        return;
+    }
+
+    const sectionInput = document.getElementById(`section-input-${lessonId}`);
+    const nameInput = document.getElementById(`name-input-${lessonId}`);
+    const lesson = lessonsData.find(l => l.lessonId === lessonId);
+
+    if (!sectionInput || !nameInput || !lesson) {
+        alert('Unable to find lesson metadata inputs.');
+        return;
+    }
+
+    const newSection = sectionInput.value.trim();
+    const newName = nameInput.value.trim();
+
+    // Determine what actually changed
+    const hasLessonNameChange = newName && newName !== lesson.originalName;
+    const hasSectionNameChange = newSection && newSection !== lesson.originalSection;
+
+    // If nothing changed, skip write
+    if (!hasLessonNameChange && !hasSectionNameChange) {
+        setStatus('No metadata changes to save', 'success');
+        setTimeout(() => setStatus('Ready'), 2000);
+        return;
+    }
+
+    sectionInput.disabled = true;
+    nameInput.disabled = true;
+
+    try {
+        const writes = [];
+
+        // Save per-lesson display name override in lessonMetadata collection
+        if (hasLessonNameChange) {
+            writes.push(
+                db.collection('lessonMetadata').doc(lessonId).set(
+                    { displayName: newName },
+                    { merge: true }
+                )
+            );
+        }
+
+        // Save shared section name override in sectionNames collection,
+        // keyed by the ORIGINAL section name from the menu
+        if (hasSectionNameChange) {
+            writes.push(
+                db.collection('sectionNames').doc(lesson.originalSection).set(
+                    { displayName: newSection },
+                    { merge: true }
+                )
+            );
+        }
+
+        if (writes.length > 0) {
+            await Promise.all(writes);
+        }
+
+        // Update local data:
+        // - lesson name only for this lesson
+        // - section name for all lessons that share the same original section
+        if (hasLessonNameChange) {
+            lesson.name = newName;
+        }
+        if (hasSectionNameChange) {
+            lessonsData.forEach(l => {
+                if (l.originalSection === lesson.originalSection) {
+                    l.section = newSection;
+                }
+            });
+        }
+
+        displayLessons();
+        setStatus('Lesson metadata saved', 'success');
+        setTimeout(() => setStatus('Ready'), 3000);
+    } catch (error) {
+        console.error('Error saving lesson metadata:', error);
+        alert('Error saving lesson metadata: ' + error.message);
+    } finally {
+        sectionInput.disabled = false;
+        nameInput.disabled = false;
+    }
 }
 
 async function assignVideo(lessonId) {
@@ -1218,4 +1350,5 @@ async function detectVideoTitlesForAllLessons() {
 // Make functions available globally
 window.assignVideo = assignVideo;
 window.toggleYellowScreen = toggleYellowScreen;
+window.saveLessonMetadata = saveLessonMetadata;
 
