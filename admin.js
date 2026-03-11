@@ -18,6 +18,7 @@ const functions = firebase.functions();
 let availableVideos = [];
 let lessonsData = [];
 let loginScreen, dashboardScreen, loginForm, logoutBtn, scanBtn, refreshVideosBtn, mapSegmentLinksBtn, detectVideoTitlesBtn, statusText, loginError, lessonsList, videosList;
+let uploadVideoBtn, uploadVideoInput;
 let instructionsBtn, changelogBtn, instructionsModal, changelogModal;
 let searchInput, filterButtons;
 let currentFilter = 'all';
@@ -69,6 +70,8 @@ document.addEventListener('DOMContentLoaded', () => {
     changelogBtn = document.getElementById('changelogBtn');
     scanBtn = document.getElementById('scanBtn');
     refreshVideosBtn = document.getElementById('refreshVideosBtn');
+    uploadVideoBtn = document.getElementById('uploadVideoBtn');
+    uploadVideoInput = document.getElementById('uploadVideoInput');
     mapSegmentLinksBtn = document.getElementById('mapSegmentLinksBtn');
     detectVideoTitlesBtn = document.getElementById('detectVideoTitlesBtn');
     statusText = document.getElementById('statusText');
@@ -277,6 +280,48 @@ function setupEventListeners() {
     if (detectVideoTitlesBtn) {
         detectVideoTitlesBtn.addEventListener('click', async () => {
             await detectVideoTitlesForAllLessons();
+        });
+    }
+
+    // Upload Videos
+    if (uploadVideoBtn && uploadVideoInput) {
+        uploadVideoBtn.addEventListener('click', () => {
+            uploadVideoInput.click();
+        });
+
+        uploadVideoInput.addEventListener('change', async (e) => {
+            const files = Array.from(e.target.files || []).filter(f => f.type === 'video/mp4');
+            if (!files.length) {
+                return;
+            }
+
+            try {
+                requireAuth();
+            } catch {
+                setStatus('Authentication required', 'error');
+                return;
+            }
+
+            uploadVideoBtn.disabled = true;
+            setStatus(`Uploading ${files.length} video${files.length > 1 ? 's' : ''}...`, 'scanning');
+
+            try {
+                const storageRef = storage.ref().child('videos');
+                for (const file of files) {
+                    const fileRef = storageRef.child(file.name);
+                    await fileRef.put(file);
+                }
+
+                setStatus('Upload complete. Refreshing video list...', 'success');
+                await loadAvailableVideos();
+            } catch (error) {
+                console.error('Error uploading videos:', error);
+                setStatus('Error uploading videos: ' + error.message, 'error');
+            } finally {
+                uploadVideoBtn.disabled = false;
+                uploadVideoInput.value = '';
+                setTimeout(() => setStatus('Ready'), 3000);
+            }
         });
     }
 

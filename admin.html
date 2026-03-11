@@ -15,27 +15,49 @@
 <body>
     <!-- Login Screen -->
     <div id="loginScreen" class="screen">
-        <div class="login-container">
-            <h1>Video Path CMS</h1>
-            <h2>Admin Login</h2>
-            <form id="loginForm">
-                <div class="form-group">
-                    <label for="email">Email:</label>
-                    <input type="email" id="email" required>
-                </div>
-                <div class="form-group">
-                    <label for="password">Password:</label>
-                    <input type="password" id="password" required>
-                </div>
-                <div class="form-group remember-me">
-                    <label class="remember-me-label">
-                        <input type="checkbox" id="rememberMe">
-                        <span>Remember Me</span>
-                    </label>
-                </div>
-                <button type="submit" class="btn btn-primary">Login</button>
-                <div id="loginError" class="error-message" style="display: none;"></div>
-            </form>
+        <div class="login-layout">
+            <div class="login-container">
+                <h1>Video Path CMS</h1>
+                <h2>Admin Login</h2>
+                <form id="loginForm">
+                    <div class="form-group">
+                        <label for="email">Email</label>
+                        <input type="email" id="email" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input type="password" id="password" required>
+                    </div>
+                    <div class="form-group remember-me">
+                        <label class="remember-me-label">
+                            <input type="checkbox" id="rememberMe">
+                            <span>Remember Me</span>
+                        </label>
+                    </div>
+                    <div class="form-group" style="display: flex; gap: 0.75rem; align-items: center; justify-content: flex-start;">
+                        <button type="submit" class="btn btn-primary">
+                            <span class="btn-label">Login</span>
+                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="window.location.href='TextT/CentralMenuT.html'">
+                            <span class="btn-label">Back to Main Menu</span>
+                        </button>
+                    </div>
+                    <div id="loginError" class="error-message" style="display: none;"></div>
+                </form>
+            </div>
+            <aside class="login-aside">
+                <h3 class="login-aside-title">What’s in the Admin Panel</h3>
+                <ul class="login-aside-list">
+                    <li>Scan all sections and lessons from the main TextT menu.</li>
+                    <li>Assign and update Firebase Storage videos per lesson.</li>
+                    <li>Clean up yellow-screen segments and refine srcArray.</li>
+                    <li>Auto-map segment links and detect slide titles with OCR.</li>
+                    <li>Rename sections and lessons without touching source HTML.</li>
+                </ul>
+                <p class="login-aside-note">
+                    Full details and a complete history are available from the <strong>Instructions</strong> and <strong>Changelog</strong> buttons after you log in.
+                </p>
+            </aside>
         </div>
     </div>
 
@@ -44,22 +66,50 @@
         <header class="dashboard-header">
             <h1>Video Path CMS - Admin Dashboard</h1>
             <div class="header-buttons">
-                <button id="instructionsBtn" class="btn btn-secondary">Instructions</button>
-                <button id="changelogBtn" class="btn btn-secondary">Changelog</button>
-                <button id="viewMainMenuBtn" class="btn btn-secondary">View Main Menu</button>
-                <button id="logoutBtn" class="btn btn-secondary">Logout</button>
+                <button id="instructionsBtn" class="btn btn-secondary">
+                    <span class="btn-icon">?</span>
+                    <span class="btn-label">Instructions</span>
+                </button>
+                <button id="changelogBtn" class="btn btn-secondary">
+                    <span class="btn-icon">&lt;/&gt;</span>
+                    <span class="btn-label">Changelog</span>
+                </button>
+                <button id="viewMainMenuBtn" class="btn btn-secondary">
+                    <span class="btn-label">View Main Menu</span>
+                </button>
+                <button id="logoutBtn" class="btn btn-secondary">
+                    <span class="btn-icon">↩</span>
+                    <span class="btn-label">Logout</span>
+                </button>
             </div>
         </header>
 
         <div class="dashboard-content">
             <div class="controls-section">
                 <button id="scanBtn" class="btn btn-primary">Scan All Sections + Lessons</button>
-                <button id="refreshVideosBtn" class="btn btn-secondary">Refresh Available Videos</button>
+                <button id="refreshVideosBtn" class="btn btn-secondary">
+                    <span class="btn-icon">⟳</span>
+                    <span class="btn-label">Refresh</span>
+                </button>
+                <button id="uploadVideoBtn" class="btn btn-secondary">
+                    <span class="btn-icon">⬆</span>
+                    <span class="btn-label">Upload Video</span>
+                </button>
+                <input type="file" id="uploadVideoInput" accept="video/mp4" multiple style="display:none;">
                 <button id="mapSegmentLinksBtn" class="btn btn-primary">Map Segment Links</button>
                 <button id="detectVideoTitlesBtn" class="btn btn-primary">Detect Video Titles (OCR)</button>
                 <div class="status-indicator">
                     <span id="statusText">Ready</span>
                 </div>
+            </div>
+
+            <div class="admin-tabs">
+                <button class="admin-tab active" type="button">
+                    <span class="admin-tab-label">Homepage - Admin</span>
+                </button>
+                <button class="admin-tab disabled" type="button" disabled>
+                    <span class="admin-tab-label">Feedback (In Progress)</span>
+                </button>
             </div>
 
             <div class="main-content">
