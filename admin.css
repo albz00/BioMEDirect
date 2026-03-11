@@ -663,6 +663,105 @@ html {
     box-shadow: 0 0 10px rgba(2, 232, 229, 0.3);
 }
 
+/* Modals (Instructions / Changelog) */
+.modal {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+    pointer-events: none;
+}
+
+.modal.hidden {
+    display: none;
+}
+
+.modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.8);
+}
+
+.modal-content {
+    position: relative;
+    max-width: 900px;
+    max-height: 80vh;
+    width: 95%;
+    background: rgba(0, 0, 0, 0.95);
+    border: 2px solid #02E8E5;
+    border-radius: 10px;
+    box-shadow: 0 0 25px rgba(2, 232, 229, 0.6);
+    padding: 1.5rem 2rem;
+    color: #02E8E5;
+    overflow: hidden;
+    pointer-events: auto;
+}
+
+.modal-content h2 {
+    margin-bottom: 1rem;
+    color: #9BFFFF;
+}
+
+.modal-content h3 {
+    margin-top: 1rem;
+    margin-bottom: 0.5rem;
+    color: #9BFFFF;
+    font-size: 1rem;
+}
+
+.modal-body {
+    overflow-y: auto;
+    max-height: calc(80vh - 4rem);
+    padding-right: 0.5rem;
+    font-size: 0.9rem;
+}
+
+.modal-body ul,
+.modal-body ol {
+    margin-left: 1.2rem;
+    margin-bottom: 0.75rem;
+}
+
+.modal-body li {
+    margin-bottom: 0.25rem;
+}
+
+.modal-body code {
+    font-family: Consolas, Menlo, monospace;
+    background: rgba(2, 232, 229, 0.08);
+    padding: 0.05rem 0.25rem;
+    border-radius: 3px;
+    color: #9DFFFF;
+}
+
+.modal-close {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.75rem;
+    background: transparent;
+    border: none;
+    color: #9BFFFF;
+    font-size: 1.5rem;
+    cursor: pointer;
+    line-height: 1;
+}
+
+.modal-close:hover {
+    color: #ffffff;
+}
+
+.changelog-body .changelog-list {
+    list-style-type: disc;
+}
+
+.changelog-note {
+    margin-top: 1rem;
+    font-size: 0.85rem;
+    color: #4f58c9;
+}
+
 /* Loading Spinner */
 .spinner {
     border: 3px solid rgba(2, 232, 229, 0.1);

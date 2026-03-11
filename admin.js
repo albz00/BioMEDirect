@@ -18,6 +18,7 @@ const functions = firebase.functions();
 let availableVideos = [];
 let lessonsData = [];
 let loginScreen, dashboardScreen, loginForm, logoutBtn, scanBtn, refreshVideosBtn, mapSegmentLinksBtn, detectVideoTitlesBtn, statusText, loginError, lessonsList, videosList;
+let instructionsBtn, changelogBtn, instructionsModal, changelogModal;
 let searchInput, filterButtons;
 let currentFilter = 'all';
 let searchQuery = '';
@@ -64,6 +65,8 @@ document.addEventListener('DOMContentLoaded', () => {
     dashboardScreen = document.getElementById('dashboardScreen');
     loginForm = document.getElementById('loginForm');
     logoutBtn = document.getElementById('logoutBtn');
+    instructionsBtn = document.getElementById('instructionsBtn');
+    changelogBtn = document.getElementById('changelogBtn');
     scanBtn = document.getElementById('scanBtn');
     refreshVideosBtn = document.getElementById('refreshVideosBtn');
     mapSegmentLinksBtn = document.getElementById('mapSegmentLinksBtn');
@@ -72,6 +75,8 @@ document.addEventListener('DOMContentLoaded', () => {
     loginError = document.getElementById('loginError');
     lessonsList = document.getElementById('lessonsList');
     videosList = document.getElementById('videosList');
+    instructionsModal = document.getElementById('instructionsModal');
+    changelogModal = document.getElementById('changelogModal');
     searchInput = document.getElementById('searchInput');
     filterButtons = document.querySelectorAll('.filter-btn');
 
@@ -187,6 +192,52 @@ function setupEventListeners() {
             window.location.href = 'TextT/CentralMenuT.html';
         });
     }
+
+    // Instructions / Changelog modals
+    function openModal(modal) {
+        if (!modal) return;
+        modal.classList.remove('hidden');
+        modal.setAttribute('aria-hidden', 'false');
+    }
+
+    function closeModal(modal) {
+        if (!modal) return;
+        modal.classList.add('hidden');
+        modal.setAttribute('aria-hidden', 'true');
+    }
+
+    if (instructionsBtn && instructionsModal) {
+        instructionsBtn.addEventListener('click', () => openModal(instructionsModal));
+    }
+
+    if (changelogBtn && changelogModal) {
+        changelogBtn.addEventListener('click', () => openModal(changelogModal));
+    }
+
+    // Generic close handlers (backdrop or [data-close-modal] button)
+    [instructionsModal, changelogModal].forEach((modal) => {
+        if (!modal) return;
+
+        modal.addEventListener('click', (e) => {
+            const target = e.target;
+            if (target.hasAttribute && target.hasAttribute('data-close-modal')) {
+                closeModal(modal);
+            } else if (target.classList && target.classList.contains('modal-backdrop')) {
+                closeModal(modal);
+            }
+        });
+    });
+
+    // Close modals with Escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            [instructionsModal, changelogModal].forEach((modal) => {
+                if (modal && !modal.classList.contains('hidden')) {
+                    closeModal(modal);
+                }
+            });
+        }
+    });
 
     // Logout
     if (logoutBtn) {
@@ -402,6 +453,18 @@ async function parseCentralMenu() {
     }
 }
 
+// Derive lessonId from path when HTML fetch fails (matches convention: CamelCase + T -> snake_case + _t)
+function lessonIdFromPath(lessonPath) {
+    const pathMatch = lessonPath.match(/([^/]+)\.html$/);
+    if (!pathMatch) return null;
+    let stem = pathMatch[1]; // e.g. "GestationalOverviewT" or "OrientationsT"
+    if (!/T$/i.test(stem)) return null;
+    stem = stem.replace(/T$/i, ''); // "GestationalOverview", "Orientations"
+    const parts = stem.split(/(?<=[a-z])(?=[A-Z])/).filter(Boolean);
+    if (parts.length === 0) return null;
+    return parts.join('_').toLowerCase().replace(/\s+/g, '_') + '_t';
+}
+
 // Extract lessonId from HTML file
 async function extractLessonIdFromHTML(lessonPath) {
     try {
@@ -417,16 +480,10 @@ async function extractLessonIdFromHTML(lessonPath) {
             return match[1];
         }
         
-        // Fallback: try to extract from path
-        const pathMatch = lessonPath.match(/([^/]+)T\.html$/);
-        if (pathMatch) {
-            return pathMatch[1].toLowerCase().replace(/\s+/g, '_');
-        }
-        
-        return null;
+        return lessonIdFromPath(lessonPath);
     } catch (error) {
         console.error(`Error extracting lessonId from ${lessonPath}:`, error);
-        return null;
+        return lessonIdFromPath(lessonPath);
     }
 }
 

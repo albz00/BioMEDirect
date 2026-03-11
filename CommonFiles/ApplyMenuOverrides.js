@@ -98,26 +98,32 @@
                 lessonMetaById[doc.id] = doc.data() || {};
             });
 
+            // Derive lessonId from path when fetch fails (matches convention: CamelCase + T -> snake_case + _t)
+            function lessonIdFromPath(path) {
+                const pathMatch = path.match(/([^/]+)\.html$/);
+                if (!pathMatch) return null;
+                let stem = pathMatch[1];
+                if (!/T$/i.test(stem)) return null;
+                stem = stem.replace(/T$/i, '');
+                const parts = stem.split(/(?<=[a-z])(?=[A-Z])/).filter(Boolean);
+                if (parts.length === 0) return null;
+                return parts.join('_').toLowerCase().replace(/\s+/g, '_') + '_t';
+            }
+
             // Helper to extract lessonId from a lesson HTML file
             async function fetchLessonIdForPath(lessonPath) {
                 try {
                     const response = await fetch(lessonPath);
-                    if (!response.ok) return null;
+                    if (!response.ok) return lessonIdFromPath(lessonPath);
                     const html = await response.text();
                     const match = html.match(/const\s+lessonId\s*=\s*["']([^"']+)["']/);
                     if (match) {
                         return match[1];
                     }
-
-                    // Fallback: derive from path name like .../MendelianGeneticsT.html -> mendeliangeneticst
-                    const pathMatch = lessonPath.match(/([^/]+)T\.html$/);
-                    if (pathMatch) {
-                        return pathMatch[1].toLowerCase().replace(/\s+/g, '_');
-                    }
-                    return null;
+                    return lessonIdFromPath(lessonPath);
                 } catch (e) {
                     console.warn('Failed to fetch lesson HTML for path', lessonPath, e);
-                    return null;
+                    return lessonIdFromPath(lessonPath);
                 }
             }
 
