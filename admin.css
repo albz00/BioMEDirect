@@ -270,6 +270,35 @@ html {
     flex-wrap: wrap;
 }
 
+.controls-legacy {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px dashed rgba(80, 156, 255, 0.25);
+}
+
+.controls-legacy-label {
+    font-size: 0.7rem;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-right: 0.2rem;
+}
+
+.btn-legacy {
+    padding: 0.3rem 0.6rem;
+    font-size: 0.75rem;
+    border-radius: 4px;
+    background: #1f2937 !important;
+    color: #6b7280 !important;
+    border: 1px solid rgba(107, 114, 128, 0.5) !important;
+    cursor: not-allowed;
+    opacity: 0.75;
+}
+
 .admin-tabs {
     margin-top: 1rem;
     margin-bottom: 1.5rem;
@@ -784,6 +813,89 @@ html {
     cursor: pointer;
     width: 18px;
     height: 18px;
+}
+
+.lesson-chapters-block {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid rgba(2, 232, 229, 0.2);
+}
+
+.lesson-chapters-block .btn-chapters {
+    margin-bottom: 0.5rem;
+}
+
+.chapters-container {
+    margin-top: 0.5rem;
+}
+
+.chapters-dropdown-label {
+    display: block;
+    font-size: 0.85rem;
+    color: #c3d7ff;
+    margin-bottom: 0.35rem;
+}
+
+.chapters-dropdown {
+    width: 100%;
+    max-width: 320px;
+    padding: 0.45rem 0.6rem;
+    border-radius: 6px;
+    border: 1px solid rgba(80, 156, 255, 0.6);
+    background-color: #111827;
+    color: #e6f5ff;
+    font-size: 0.9rem;
+    margin-bottom: 0.75rem;
+}
+
+.chapters-dropdown:focus {
+    outline: none;
+    border-color: #4f8dff;
+    box-shadow: 0 0 0 1px rgba(79, 141, 255, 0.7);
+}
+
+.chapters-edit-list {
+    max-height: 280px;
+    overflow-y: auto;
+}
+
+.chapter-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.4rem;
+}
+
+.chapter-row .chapter-menu-id {
+    font-size: 0.75rem;
+    color: #6b7280;
+    min-width: 3rem;
+}
+
+.chapter-row .chapter-name-input {
+    flex: 1;
+    padding: 0.35rem 0.5rem;
+    border-radius: 4px;
+    border: 1px solid rgba(80, 156, 255, 0.5);
+    background-color: #0b101b;
+    color: #e6f5ff;
+    font-size: 0.85rem;
+}
+
+.chapter-row .chapter-name-input:focus {
+    outline: none;
+    border-color: #4f8dff;
+}
+
+.chapter-row .btn-chapter-save {
+    flex-shrink: 0;
+}
+
+.chapters-empty {
+    font-size: 0.85rem;
+    color: #6b7280;
+    font-style: italic;
+    margin: 0;
 }
 
 .lesson-assignment select {

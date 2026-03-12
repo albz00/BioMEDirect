@@ -827,6 +827,18 @@ function displayLessons() {
                             Remove yellow screen (adjust srcArray)
                         </label>
                     </div>
+                    <div class="lesson-chapters-block">
+                        <button type="button" class="btn btn-secondary btn-chapters" onclick="showChaptersForLesson('${lesson.lessonId}')">
+                            <span class="btn-label">Show chapters</span>
+                        </button>
+                        <div id="chapters-container-${lesson.lessonId}" class="chapters-container" style="display:none;">
+                            <label class="chapters-dropdown-label">Chapters</label>
+                            <select id="chapters-dropdown-${lesson.lessonId}" class="chapters-dropdown">
+                                <option value="">— Select a chapter —</option>
+                            </select>
+                            <div id="chapters-edit-list-${lesson.lessonId}" class="chapters-edit-list"></div>
+                        </div>
+                    </div>
                 </div>
             </div>
         `;
@@ -911,6 +923,123 @@ async function saveLessonMetadata(lessonId) {
     } finally {
         nameInput.disabled = false;
     }
+}
+
+// Load chapters from lesson HTML (menu buttons) and show dropdown + editable list
+async function showChaptersForLesson(lessonId) {
+    try {
+        requireAuth();
+    } catch (error) {
+        alert('Authentication required. Please log in again.');
+        return;
+    }
+
+    const lesson = lessonsData.find(l => l.lessonId === lessonId);
+    if (!lesson) {
+        setStatus('Lesson not found', 'error');
+        return;
+    }
+
+    const container = document.getElementById(`chapters-container-${lessonId}`);
+    const dropdown = document.getElementById(`chapters-dropdown-${lessonId}`);
+    const editList = document.getElementById(`chapters-edit-list-${lessonId}`);
+    if (!container || !dropdown || !editList) return;
+
+    setStatus('Detecting chapters from lesson...', 'scanning');
+
+    try {
+        const menuLinks = await extractMenuLinksFromHTML(lesson.path);
+        if (!menuLinks.length) {
+            editList.innerHTML = '<p class="chapters-empty">No chapter buttons found in this lesson.</p>';
+            dropdown.innerHTML = '<option value="">— No chapters —</option>';
+            container.style.display = 'block';
+            setStatus('No chapters detected', 'error');
+            return;
+        }
+
+        const metaDoc = await db.collection('lessonMetadata').doc(lessonId).get();
+        const chapterDisplayNames = (metaDoc.exists && metaDoc.data().chapterDisplayNames) ? metaDoc.data().chapterDisplayNames : {};
+
+        const chapters = menuLinks.map(m => ({
+            menuId: m.menuId,
+            originalLabel: m.label,
+            displayName: chapterDisplayNames[m.menuId] !== undefined ? chapterDisplayNames[m.menuId] : m.label
+        }));
+
+        dropdown.innerHTML = '<option value="">— Select a chapter —</option>' +
+            chapters.map((ch, i) => {
+                const safe = ch.displayName.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                return `<option value="${i}">${safe}</option>`;
+            }).join('');
+
+        editList.innerHTML = chapters.map((ch) => {
+            const safeOriginal = ch.originalLabel.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            const safeDisplay = ch.displayName.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            const safeMenuIdAttr = ch.menuId.replace(/"/g, '&quot;');
+            const menuIdEscaped = ch.menuId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            return `
+                <div class="chapter-row" data-menu-id="${safeMenuIdAttr}">
+                    <span class="chapter-menu-id">${ch.menuId}</span>
+                    <input type="text" class="chapter-name-input" value="${safeDisplay}" data-original="${safeOriginal}" data-menu-id="${safeMenuIdAttr}">
+                    <button type="button" class="btn-section-save btn-chapter-save" onclick="saveChapterDisplayName('${lessonId.replace(/'/g, "\\'")}', '${menuIdEscaped}')">Save</button>
+                </div>`;
+        }).join('');
+
+        container.style.display = 'block';
+        setStatus(`Loaded ${chapters.length} chapters for ${lesson.name}`, 'success');
+        setTimeout(() => setStatus('Ready'), 2000);
+    } catch (error) {
+        console.error('Error loading chapters:', error);
+        editList.innerHTML = '<p class="chapters-empty">Error loading chapters: ' + (error.message || 'Unknown error') + '</p>';
+        container.style.display = 'block';
+        setStatus('Error loading chapters', 'error');
+    }
+}
+
+async function saveChapterDisplayName(lessonId, menuId) {
+    try {
+        requireAuth();
+    } catch (error) {
+        alert('Authentication required. Please log in again.');
+        return;
+    }
+
+    const row = document.querySelector(`#chapters-edit-list-${lessonId} .chapter-row[data-menu-id="${menuId}"]`);
+    const input = row ? row.querySelector('.chapter-name-input') : null;
+    if (!input) return;
+
+    const newName = input.value.trim();
+    const originalLabel = input.getAttribute('data-original') || '';
+
+    const lesson = lessonsData.find(l => l.lessonId === lessonId);
+    if (!lesson) return;
+
+    const metaRef = db.collection('lessonMetadata').doc(lessonId);
+
+    if (!newName || newName === originalLabel) {
+        await metaRef.update({
+            [`chapterDisplayNames.${menuId}`]: firebase.firestore.FieldValue.delete()
+        });
+        input.value = originalLabel;
+        input.setAttribute('data-original', originalLabel);
+    } else {
+        await metaRef.set(
+            { chapterDisplayNames: { [menuId]: newName } },
+            { merge: true }
+        );
+        input.setAttribute('data-original', newName);
+    }
+    const dropdown = document.getElementById(`chapters-dropdown-${lessonId}`);
+    if (dropdown) {
+        const rows = document.querySelectorAll(`#chapters-edit-list-${lessonId} .chapter-row`);
+        const options = dropdown.querySelectorAll('option[value]');
+        options.forEach((opt, i) => {
+            const inp = rows[i] ? rows[i].querySelector('.chapter-name-input') : null;
+            if (inp) opt.textContent = inp.value.trim() || inp.getAttribute('data-original');
+        });
+    }
+    setStatus('Chapter name saved', 'success');
+    setTimeout(() => setStatus('Ready'), 2000);
 }
 
 async function assignVideo(lessonId) {
@@ -1515,6 +1644,8 @@ async function detectVideoTitlesForAllLessons() {
 window.assignVideo = assignVideo;
 window.toggleYellowScreen = toggleYellowScreen;
 window.saveLessonMetadata = saveLessonMetadata;
+window.showChaptersForLesson = showChaptersForLesson;
+window.saveChapterDisplayName = saveChapterDisplayName;
 window.saveSectionDisplayName = async function saveSectionDisplayName(originalSection) {
     try {
         requireAuth();

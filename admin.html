@@ -96,8 +96,11 @@
                     <span class="btn-label">Upload Video</span>
                 </button>
                 <input type="file" id="uploadVideoInput" accept="video/mp4" multiple style="display:none;">
-                <button id="mapSegmentLinksBtn" class="btn btn-primary">Map Segment Links</button>
-                <button id="detectVideoTitlesBtn" class="btn btn-primary">Detect Video Titles (OCR)</button>
+                <div class="controls-legacy">
+                    <span class="controls-legacy-label">Legacy:</span>
+                    <button id="mapSegmentLinksBtn" class="btn btn-legacy" type="button" disabled title="Legacy – map menu labels to srcArray">Map Segment Links</button>
+                    <button id="detectVideoTitlesBtn" class="btn btn-legacy" type="button" disabled title="Legacy – OCR titles from video">Detect Video Titles (OCR)</button>
+                </div>
                 <div class="status-indicator">
                     <span id="statusText">Ready</span>
                 </div>
