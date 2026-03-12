@@ -350,6 +350,100 @@ html {
     box-shadow: 0 0 15px rgba(2, 232, 229, 0.2);
 }
 
+.section-index {
+    margin-bottom: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid rgba(31, 211, 255, 0.25);
+}
+
+.section-index-item {
+    margin-bottom: 0.5rem;
+    padding: 0.35rem 0.5rem;
+    border-radius: 6px;
+    background: #0b101b;
+}
+
+.section-index-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    align-items: center;
+    margin-bottom: 0.25rem;
+}
+
+.section-index-title {
+    font-size: 0.8rem;
+    color: #8b9bd8;
+}
+
+.section-index-original {
+    opacity: 0.9;
+}
+
+.section-index-edit {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+}
+
+.section-index-input {
+    padding: 0.25rem 0.45rem;
+    font-size: 0.8rem;
+    border-radius: 4px;
+    border: 1px solid rgba(80, 156, 255, 0.6);
+    background-color: #111827;
+    color: #e6f5ff;
+}
+
+.section-index-input:focus {
+    outline: none;
+    border-color: #4f8dff;
+    box-shadow: 0 0 0 1px rgba(79, 141, 255, 0.7);
+}
+
+.btn-section-save {
+    padding: 0.2rem 0.6rem;
+    font-size: 0.75rem;
+    border-radius: 999px;
+    border: 1px solid rgba(80, 156, 255, 0.7);
+    background: transparent;
+    color: #c3d7ff;
+    cursor: pointer;
+}
+
+.btn-section-save:hover {
+    background: #4f8dff;
+    color: #ffffff;
+    border-color: #4f8dff;
+}
+
+.section-lesson-list {
+    list-style: none;
+    margin: 0.15rem 0 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.5rem;
+}
+
+.section-lesson {
+    padding: 0.15rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    background: #111827;
+    color: #d1e4ff;
+    cursor: pointer;
+}
+
+.section-lesson:hover {
+    background: #1f2937;
+}
+
+.section-lesson-status {
+    margin-right: 0.25rem;
+    font-size: 0.6rem;
+}
+
 .lessons-section h2,
 .videos-section h2 {
     margin-bottom: 1rem;

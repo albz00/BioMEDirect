@@ -627,6 +627,7 @@ async function scanLessons() {
             return a.name.localeCompare(b.name);
         });
         
+        renderSectionIndex();
         displayLessons();
         
         const missingCount = lessonsData.filter(l => !l.hasVideo).length;
@@ -659,6 +660,79 @@ async function checkVideoAvailability(lessonId, customVideoPath) {
         }
         return { exists: false, error: error.message };
     }
+}
+
+function renderSectionIndex() {
+    const sectionIndexEl = document.getElementById('sectionIndex');
+    if (!sectionIndexEl || lessonsData.length === 0) return;
+
+    // Group lessons by originalSection
+    const groups = {};
+    for (const lesson of lessonsData) {
+        const key = lesson.originalSection || 'Uncategorized';
+        if (!groups[key]) {
+            groups[key] = {
+                originalSection: key,
+                sectionName: lesson.section || key,
+                lessons: []
+            };
+        }
+        groups[key].lessons.push(lesson);
+    }
+
+    const sections = Object.values(groups).sort((a, b) =>
+        a.sectionName.localeCompare(b.sectionName)
+    );
+
+    const html = sections.map(section => {
+        const safeSectionName = section.sectionName.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const safeOriginalSection = section.originalSection.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+        const lessonItems = section.lessons
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map(lesson => {
+                const safeLessonName = lesson.name.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                const status = lesson.hasVideo ? '●' : '○';
+                const statusClass = lesson.hasVideo ? 'has-video' : 'missing';
+                return `
+                    <li class="section-lesson ${statusClass}" data-lesson-id="${lesson.lessonId}"
+                        onclick="scrollToLesson('${lesson.lessonId}')">
+                        <span class="section-lesson-status">${status}</span>
+                        <span class="section-lesson-name">${safeLessonName}</span>
+                    </li>
+                `;
+            }).join('');
+
+        return `
+            <div class="section-index-item">
+                <div class="section-index-header">
+                    <div class="section-index-title">
+                        <span class="section-index-original">${safeOriginalSection}</span>
+                    </div>
+                    <div class="section-index-edit">
+                        <input
+                            type="text"
+                            class="section-index-input"
+                            id="section-index-input-${section.originalSection.replace(/[^a-zA-Z0-9_-]/g, '_')}"
+                            value="${safeSectionName}"
+                        >
+                        <button
+                            type="button"
+                            class="btn-section-save"
+                            onclick="saveSectionDisplayName('${section.originalSection.replace(/'/g, "\\'")}')"
+                        >
+                            Save
+                        </button>
+                    </div>
+                </div>
+                <ul class="section-lesson-list">
+                    ${lessonItems}
+                </ul>
+            </div>
+        `;
+    }).join('');
+
+    sectionIndexEl.innerHTML = html;
 }
 
 function displayLessons() {
@@ -711,7 +785,7 @@ function displayLessons() {
         const safeOriginalSection = (lesson.originalSection || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         
         return `
-            <div class="lesson-item">
+            <div class="lesson-item" id="lesson-${lesson.lessonId}">
                 <div class="lesson-item-header">
                     <span class="lesson-name">${safeName}</span>
                     <span class="lesson-status ${statusClass}">${statusText}</span>
@@ -729,15 +803,11 @@ function displayLessons() {
                 <div class="lesson-assignment">
                     <div class="lesson-metadata-edit">
                         <div class="metadata-row">
-                            <label for="section-input-${lesson.lessonId}">Section Name:</label>
-                            <input type="text" id="section-input-${lesson.lessonId}" value="${safeSection}">
-                        </div>
-                        <div class="metadata-row">
                             <label for="name-input-${lesson.lessonId}">Lesson Name:</label>
                             <input type="text" id="name-input-${lesson.lessonId}" value="${safeName}">
                         </div>
                         <button class="btn-metadata-save" onclick="saveLessonMetadata('${lesson.lessonId}')">
-                            Save Names
+                            Save Lesson Name
                         </button>
                     </div>
                     <div class="assignment-row">
@@ -771,30 +841,26 @@ async function saveLessonMetadata(lessonId) {
         return;
     }
 
-    const sectionInput = document.getElementById(`section-input-${lessonId}`);
     const nameInput = document.getElementById(`name-input-${lessonId}`);
     const lesson = lessonsData.find(l => l.lessonId === lessonId);
 
-    if (!sectionInput || !nameInput || !lesson) {
-        alert('Unable to find lesson metadata inputs.');
+    if (!nameInput || !lesson) {
+        alert('Unable to find lesson metadata input.');
         return;
     }
 
-    const newSection = sectionInput.value.trim();
     const newName = nameInput.value.trim();
 
     // Determine what actually changed relative to current effective values
     const hasLessonNameChange = newName !== lesson.name;
-    const hasSectionNameChange = newSection !== lesson.section;
 
     // If nothing changed, skip write
-    if (!hasLessonNameChange && !hasSectionNameChange) {
+    if (!hasLessonNameChange) {
         setStatus('No metadata changes to save', 'success');
         setTimeout(() => setStatus('Ready'), 2000);
         return;
     }
 
-    sectionInput.disabled = true;
     nameInput.disabled = true;
 
     try {
@@ -822,36 +888,11 @@ async function saveLessonMetadata(lessonId) {
             }
         }
 
-        // Save shared section name override in sectionNames collection,
-        // keyed by the ORIGINAL section name from the menu
-        if (hasSectionNameChange) {
-            const sectionDocRef = db.collection('sectionNames').doc(lesson.originalSection);
-
-            // If user set it back to original or cleared it, remove the override field
-            if (!newSection || newSection === lesson.originalSection) {
-                writes.push(
-                    sectionDocRef.set(
-                        { displayName: firebase.firestore.FieldValue.delete() },
-                        { merge: true }
-                    )
-                );
-            } else {
-                writes.push(
-                    sectionDocRef.set(
-                        { displayName: newSection },
-                        { merge: true }
-                    )
-                );
-            }
-        }
-
         if (writes.length > 0) {
             await Promise.all(writes);
         }
 
-        // Update local data:
-        // - lesson name only for this lesson
-        // - section name for all lessons that share the same original section
+        // Update local data: lesson name only for this lesson
         if (hasLessonNameChange) {
             if (!newName || newName === lesson.originalName) {
                 lesson.name = lesson.originalName;
@@ -859,27 +900,15 @@ async function saveLessonMetadata(lessonId) {
                 lesson.name = newName;
             }
         }
-        if (hasSectionNameChange) {
-            const effectiveSectionName =
-                !newSection || newSection === lesson.originalSection
-                    ? lesson.originalSection
-                    : newSection;
-
-            lessonsData.forEach(l => {
-                if (l.originalSection === lesson.originalSection) {
-                    l.section = effectiveSectionName;
-                }
-            });
-        }
 
         displayLessons();
+        renderSectionIndex();
         setStatus('Lesson metadata saved', 'success');
         setTimeout(() => setStatus('Ready'), 3000);
     } catch (error) {
         console.error('Error saving lesson metadata:', error);
         alert('Error saving lesson metadata: ' + error.message);
     } finally {
-        sectionInput.disabled = false;
         nameInput.disabled = false;
     }
 }
@@ -1486,4 +1515,74 @@ async function detectVideoTitlesForAllLessons() {
 window.assignVideo = assignVideo;
 window.toggleYellowScreen = toggleYellowScreen;
 window.saveLessonMetadata = saveLessonMetadata;
+window.saveSectionDisplayName = async function saveSectionDisplayName(originalSection) {
+    try {
+        requireAuth();
+    } catch (error) {
+        alert('Authentication required. Please log in again.');
+        return;
+    }
+
+    const inputId = `section-index-input-${originalSection.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+    const inputEl = document.getElementById(inputId);
+    if (!inputEl) {
+        alert('Unable to find section input.');
+        return;
+    }
+
+    const newName = inputEl.value.trim();
+
+    // Find any lesson from this original section to compare effective name
+    const anyLesson = lessonsData.find(l => l.originalSection === originalSection);
+    const currentEffective = anyLesson ? anyLesson.section : originalSection;
+    const hasChange = newName !== currentEffective;
+
+    if (!hasChange) {
+        setStatus('No section changes to save', 'success');
+        setTimeout(() => setStatus('Ready'), 2000);
+        return;
+    }
+
+    inputEl.disabled = true;
+
+    try {
+        const sectionDocRef = db.collection('sectionNames').doc(originalSection);
+        if (!newName || newName === originalSection) {
+            await sectionDocRef.set(
+                { displayName: firebase.firestore.FieldValue.delete() },
+                { merge: true }
+            );
+        } else {
+            await sectionDocRef.set(
+                { displayName: newName },
+                { merge: true }
+            );
+        }
+
+        // Update local lessonsData
+        const effectiveSectionName =
+            !newName || newName === originalSection ? originalSection : newName;
+
+        lessonsData.forEach(l => {
+            if (l.originalSection === originalSection) {
+                l.section = effectiveSectionName;
+            }
+        });
+
+        renderSectionIndex();
+        displayLessons();
+        setStatus('Section name saved', 'success');
+        setTimeout(() => setStatus('Ready'), 3000);
+    } catch (error) {
+        console.error('Error saving section display name:', error);
+        alert('Error saving section display name: ' + error.message);
+    } finally {
+        inputEl.disabled = false;
+    }
+};
+window.scrollToLesson = function scrollToLesson(lessonId) {
+    const el = document.getElementById(`lesson-${lessonId}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
 
