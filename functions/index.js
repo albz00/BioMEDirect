@@ -112,11 +112,9 @@ function getDuration(video) {
   });
 }
 
-// Build a baseline srcArray driven by yellow screen detections.
-// Each yellow card is treated as the start of a content segment:
-// - segment i starts just after yellowRanges[i].end
-// - segment i ends at the start of yellowRanges[i+1] (or video end for the last)
-// If no yellow screens are detected, fall back to a single full-length segment.
+// Build srcArray only from the complement of yellow (non-yellow intervals).
+// Segments: [0, firstYellow.start], [yellow[i].end, yellow[i+1].start], ..., [lastYellow.end, duration].
+// No segment overlaps any yellow range; leapfrog uses exact stored yellowScreenRanges.
 function buildSrcArrayFromYellow(yellowRanges, duration) {
   const arr = [];
   let freeze = 0;
@@ -131,7 +129,6 @@ function buildSrcArrayFromYellow(yellowRanges, duration) {
   });
 
   if (!yellowRanges || yellowRanges.length === 0) {
-    // No yellow screens: single segment for the whole video
     arr.push({
       src_start: 0,
       src_end: Math.round(duration * 100) / 100,
@@ -143,42 +140,45 @@ function buildSrcArrayFromYellow(yellowRanges, duration) {
     return arr;
   }
 
-  // Sort ranges by start time
   const ranges = [...yellowRanges].sort((a, b) => {
     const as = typeof a.start === "number" ? a.start : 0;
     const bs = typeof b.start === "number" ? b.start : 0;
     return as - bs;
   });
 
-  const EPS = 0.05; // 50ms offset to jump past yellow frames
+  const minSegment = 0.05;
 
-  for (let i = 0; i < ranges.length; i++) {
-    const r = ranges[i];
-    const next = ranges[i + 1] || null;
-
-    const rawStart = typeof r.end === "number" ? r.end : (typeof r.start === "number" ? r.start : 0);
-    let start = rawStart + EPS;
-    if (!isFinite(start) || start < 0) start = 0;
-
-    let end;
-    if (next && typeof next.start === "number") {
-      end = Math.max(start + 0.01, next.start);
-    } else {
-      end = duration;
-    }
-
-    if (end - start < 0.05) {
-      continue; // skip degenerate segments
-    }
-
+  // Content before first yellow
+  const firstStart = typeof ranges[0].start === "number" ? ranges[0].start : 0;
+  if (firstStart >= minSegment) {
     arr.push({
-      src_start: Math.round(start * 100) / 100,
-      src_end: Math.round(end * 100) / 100,
+      src_start: 0,
+      src_end: Math.round(firstStart * 100) / 100,
       freezeFrame: freeze++,
       menuLink: "",
       side: false,
       loop: false,
     });
+  }
+
+  // Gaps between yellow ranges
+  for (let i = 0; i < ranges.length; i++) {
+    const endYellow = typeof ranges[i].end === "number" ? ranges[i].end : 0;
+    const startNext = ranges[i + 1] && typeof ranges[i + 1].start === "number"
+      ? ranges[i + 1].start
+      : duration;
+    const start = Math.max(0, endYellow);
+    const end = i + 1 < ranges.length ? startNext : duration;
+    if (end - start >= minSegment) {
+      arr.push({
+        src_start: Math.round(start * 100) / 100,
+        src_end: Math.round(end * 100) / 100,
+        freezeFrame: freeze++,
+        menuLink: "",
+        side: false,
+        loop: false,
+      });
+    }
   }
 
   return arr;
@@ -289,7 +289,7 @@ function detectYellowFrames(video) {
     const yellowFrames = [];
     let videoWidth = null;
     let videoHeight = null;
-    let frameRate = 5; // fps=5 from ffmpeg command
+    const frameRate = 10; // higher fps for accurate per-card yellow duration
     let frameIndex = 0;
     let frameBuffer = Buffer.alloc(0);
     
@@ -306,10 +306,10 @@ function detectYellowFrames(video) {
       videoHeight = height;
       const frameSize = width * height * 3; // RGB24 = 3 bytes per pixel
 
-      // Use ffmpeg to output raw RGB frames at 5 fps
+      // Use ffmpeg to output raw RGB frames at 10 fps for accurate yellow ranges
       const proc = spawn(ffmpegPath, [
         "-i", video,
-        "-vf", "fps=5",
+        "-vf", "fps=10",
         "-f", "image2pipe",
         "-vcodec", "rawvideo",
         "-pix_fmt", "rgb24",
@@ -357,11 +357,11 @@ function detectYellowFrames(video) {
           return;
         }
 
-        // Convert raw {frame, time} entries to time ranges
-        const uniqueTimes = [...new Set(yellowFrames.map((entry) => entry.time))].sort((a, b) => a - b);
-        console.log("Detected yellow frames:", yellowFrames);
-
-        const yellowRanges = framesToRanges(uniqueTimes);
+        // Convert raw {frame, time} entries to time ranges (exact per-card duration: end = lastFrameTime + 1/fps)
+        const sortedTimes = yellowFrames.map((e) => e.time).sort((a, b) => a - b);
+        const frameInterval = 1 / frameRate;
+        const yellowRanges = framesToRanges(sortedTimes, frameInterval);
+        console.log("Detected yellow ranges:", yellowRanges);
         resolve(yellowRanges);
       });
 
@@ -448,37 +448,35 @@ function calculateDeltaE(lab1, lab2) {
   return Math.sqrt(dL * dL + dA * dA + dB * dB);
 }
 
-// Convert frame detections to time ranges
-function framesToRanges(yellowFrames) {
-  if (yellowFrames.length === 0) return [];
-  
+// Convert frame detections to time ranges. Uses actual per-card duration: end = last frame time + frameInterval.
+// frameInterval = 1/fps so each yellow card's length is measured, not assumed.
+function framesToRanges(sortedFrameTimes, frameInterval) {
+  if (sortedFrameTimes.length === 0) return [];
+  const gapThreshold = Math.max(1.5 * (frameInterval || 0.1), 0.15); // same card if within ~1.5 frames
+  const interval = frameInterval != null && frameInterval > 0 ? frameInterval : 0.1;
+
   const ranges = [];
-  let rangeStart = yellowFrames[0];
-  let rangeEnd = yellowFrames[0];
-  
-  for (let i = 1; i < yellowFrames.length; i++) {
-    const currentFrame = yellowFrames[i];
-    
-    // If frames are consecutive or very close (within 0.6s), treat as same yellow card
-    if (currentFrame - rangeEnd <= 0.6) {
-      rangeEnd = currentFrame;
+  let rangeStart = sortedFrameTimes[0];
+  let rangeEnd = sortedFrameTimes[0];
+
+  for (let i = 1; i < sortedFrameTimes.length; i++) {
+    const t = sortedFrameTimes[i];
+    if (t - rangeEnd <= gapThreshold) {
+      rangeEnd = t;
     } else {
-      // End current range and start new one
       ranges.push({
         start: Math.round(rangeStart * 100) / 100,
-        end: Math.round((rangeEnd + 0.2) * 100) / 100 // small buffer after last yellow frame
+        end: Math.round((rangeEnd + interval) * 100) / 100 // one frame past last yellow
       });
-      rangeStart = currentFrame;
-      rangeEnd = currentFrame;
+      rangeStart = t;
+      rangeEnd = t;
     }
   }
-  
-  // Add final range
   ranges.push({
     start: Math.round(rangeStart * 100) / 100,
-    end: Math.round((rangeEnd + 0.4) * 100) / 100 // slightly larger buffer after last yellow frame
+    end: Math.round((rangeEnd + interval) * 100) / 100
   });
-  
+
   return mergeYellowRanges(ranges);
 }
 
