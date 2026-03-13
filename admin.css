@@ -1264,29 +1264,6 @@ html {
     flex-wrap: wrap;
 }
 
-.yellow-screen-option {
-    margin-top: 0.5rem;
-    padding: 0.5rem;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 4px;
-    font-size: 0.9rem;
-}
-
-.yellow-screen-option label {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    cursor: pointer;
-    color: #b8c5d4;
-}
-
-.yellow-screen-option input[type="checkbox"] {
-    cursor: pointer;
-    width: 18px;
-    height: 18px;
-}
-
 .lesson-chapters-block {
     margin-top: 0.75rem;
     padding-top: 0.75rem;

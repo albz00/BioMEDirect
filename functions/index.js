@@ -53,20 +53,28 @@ exports.generateSrcArray = onObjectFinalized(
   }
   console.log("Detected yellow ranges for srcArray generation:", yellowRanges);
 
-  let srcArray;
+  let baseSrcArray;
   if (yellowRanges && yellowRanges.length > 0) {
     console.log("Building srcArray from yellow ranges...");
-    srcArray = buildSrcArrayFromYellow(yellowRanges, duration);
+    baseSrcArray = buildSrcArrayFromYellow(yellowRanges, duration);
   } else {
     console.log("No yellow ranges detected, falling back to scene-based srcArray...");
     const scenes = await detectScenes(tmpFile);
     console.log("Detected scenes for fallback:", scenes);
-    srcArray = buildSceneBasedSrcArray(scenes, duration);
+    baseSrcArray = buildSceneBasedSrcArray(scenes, duration);
   }
 
-  console.log("Writing srcArray to Firestore...");
+  // Clean the srcArray against yellowRanges (if any) and persist both the cleaned
+  // srcArray and the original for possible restore.
+  const cleanedSrcArray = adjustSrcArrayForYellowScreen(baseSrcArray, yellowRanges || []);
+
+  console.log("Writing srcArray and yellowScreenRanges to Firestore...");
   await db.collection("lessons").doc(lessonId).set(
-    { srcArray },
+    {
+      srcArray: cleanedSrcArray,
+      originalSrcArray: baseSrcArray,
+      yellowScreenRanges: yellowRanges || []
+    },
     { merge: true }
   );
 

@@ -932,11 +932,10 @@ async function scanLessons() {
         for (const lesson of extractedLessons) {
             checkPromises.push(
                 (async () => {
-                    // Check videoPaths collection for custom videoPath and yellowScreen setting
+                    // Check videoPaths collection for custom videoPath
                     const videoPathDoc = await db.collection('videoPaths').doc(lesson.lessonId).get();
                     const videoPathData = videoPathDoc.exists ? videoPathDoc.data() : {};
                     const customVideoPath = videoPathData.videoPath || null;
-                    const yellowScreen = videoPathData.yellowScreen !== undefined ? videoPathData.yellowScreen : true; // Default to true
                     
                     // Optional lesson-level metadata overrides (display name)
                     const metadataDoc = await db.collection('lessonMetadata').doc(lesson.lessonId).get();
@@ -960,8 +959,7 @@ async function scanLessons() {
                         originalSection: lesson.originalSection,
                         hasVideo: videoCheck.exists,
                         currentPath: customVideoPath || `videos/${lesson.lessonId}.mp4`,
-                        error: videoCheck.error,
-                        yellowScreen: yellowScreen
+                        error: videoCheck.error
                     };
                 })()
             );
@@ -1185,12 +1183,6 @@ function getLessonCardHTML(lesson) {
                     </select>
                     <button class="assign-btn" onclick="assignVideo('${escId}', this)" id="assign-btn-${lesson.lessonId}">${lesson.hasVideo ? 'Update' : 'Assign'}</button>
                     <button type="button" class="btn btn-secondary btn-sm" onclick="resetLessonAssignment('${escId}', this)"><span class="btn-label">Reset</span></button>
-                </div>
-                <div class="yellow-screen-option">
-                    <label>
-                        <input type="checkbox" id="yellow-screen-${lesson.lessonId}" ${lesson.yellowScreen ? 'checked' : ''} onchange="toggleYellowScreen('${escId}')">
-                        Remove yellow screen (adjust srcArray)
-                    </label>
                 </div>
                 <div class="lesson-chapters-block">
                     <button type="button" class="btn btn-secondary btn-chapters" onclick="showChaptersForLesson('${escId}')"><span class="btn-label">Show chapters</span></button>
@@ -1748,11 +1740,10 @@ async function resetLessonAssignment(lessonId, btn) {
     setStatus(`Resetting ${lesson.name} to original settings...`, 'scanning');
 
     try {
-        // Clear overrides in videoPaths (videoPath + yellowScreen)
+        // Clear overrides in videoPaths (videoPath)
         const vpRef = db.collection('videoPaths').doc(lessonId);
         await vpRef.set({
-            videoPath: firebase.firestore.FieldValue.delete(),
-            yellowScreen: firebase.firestore.FieldValue.delete()
+            videoPath: firebase.firestore.FieldValue.delete()
         }, { merge: true });
 
         // Default path is videos/<lessonId>.mp4
@@ -1761,7 +1752,6 @@ async function resetLessonAssignment(lessonId, btn) {
 
         lesson.currentPath = availability.exists ? defaultPath : '';
         lesson.hasVideo = availability.exists;
-        lesson.yellowScreen = true;
 
         renderSidebarTree();
         displaySelectedLesson();
@@ -1781,148 +1771,21 @@ async function resetLessonAssignment(lessonId, btn) {
     }
 }
 
-// Toggle yellow screen setting
-async function toggleYellowScreen(lessonId) {
-    try {
-        requireAuth();
-    } catch (error) {
-        alert('Authentication required. Please log in again.');
-        return;
-    }
-    
-    const checkbox = document.getElementById(`yellow-screen-${lessonId}`);
-    if (!checkbox) return;
-    
-    const yellowScreen = checkbox.checked;
-    const previousState = !yellowScreen; // Previous state (before toggle)
-    
-    try {
-        // Get videoPath from videoPaths collection
-        const videoPathDoc = await db.collection('videoPaths').doc(lessonId).get();
-        if (!videoPathDoc.exists) {
-            throw new Error('Video path not found for this lesson');
-        }
-        
-        const videoPathData = videoPathDoc.data();
-        const videoPath = videoPathData.videoPath || `videos/${lessonId}.mp4`;
-        
-        // Extract video filename from videoPath (e.g., "videos/filename.mp4" → "filename")
-        const match = videoPath.match(/videos\/([^\/]+)\.mp4$/);
-        if (!match) {
-            throw new Error('Invalid video path format');
-        }
-        const videoFilename = match[1]; // Video filename without extension
-        
-        // Get current srcArray from lessons collection
-        const videoDoc = await db.collection('lessons').doc(videoFilename).get();
-        if (!videoDoc.exists) {
-            throw new Error(`Video document not found: ${videoFilename}`);
-        }
-        
-        const videoData = videoDoc.data();
-        const currentSrcArray = videoData.srcArray || [];
-        const originalSrcArray = videoData.originalSrcArray || currentSrcArray;
-        let updatedSrcArray = currentSrcArray;
-        
-        if (!yellowScreen) {
-            // User wants to REMOVE yellow screen - need to detect and adjust
-            setStatus('Detecting yellow screen frames...', 'scanning');
-            checkbox.disabled = true;
-            
-            try {
-                // Call Cloud Function to detect yellow screens and adjust srcArray
-                const detectYellowScreen = functions.httpsCallable('detectYellowScreen');
-                const result = await detectYellowScreen({
-                    videoPath: videoPath,
-                    videoFilename: videoFilename
-                });
-                
-                if (result.data.success) {
-                    // Cloud Function has already updated the srcArray in Firestore
-                    // Get the updated srcArray
-                    const updatedDoc = await db.collection('lessons').doc(videoFilename).get();
-                    updatedSrcArray = updatedDoc.data().srcArray || currentSrcArray;
-                    
-                    setStatus(`Yellow screen removed: ${result.data.yellowRanges.length} ranges detected, ${result.data.adjustedSegments} segments adjusted`, 'success');
-                } else {
-                    throw new Error('Yellow screen detection failed');
-                }
-            } catch (error) {
-                console.error('Error calling yellow screen detection:', error);
-                // Fallback to simple heuristic if Cloud Function fails
-                setStatus('Using fallback method to remove yellow screen...', 'scanning');
-                updatedSrcArray = adjustSrcArraySimple(currentSrcArray);
-            }
-        } else {
-            // User wants to RESTORE yellow screen - use original srcArray
-            // Restore original srcArray if it exists
-            if (originalSrcArray && originalSrcArray.length > 0) {
-                updatedSrcArray = originalSrcArray;
-                setStatus('Restoring original srcArray with yellow screens...', 'scanning');
-            } else {
-                // No original stored, can't restore
-                setStatus('Original srcArray not found, cannot restore yellow screens', 'error');
-                checkbox.checked = false; // Revert checkbox
-                return;
-            }
-        }
-        
-        // Update the VIDEO's document in lessons collection with modified srcArray
-        await db.collection('lessons').doc(videoFilename).set({
-            srcArray: updatedSrcArray,
-            originalSrcArray: originalSrcArray // Ensure original is stored
-        }, { merge: true });
-        
-        // Store yellowScreen preference in videoPaths collection
-        await db.collection('videoPaths').doc(lessonId).set({
-            yellowScreen: yellowScreen
-        }, { merge: true });
-        
-        // Update local data
-        const lesson = lessonsData.find(l => l.lessonId === lessonId);
-        if (lesson) {
-            lesson.yellowScreen = yellowScreen;
-        }
-        
-        if (yellowScreen) {
-            setStatus(`Yellow screen restored for ${lesson ? lesson.name : lessonId}`, 'success');
-        }
-        
-        setTimeout(() => {
-            setStatus('Ready');
-        }, 3000);
-    } catch (error) {
-        console.error('Error toggling yellow screen:', error);
-        alert('Error updating yellow screen setting: ' + error.message);
-        checkbox.checked = previousState; // Revert checkbox
-    } finally {
-        checkbox.disabled = false;
-    }
-}
-
-// Simple fallback method to adjust srcArray (removes very short initial segments)
+// Simple fallback (kept for backwards compatibility, currently unused)
 function adjustSrcArraySimple(srcArray) {
     if (!srcArray || srcArray.length === 0) return srcArray;
-    
     const adjusted = [];
-    
     for (const segment of srcArray) {
-        // Keep opening segment
         if (segment.src_start === null || segment.src_end === null) {
             adjusted.push(segment);
             continue;
         }
-        
-        // Remove very short segments at the start (likely yellow screens)
         const duration = segment.src_end - segment.src_start;
         if (adjusted.length === 0 && duration < 1.0) {
-            // Skip first very short segment
             continue;
         }
-        
         adjusted.push(segment);
     }
-    
     return adjusted;
 }
 
