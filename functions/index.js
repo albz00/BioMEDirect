@@ -211,9 +211,8 @@ function buildSceneBasedSrcArray(scenes, duration) {
   return arr;
 }
 
-// Cloud Function to detect yellow screen frames and store ranges.
-// This no longer mutates originalSrcArray; it just records yellowScreenRanges
-// so the player or client-side logic can "leap frog" over them.
+// Cloud Function to detect yellow screen frames, store ranges, and write a cleaned srcArray
+// (while preserving originalSrcArray for restore).
 exports.detectYellowScreen = onCall(
   {
     memory: "1GiB",
@@ -237,15 +236,31 @@ exports.detectYellowScreen = onCall(
     const yellowRanges = await detectYellowFrames(tmpFile);
     console.log("Detected yellow screen ranges:", yellowRanges);
 
-    // Store ranges alongside existing srcArray/originalSrcArray without changing them
-    await db.collection("lessons").doc(videoFilename).set({
-      yellowScreenRanges: yellowRanges
+    // Load current srcArray/originalSrcArray
+    const videoDocRef = db.collection("lessons").doc(videoFilename);
+    const videoSnap = await videoDocRef.get();
+    const videoData = videoSnap.exists ? videoSnap.data() : {};
+    const currentSrcArray = Array.isArray(videoData.srcArray) ? videoData.srcArray : [];
+    const originalSrcArray = Array.isArray(videoData.originalSrcArray) && videoData.originalSrcArray.length > 0
+      ? videoData.originalSrcArray
+      : currentSrcArray;
+
+    // Compute cleaned srcArray that skips yellow ranges
+    const cleanedSrcArray = adjustSrcArrayForYellowScreen(originalSrcArray, yellowRanges);
+    const adjustedSegments = cleanedSrcArray.length;
+
+    // Store ranges and cleaned srcArray, preserving originalSrcArray
+    await videoDocRef.set({
+      yellowScreenRanges: yellowRanges,
+      srcArray: cleanedSrcArray,
+      originalSrcArray: originalSrcArray
     }, { merge: true });
 
-    console.log("Yellow screen detection complete (ranges stored only)");
+    console.log("Yellow screen detection complete (ranges stored and srcArray cleaned)");
     return {
       success: true,
-      yellowRanges: yellowRanges
+      yellowRanges: yellowRanges,
+      adjustedSegments
     };
   } catch (error) {
     console.error("Error detecting yellow screen:", error);
