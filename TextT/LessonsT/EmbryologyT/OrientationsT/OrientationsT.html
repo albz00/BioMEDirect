@@ -94,6 +94,9 @@ html<!DOCTYPE html>
     };
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
+    // Globals for yellow-screen skipping in masterUIcontrol
+    window.shouldSkipYellow = true;
+    window.yellowScreenRanges = [];
 
     // Load srcArray from Firestore
     async function loadSrcArray(lessonId) {
@@ -117,14 +120,18 @@ html<!DOCTYPE html>
             }
             const videoFilename = match[1]; // Video filename without extension
             
-            // Get srcArray from lessons collection using video filename (not lessonId)
+            // Get srcArray (and any yellowScreenRanges) from lessons collection using video filename (not lessonId)
             const videoDoc = await db.collection("lessons").doc(videoFilename).get();
             if (!videoDoc.exists) {
                 console.error("Video document not found:", videoFilename);
                 return [];
             }
-            
-            return videoDoc.data().srcArray || [];
+            const data = videoDoc.data() || {};
+            const srcArray = data.srcArray || [];
+            if (Array.isArray(data.yellowScreenRanges)) {
+                window.yellowScreenRanges = data.yellowScreenRanges;
+            }
+            return srcArray;
         } catch (error) {
             console.error("Error loading srcArray:", error);
             return [];
@@ -134,16 +141,23 @@ html<!DOCTYPE html>
     // Load video URL from Firebase Storage
     async function loadVideoUrl(lessonId) {
         try {
-            // Check videoPaths collection for custom videoPath
+            // Check videoPaths collection for custom videoPath and yellowScreen preference
             const videoPathDoc = await db.collection("videoPaths").doc(lessonId).get();
             let videoPath;
+            const vpData = videoPathDoc.exists ? videoPathDoc.data() : {};
             
-            if (videoPathDoc.exists && videoPathDoc.data().videoPath) {
+            if (vpData.videoPath) {
                 // Use custom video path from videoPaths collection
-                videoPath = videoPathDoc.data().videoPath;
+                videoPath = vpData.videoPath;
             } else {
                 // Fall back to default path
                 videoPath = `videos/${lessonId}.mp4`;
+            }
+            // Yellow-screen preference: default to true (skip), or use stored flag
+            if (typeof vpData.yellowScreen === 'boolean') {
+                window.shouldSkipYellow = vpData.yellowScreen;
+            } else {
+                window.shouldSkipYellow = true;
             }
             
             const storageRef = firebase.storage().ref();
