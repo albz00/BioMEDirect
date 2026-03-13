@@ -1460,6 +1460,8 @@ html {
     justify-content: center;
     z-index: 2000;
     pointer-events: none;
+    padding: 1.5rem;
+    box-sizing: border-box;
 }
 
 .modal.hidden {
@@ -1540,19 +1542,31 @@ html {
     color: #ffffff;
 }
 
-/* Instructions modal — paper-like, color-coded, larger */
+/* Changelog modal — proper height and scroll so content isn't cut off */
+.changelog-modal-content {
+    display: flex;
+    flex-direction: column;
+    max-height: 85vh;
+    padding-bottom: 1rem;
+}
+
+.changelog-modal-content .changelog-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    max-height: none;
+}
+
+/* Instructions modal — same dark style as other admin boxes */
 .instructions-paper {
     max-width: min(920px, 92vw);
     width: 92vw;
     max-height: 88vh;
-    background: linear-gradient(180deg, #faf8f5 0%, #f5f1eb 100%);
-    color: #2d3748;
-    border: 1px solid #e2ddd4;
-    border-radius: 6px;
-    box-shadow:
-        0 25px 50px -12px rgba(0, 0, 0, 0.35),
-        0 0 0 1px rgba(0, 0, 0, 0.04) inset,
-        2px 2px 0 rgba(255, 255, 255, 0.6);
+    background: #1e293b;
+    color: #e8eef4;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
     padding: 1.75rem 2rem 2rem;
     display: flex;
     flex-direction: column;
@@ -1565,17 +1579,17 @@ html {
 }
 
 .instructions-paper .modal-close {
-    color: #64748b;
+    color: #94a3b8;
 }
 
 .instructions-paper .modal-close:hover {
-    color: #1e293b;
+    color: #f1f5f9;
 }
 
 .instructions-header {
     margin-bottom: 1rem;
     padding-bottom: 1rem;
-    border-bottom: 1px solid #e8e4dc;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.15);
     flex-shrink: 0;
 }
 
@@ -1596,7 +1610,7 @@ html {
 }
 
 .instructions-paper #instructionsTitle {
-    color: #1e293b;
+    color: #f1f5f9;
     font-size: 1.35rem;
     font-weight: 600;
     margin-bottom: 0.25rem;
@@ -1604,7 +1618,7 @@ html {
 
 .instructions-subtitle {
     font-size: 0.85rem;
-    color: #64748b;
+    color: #94a3b8;
     font-weight: 400;
 }
 
@@ -1618,8 +1632,9 @@ html {
     padding: 0.9rem 1rem 0.9rem 1.15rem;
     border-radius: 6px;
     border-left: 4px solid transparent;
-    background: rgba(255, 255, 255, 0.5);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-left-width: 4px;
 }
 
 .inst-section h3 {
@@ -1629,7 +1644,7 @@ html {
     margin: 0 0 0.5rem 0;
     font-size: 1rem;
     font-weight: 600;
-    color: #1e293b;
+    color: #e8eef4;
 }
 
 .inst-num {
@@ -1649,8 +1664,8 @@ html {
 }
 
 .inst-section--login .inst-num {
-    background: #dbeafe;
-    color: #1d4ed8;
+    background: rgba(59, 130, 246, 0.25);
+    color: #93c5fd;
 }
 
 .inst-section--workflow {
@@ -1658,8 +1673,8 @@ html {
 }
 
 .inst-section--workflow .inst-num {
-    background: #d1fae5;
-    color: #047857;
+    background: rgba(16, 185, 129, 0.2);
+    color: #6ee7b7;
 }
 
 .inst-section--controls {
@@ -1667,8 +1682,8 @@ html {
 }
 
 .inst-section--controls .inst-num {
-    background: #ede9fe;
-    color: #5b21b6;
+    background: rgba(124, 58, 237, 0.25);
+    color: #c4b5fd;
 }
 
 .inst-section--lessons {
@@ -1676,8 +1691,8 @@ html {
 }
 
 .inst-section--lessons .inst-num {
-    background: #fffbeb;
-    color: #b45309;
+    background: rgba(217, 119, 6, 0.25);
+    color: #fcd34d;
 }
 
 .inst-section--videos {
@@ -1685,8 +1700,8 @@ html {
 }
 
 .inst-section--videos .inst-num {
-    background: #e0f2fe;
-    color: #0369a1;
+    background: rgba(14, 165, 233, 0.25);
+    color: #7dd3fc;
 }
 
 .inst-section--status {
@@ -1694,8 +1709,8 @@ html {
 }
 
 .inst-section--status .inst-num {
-    background: #f1f5f9;
-    color: #475569;
+    background: rgba(100, 116, 139, 0.3);
+    color: #cbd5e1;
 }
 
 .inst-section--safety {
@@ -1703,8 +1718,8 @@ html {
 }
 
 .inst-section--safety .inst-num {
-    background: #fee2e2;
-    color: #b91c1c;
+    background: rgba(220, 38, 38, 0.25);
+    color: #fca5a5;
 }
 
 .inst-steps {
@@ -1743,28 +1758,28 @@ html {
 }
 
 .inst-status--ready {
-    background: #e2e8f0;
-    color: #475569;
+    background: rgba(255, 255, 255, 0.1);
+    color: #94a3b8;
 }
 
 .inst-status--scanning {
-    background: #fef3c7;
-    color: #92400e;
+    background: rgba(245, 158, 11, 0.2);
+    color: #fcd34d;
 }
 
 .inst-status--success {
-    background: #d1fae5;
-    color: #065f46;
+    background: rgba(16, 185, 129, 0.2);
+    color: #6ee7b7;
 }
 
 .inst-status--error {
-    background: #fee2e2;
-    color: #b91c1c;
+    background: rgba(220, 38, 38, 0.2);
+    color: #fca5a5;
 }
 
 .instructions-body code {
-    background: #e8e4dc;
-    color: #475569;
+    background: rgba(255, 255, 255, 0.1);
+    color: #cbd5e1;
     padding: 0.1rem 0.35rem;
     border-radius: 3px;
     font-family: 'Consolas', 'Menlo', monospace;

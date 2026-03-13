@@ -83,7 +83,10 @@
             <h1>BioME - Control Panel</h1>
             <div class="header-buttons">
                 <button id="instructionsBtn" class="btn btn-secondary">
-                    <svg class="btn-icon heroicon" width="20" height="20" aria-hidden="true"><use href="#icon-document-text"/></svg>
+                    <svg class="btn-icon heroicon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625a1.125 1.125 0 0 0-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9z"/>
+                        <path d="M8.25 12h7.5M8.25 15.75h7.5M8.25 19.5h4.5"/>
+                    </svg>
                     <span class="btn-label">Instructions</span>
                 </button>
                 <button id="changelogBtn" class="btn btn-secondary">
@@ -236,65 +239,64 @@
                 <section class="inst-section inst-section--login">
                     <h3><span class="inst-num">1</span> Logging In</h3>
                     <ul>
-                        <li>Use your admin Firebase email and password to log in.</li>
-                        <li>Optionally check <strong>Remember Me</strong> to store your credentials locally on this device.</li>
+                        <li>Sign in with your admin email and password.</li>
+                        <li>Check <strong>Remember Me</strong> if you want to stay signed in on this device.</li>
                     </ul>
                 </section>
 
                 <section class="inst-section inst-section--workflow">
-                    <h3><span class="inst-num">2</span> Overall Workflow</h3>
+                    <h3><span class="inst-num">2</span> Typical Workflow</h3>
                     <ol class="inst-steps">
-                        <li><strong>Scan All Sections + Lessons</strong> — reads the main TextT central menu and discovers every lesson, section name, and lessonId.</li>
-                        <li><strong>Refresh Available Videos</strong> — lists all <code>.mp4</code> files in Firebase Storage under <code>videos/</code>.</li>
-                        <li><strong>Assign / Update Videos</strong> — for each lesson, choose a video from the dropdown and click <strong>Assign</strong> or <strong>Update</strong>.</li>
-                        <li><strong>Optional: Map Segment Links</strong> — copies menu button labels into the <code>menuLink</code> field of matching <code>srcArray</code> segments.</li>
-                        <li><strong>Optional: Detect Video Titles (OCR)</strong> — uses a Cloud Function to read video titles on-frame and refine <code>srcArray</code> segment titles.</li>
+                        <li><strong>Scan All Sections + Lessons</strong> — Discovers every lesson from the main menu so you can manage them here.</li>
+                        <li><strong>Refresh Available Videos</strong> — Loads the list of videos you can assign to lessons.</li>
+                        <li><strong>Assign or update videos</strong> — Select a lesson in the list, pick a video from the dropdown, and click <strong>Assign</strong> or <strong>Update</strong>.</li>
+                        <li><strong>Optional:</strong> Use <strong>Map Segment Links</strong> to copy menu labels into the timeline, or <strong>Detect Video Titles</strong> to auto-fill chapter names from the video.</li>
                     </ol>
                 </section>
 
                 <section class="inst-section inst-section--controls">
-                    <h3><span class="inst-num">3</span> Controls Section</h3>
+                    <h3><span class="inst-num">3</span> Top Buttons</h3>
                     <ul class="inst-list">
-                        <li><strong>Scan All Sections + Lessons</strong> — Parses <code>TextT/CentralMenuT.html</code>, infers <code>lessonId</code>, looks up <code>videoPaths</code>, <code>lessonMetadata</code>, <code>sectionNames</code>, and video existence. Lessons with missing videos listed first.</li>
-                        <li><strong>Refresh Available Videos</strong> — Lists all <code>.mp4</code> in Storage <code>videos/</code> and populates each lesson’s dropdown.</li>
-                        <li><strong>Map Segment Links</strong> — Reads lesson HTML menu buttons and JS <code>currentSlide</code>, then sets <code>menuLink</code> on <code>srcArray</code> segments. Skips if menu/segment counts don’t match.</li>
-                        <li><strong>Detect Video Titles (OCR)</strong> — Calls <code>detectVideoTitles</code> Cloud Function to analyze frames and refine <code>srcArray</code> titles. Best after scan and video assignment.</li>
+                        <li><strong>Scan All Sections + Lessons</strong> — Refreshes the lesson list from the menu. Do this first so you see all lessons. Lessons missing a video appear at the top.</li>
+                        <li><strong>Refresh Available Videos</strong> — Updates the video list. Do this before assigning so your dropdown shows all current videos.</li>
+                        <li><strong>Map Segment Links</strong> — Fills in chapter labels from the lesson menu. Use after you’ve assigned videos.</li>
+                        <li><strong>Detect Video Titles (OCR)</strong> — Tries to read titles from the video and set chapter names. Best used after scan and video assignment.</li>
                     </ul>
                 </section>
 
                 <section class="inst-section inst-section--lessons">
-                    <h3><span class="inst-num">4</span> Lessons Panel</h3>
+                    <h3><span class="inst-num">4</span> Working With a Lesson</h3>
                     <ul class="inst-list">
-                        <li><strong>Search</strong> — Filters by lesson name, lessonId, or path (case-insensitive).</li>
-                        <li><strong>Filters</strong> — <strong>All</strong> / <strong>Missing</strong> (no video) / <strong>Has Video</strong>.</li>
-                        <li><strong>Section name</strong> — Edit and save; stored in <code>sectionNames/&lt;originalSection&gt;.displayName</code>.</li>
-                        <li><strong>Lesson name</strong> — Edit and save; stored in <code>lessonMetadata/&lt;lessonId&gt;.displayName</code>.</li>
-                        <li><strong>Video Select + Assign / Update</strong> — Writes <code>videoPaths/&lt;lessonId&gt;.videoPath</code> and updates the row.</li>
-                        <li><strong>Remove yellow screen</strong> — When checked, calls <code>detectYellowScreen</code> and updates <code>srcArray</code>; when unchecked, restores <code>originalSrcArray</code> if present.</li>
+                        <li>Click a lesson in the sidebar to select it. Use <strong>Search</strong> to find a lesson by name.</li>
+                        <li><strong>Filters:</strong> Show <strong>All</strong> lessons, only <strong>Missing</strong> (no video), or only <strong>Has Video</strong>.</li>
+                        <li>Change the <strong>Section name</strong> or <strong>Lesson name</strong> if you want a different label in the menu, then click <strong>Save Lesson Name</strong>.</li>
+                        <li>Pick a video from the dropdown and click <strong>Assign</strong> or <strong>Update</strong> to link that video to the lesson.</li>
+                        <li><strong>Remove yellow screen</strong> — Check this to skip the opening yellow screen in the video; uncheck to show it again.</li>
+                        <li>Open <strong>Timeline / srcArray Editor</strong> below to view or edit chapter start/end times and titles.</li>
                     </ul>
                 </section>
 
                 <section class="inst-section inst-section--videos">
-                    <h3><span class="inst-num">5</span> Available Videos Panel</h3>
-                    <p>Shows every <code>.mp4</code> in Storage with size and duration. Click a video to quick-play. Actual linking is done from each lesson card.</p>
+                    <h3><span class="inst-num">5</span> Available Videos</h3>
+                    <p>This list shows all videos that can be assigned. Expand the section to see it. Click a video to preview it. To attach a video to a lesson, use the dropdown in the <strong>Selected Lesson</strong> box above.</p>
                 </section>
 
                 <section class="inst-section inst-section--status">
-                    <h3><span class="inst-num">6</span> Status Indicator</h3>
+                    <h3><span class="inst-num">6</span> Status Message</h3>
                     <ul class="inst-status-list">
-                        <li><span class="inst-status inst-status--ready">Ready</span> — idle</li>
-                        <li><span class="inst-status inst-status--scanning">Scanning…</span> — task in progress</li>
-                        <li><span class="inst-status inst-status--success">Green</span> — success</li>
-                        <li><span class="inst-status inst-status--error">Red</span> — error; check console</li>
+                        <li><span class="inst-status inst-status--ready">Ready</span> — Nothing running.</li>
+                        <li><span class="inst-status inst-status--scanning">Scanning…</span> — A task is in progress; wait for it to finish.</li>
+                        <li><span class="inst-status inst-status--success">Green</span> — The last action completed successfully.</li>
+                        <li><span class="inst-status inst-status--error">Red</span> — Something went wrong; check the message and try again.</li>
                     </ul>
                 </section>
 
                 <section class="inst-section inst-section--safety">
-                    <h3><span class="inst-num">7</span> Safety Notes</h3>
+                    <h3><span class="inst-num">7</span> Tips</h3>
                     <ul>
-                        <li>All writes use Firestore security rules; stay logged in as an authorized admin.</li>
-                        <li>Changes are live for clients using the same project.</li>
-                        <li>Test on staging before production.</li>
+                        <li>Stay signed in with an admin account so your changes save correctly.</li>
+                        <li>Changes apply immediately for anyone using the site.</li>
+                        <li>If you have a test site, try changes there first.</li>
                     </ul>
                 </section>
             </div>
@@ -333,8 +335,8 @@
     <!-- Changelog Modal -->
     <div id="changelogModal" class="modal hidden" aria-hidden="true" role="dialog" aria-labelledby="changelogTitle">
         <div class="modal-backdrop"></div>
-        <div class="modal-content">
-            <button class="modal-close" data-close-modal>&times;</button>
+        <div class="modal-content changelog-modal-content">
+            <button class="modal-close" data-close-modal aria-label="Close">&times;</button>
             <h2 id="changelogTitle">Admin Panel Changelog</h2>
             <div class="modal-body changelog-body">
                 <h3>Recent Changes</h3>
