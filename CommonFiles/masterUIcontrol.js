@@ -84,7 +84,20 @@ function checkSlideNum(){
 function updateVideoId(play=true){ // FindMe3
 	if (play) {
 		if (srcArray[currentSlide].src_start != null) {
-			videoId.currentTime = srcArray[currentSlide].src_start;
+            // If yellowScreenRanges are defined globally (from Firestore), and we are
+            // supposed to skip them, move the start just past any yellow block.
+            var startTime = srcArray[currentSlide].src_start;
+            if (typeof window.shouldSkipYellow !== 'undefined' && window.shouldSkipYellow && Array.isArray(window.yellowScreenRanges)) {
+                var eps = 0.05;
+                for (var i = 0; i < window.yellowScreenRanges.length; i++) {
+                    var r = window.yellowScreenRanges[i];
+                    if (!r || typeof r.start !== 'number' || typeof r.end !== 'number') continue;
+                    if (startTime >= r.start && startTime < r.end) {
+                        startTime = r.end + eps;
+                    }
+                }
+            }
+			videoId.currentTime = startTime;
 		}
 		else {
 			console.error("Invalid srcArray/currentSlide/src_start. currentSlide = " + currentSlide);
@@ -97,7 +110,18 @@ function updateVideoId(play=true){ // FindMe3
 	else {
 		//Go to end of last clip
 		if (srcArray[currentSlide].src_end) {
-			videoId.currentTime = srcArray[currentSlide].src_end;
+            var endTime = srcArray[currentSlide].src_end;
+            if (typeof window.shouldSkipYellow !== 'undefined' && window.shouldSkipYellow && Array.isArray(window.yellowScreenRanges)) {
+                var eps2 = 0.05;
+                for (var j = 0; j < window.yellowScreenRanges.length; j++) {
+                    var r2 = window.yellowScreenRanges[j];
+                    if (!r2 || typeof r2.start !== 'number' || typeof r2.end !== 'number') continue;
+                    if (endTime > r2.start && endTime <= r2.end + eps2) {
+                        endTime = r2.end + eps2;
+                    }
+                }
+            }
+			videoId.currentTime = endTime;
 		}
 		else {
 			console.error("Invalid srcArray[currentSlide]src_end. currentSlide = " + currentSlide);

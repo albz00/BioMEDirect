@@ -1255,9 +1255,10 @@ html {
 }
 
 .chapter-row {
-    display: flex;
-    align-items: center;
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(0, 3fr) minmax(0, 2fr) auto;
     gap: 0.5rem;
+    align-items: center;
     margin-bottom: 0.4rem;
 }
 
@@ -1268,7 +1269,6 @@ html {
 }
 
 .chapter-row .chapter-name-input {
-    flex: 1;
     padding: 0.35rem 0.5rem;
     border-radius: 4px;
     border: 1px solid rgba(255, 255, 255, 0.2);
@@ -1280,6 +1280,21 @@ html {
 .chapter-row .chapter-name-input:focus {
     outline: none;
     border-color: #3b82f6;
+}
+
+.chapter-index-label {
+    font-size: 0.75rem;
+    color: #94a3b8;
+}
+
+.chapter-index-input {
+    width: 100%;
+    padding: 0.35rem 0.45rem;
+    border-radius: 4px;
+    border: 1px solid rgba(148, 163, 184, 0.4);
+    background: rgba(15, 23, 42, 0.85);
+    color: #e2e8f0;
+    font-size: 0.8rem;
 }
 
 .chapter-row .btn-chapter-save {

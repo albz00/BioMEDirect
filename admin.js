@@ -106,6 +106,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const currentUser = auth.currentUser;
     if (currentUser) {
         showDashboard();
+        // Automatically scan lessons on load for convenience
+        if (scanBtn) {
+            scanLessons().catch((e) => console.error('Auto-scan failed:', e));
+        }
     } else {
         showLogin();
     }
@@ -1046,8 +1050,6 @@ function getLessonCardHTML(lesson) {
                 <div class="lesson-chapters-block">
                     <button type="button" class="btn btn-secondary btn-chapters" onclick="showChaptersForLesson('${escId}')"><span class="btn-label">Show chapters</span></button>
                     <div id="chapters-container-${lesson.lessonId}" class="chapters-container" style="display:none;">
-                        <label class="chapters-dropdown-label">Chapters</label>
-                        <select id="chapters-dropdown-${lesson.lessonId}" class="chapters-dropdown"><option value="">— Select a chapter —</option></select>
                         <div id="chapters-edit-list-${lesson.lessonId}" class="chapters-edit-list"></div>
                     </div>
                 </div>
@@ -1165,27 +1167,6 @@ function setupSrcArrayEditorListeners() {
     setupCollapsibleCard('srcArrayEditorCard', 'srcArrayEditorToggle', 'srcArrayEditorBody');
     setupCollapsibleCard('selectedLessonCard', 'selectedLessonToggle', 'selectedLessonBody');
     setupCollapsibleCard('videosCard', 'videosCardToggle', 'videosCardBody');
-    const syncBtn = document.getElementById('srcArraySyncChaptersBtn');
-    if (syncBtn) {
-        syncBtn.addEventListener('click', async () => {
-            if (!selectedLessonId) {
-                setStatus('Select a lesson first', 'error');
-                return;
-            }
-            setStatus('Syncing from chapters…', 'scanning');
-            try {
-                const result = await mapSegmentLinksForLesson(selectedLessonId);
-                if (result.skipped) {
-                    setStatus(result.reason || 'Skipped', 'error');
-                } else {
-                    setStatus(`Mapped ${result.mapped} segment links`, 'success');
-                    await refreshSrcArrayEditor();
-                }
-            } catch (e) {
-                setStatus('Sync failed: ' + e.message, 'error');
-            }
-        });
-    }
     const saveBtn = document.getElementById('srcArraySaveAllBtn');
     if (saveBtn) {
         saveBtn.addEventListener('click', async () => {
@@ -1222,16 +1203,6 @@ function setupSrcArrayEditorListeners() {
             } catch (e) {
                 setStatus('Save failed: ' + e.message, 'error');
             }
-        });
-    }
-    const autoBtn = document.getElementById('srcArrayAutoGenerateBtn');
-    if (autoBtn) {
-        autoBtn.addEventListener('click', async () => {
-            if (!selectedLessonId) {
-                setStatus('Select a lesson first', 'error');
-                return;
-            }
-            await generateSrcArrayFromYellowScreensForLesson(selectedLessonId);
         });
     }
 }
@@ -1342,9 +1313,8 @@ async function showChaptersForLesson(lessonId) {
     }
 
     const container = document.getElementById(`chapters-container-${lessonId}`);
-    const dropdown = document.getElementById(`chapters-dropdown-${lessonId}`);
     const editList = document.getElementById(`chapters-edit-list-${lessonId}`);
-    if (!container || !dropdown || !editList) return;
+    if (!container || !editList) return;
 
     setStatus('Detecting chapters from lesson...', 'scanning');
 
@@ -1352,7 +1322,6 @@ async function showChaptersForLesson(lessonId) {
         const menuLinks = await extractMenuLinksFromHTML(lesson.path);
         if (!menuLinks.length) {
             editList.innerHTML = '<p class="chapters-empty">No chapter buttons found in this lesson.</p>';
-            dropdown.innerHTML = '<option value="">— No chapters —</option>';
             container.style.display = 'block';
             setStatus('No chapters detected', 'error');
             return;
@@ -1360,6 +1329,11 @@ async function showChaptersForLesson(lessonId) {
 
         const metaDoc = await db.collection('lessonMetadata').doc(lessonId).get();
         const chapterDisplayNames = (metaDoc.exists && metaDoc.data().chapterDisplayNames) ? metaDoc.data().chapterDisplayNames : {};
+        const videoFilename = await getVideoFilenameForLesson(lessonId);
+        const srcMetaDoc = (videoFilename && videoFilename.trim())
+            ? await db.collection('lessons').doc(videoFilename).get().catch(() => null)
+            : null;
+        const srcArrayData = srcMetaDoc && srcMetaDoc.exists ? (srcMetaDoc.data().srcArray || []) : [];
 
         const chapters = menuLinks.map(m => ({
             menuId: m.menuId,
@@ -1367,21 +1341,18 @@ async function showChaptersForLesson(lessonId) {
             displayName: chapterDisplayNames[m.menuId] !== undefined ? chapterDisplayNames[m.menuId] : m.label
         }));
 
-        dropdown.innerHTML = '<option value="">— Select a chapter —</option>' +
-            chapters.map((ch, i) => {
-                const safe = ch.displayName.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                return `<option value="${i}">${safe}</option>`;
-            }).join('');
-
-        editList.innerHTML = chapters.map((ch) => {
+        editList.innerHTML = chapters.map((ch, idx) => {
             const safeOriginal = ch.originalLabel.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
             const safeDisplay = ch.displayName.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
             const safeMenuIdAttr = ch.menuId.replace(/"/g, '&quot;');
             const menuIdEscaped = ch.menuId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            const currentSegmentIndex = (srcArrayData[idx] && typeof srcArrayData[idx].freezeFrame === 'number') ? srcArrayData[idx].freezeFrame : idx + 1;
             return `
                 <div class="chapter-row" data-menu-id="${safeMenuIdAttr}">
                     <span class="chapter-menu-id">${ch.menuId}</span>
                     <input type="text" class="chapter-name-input" value="${safeDisplay}" data-original="${safeOriginal}" data-menu-id="${safeMenuIdAttr}">
+                    <label class="chapter-index-label">Segment index:</label>
+                    <input type="number" class="chapter-index-input" min="1" value="${currentSegmentIndex}" data-menu-id="${safeMenuIdAttr}">
                     <button type="button" class="btn-section-save btn-chapter-save" onclick="saveChapterDisplayName('${lessonId.replace(/'/g, "\\'")}', '${menuIdEscaped}')">Save</button>
                 </div>`;
         }).join('');
@@ -1406,17 +1377,22 @@ async function saveChapterDisplayName(lessonId, menuId) {
     }
 
     const row = document.querySelector(`#chapters-edit-list-${lessonId} .chapter-row[data-menu-id="${menuId}"]`);
-    const input = row ? row.querySelector('.chapter-name-input') : null;
-    if (!input) return;
+    if (!row) return;
+    const input = row.querySelector('.chapter-name-input');
+    const indexInput = row.querySelector('.chapter-index-input');
+    if (!input || !indexInput) return;
 
     const newName = input.value.trim();
     const originalLabel = input.getAttribute('data-original') || '';
+    const segmentIndexRaw = indexInput.value.trim();
+    const segmentIndex = segmentIndexRaw ? parseInt(segmentIndexRaw, 10) : null;
 
     const lesson = lessonsData.find(l => l.lessonId === lessonId);
     if (!lesson) return;
 
     const metaRef = db.collection('lessonMetadata').doc(lessonId);
 
+    // Update display name
     if (!newName || newName === originalLabel) {
         try {
             await metaRef.update({
@@ -1434,19 +1410,16 @@ async function saveChapterDisplayName(lessonId, menuId) {
         await metaRef.set({ chapterDisplayNames: existing }, { merge: true });
         input.setAttribute('data-original', newName);
     }
-    const dropdown = document.getElementById(`chapters-dropdown-${lessonId}`);
-    if (dropdown) {
-        const rows = document.querySelectorAll(`#chapters-edit-list-${lessonId} .chapter-row`);
-        const options = dropdown.querySelectorAll('option');
-        options.forEach((opt) => {
-            if (opt.value === '') return;
-            const rowIndex = parseInt(opt.value, 10);
-            const row = rows[rowIndex];
-            const inp = row ? row.querySelector('.chapter-name-input') : null;
-            if (inp) opt.textContent = inp.value.trim() || inp.getAttribute('data-original') || '';
-        });
+
+    // Update chapter → segment index mapping
+    if (segmentIndex && !Number.isNaN(segmentIndex) && segmentIndex > 0) {
+        const snapIdx = await metaRef.get();
+        const existingMap = (snapIdx.exists && snapIdx.data().chapterSegmentMap) ? { ...snapIdx.data().chapterSegmentMap } : {};
+        existingMap[menuId] = segmentIndex;
+        await metaRef.set({ chapterSegmentMap: existingMap }, { merge: true });
     }
-    setStatus('Chapter name saved', 'success');
+
+    setStatus('Chapter mapping saved', 'success');
     setTimeout(() => setStatus('Ready'), 2000);
 }
 
