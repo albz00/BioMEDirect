@@ -95,7 +95,7 @@ html<!DOCTYPE html>
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
     // Globals for yellow-screen skipping in masterUIcontrol
-    window.shouldSkipYellow = true;
+    window.shouldSkipYellow = false;
     window.yellowScreenRanges = [];
 
     // Load srcArray from Firestore
@@ -153,11 +153,12 @@ html<!DOCTYPE html>
                 // Fall back to default path
                 videoPath = `videos/${lessonId}.mp4`;
             }
-            // Yellow-screen preference: default to true (skip), or use stored flag
+            // Yellow-screen preference in videoPaths is currently stored as "yellowScreen" from the admin toggle.
+            // Treat FALSE (checkbox off = "remove yellow") as "skip yellow", and TRUE / missing as "show yellow".
             if (typeof vpData.yellowScreen === 'boolean') {
-                window.shouldSkipYellow = vpData.yellowScreen;
+                window.shouldSkipYellow = !vpData.yellowScreen;
             } else {
-                window.shouldSkipYellow = true;
+                window.shouldSkipYellow = false;
             }
             
             const storageRef = firebase.storage().ref();

@@ -453,7 +453,7 @@ function framesToRanges(yellowFrames) {
   // Add final range
   ranges.push({
     start: Math.round(rangeStart * 100) / 100,
-    end: Math.round((rangeEnd + 0.2) * 100) / 100
+    end: Math.round((rangeEnd + 0.4) * 100) / 100 // slightly larger buffer after last yellow frame
   });
   
   return mergeYellowRanges(ranges);
