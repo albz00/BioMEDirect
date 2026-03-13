@@ -39,16 +39,22 @@ exports.generateSrcArray = onObjectFinalized(
   console.log("Downloading video to:", tmpFile);
   await bucket.file(filePath).download({ destination: tmpFile });
 
-  console.log("Running scene detection...");
-  const scenes = await detectScenes(tmpFile);
-  console.log("Detected scenes:", scenes);
-
   console.log("Getting duration...");
   const duration = await getDuration(tmpFile);
   console.log("Duration:", duration);
 
-  console.log("Building srcArray...");
-  const srcArray = buildSrcArray(scenes, duration);
+  console.log("Detecting yellow screens for initial srcArray...");
+  let yellowRanges = [];
+  try {
+    yellowRanges = await detectYellowFrames(tmpFile);
+  } catch (e) {
+    console.error("detectYellowFrames failed during generateSrcArray, continuing with no detections:", e);
+    yellowRanges = [];
+  }
+  console.log("Detected yellow ranges for srcArray generation:", yellowRanges);
+
+  console.log("Building srcArray from yellow ranges...");
+  const srcArray = buildSrcArrayFromYellow(yellowRanges, duration);
 
   console.log("Writing srcArray to Firestore...");
   await db.collection("lessons").doc(lessonId).set(
@@ -62,29 +68,6 @@ exports.generateSrcArray = onObjectFinalized(
   console.log("Done!");
   }
 );
-
-function detectScenes(video) {
-  return new Promise((resolve, reject) => {
-    const times = [];
-
-    const proc = spawn(ffmpegPath, [
-      "-i", video,
-      "-filter:v", "select='gt(scene,0.3)',showinfo",
-      "-f", "null", "-"
-    ]);
-
-    proc.stderr.on("data", (data) => {
-      const text = data.toString();
-      const match = text.match(/pts_time:(\d+\.\d+)/);
-      if (match) times.push(parseFloat(match[1]));
-    });
-
-    proc.on("close", (code) => {
-      if (code === 0) resolve(times);
-      else reject(new Error("Scene detection failed"));
-    });
-  });
-}
 
 function getDuration(video) {
   return new Promise((resolve, reject) => {
@@ -113,9 +96,12 @@ function getDuration(video) {
   });
 }
 
-function buildSrcArray(scenes, duration) {
-  const boundaries = [0, ...scenes, duration];
-
+// Build a baseline srcArray driven by yellow screen detections.
+// Each yellow card is treated as the start of a content segment:
+// - segment i starts just after yellowRanges[i].end
+// - segment i ends at the start of yellowRanges[i+1] (or video end for the last)
+// If no yellow screens are detected, fall back to a single full-length segment.
+function buildSrcArrayFromYellow(yellowRanges, duration) {
   const arr = [];
   let freeze = 0;
 
@@ -128,11 +114,46 @@ function buildSrcArray(scenes, duration) {
     loop: false,
   });
 
-  for (let i = 0; i < boundaries.length - 1; i++) {
-    const start = boundaries[i];
-    const end = boundaries[i + 1];
+  if (!yellowRanges || yellowRanges.length === 0) {
+    // No yellow screens: single segment for the whole video
+    arr.push({
+      src_start: 0,
+      src_end: Math.round(duration * 100) / 100,
+      freezeFrame: freeze++,
+      menuLink: "",
+      side: false,
+      loop: false,
+    });
+    return arr;
+  }
 
-    if (end - start < 0.4) continue; // skip yellow flashes
+  // Sort ranges by start time
+  const ranges = [...yellowRanges].sort((a, b) => {
+    const as = typeof a.start === "number" ? a.start : 0;
+    const bs = typeof b.start === "number" ? b.start : 0;
+    return as - bs;
+  });
+
+  const EPS = 0.05; // 50ms offset to jump past yellow frames
+
+  for (let i = 0; i < ranges.length; i++) {
+    const r = ranges[i];
+    const next = ranges[i + 1] || null;
+
+    const rawStart = typeof r.end === "number" ? r.end : (typeof r.start === "number" ? r.start : 0);
+    let start = rawStart + EPS;
+    if (!isFinite(start) || start < 0) start = 0;
+
+    let end;
+    if (next && typeof next.start === "number") {
+      end = Math.max(start + 0.01, next.start);
+    } else {
+      end = duration;
+    }
+
+    if (end - start < 0.05) {
+      continue; // skip degenerate segments
+    }
 
     arr.push({
       src_start: Math.round(start * 100) / 100,
@@ -147,7 +168,9 @@ function buildSrcArray(scenes, duration) {
   return arr;
 }
 
-// Cloud Function to detect yellow screen frames and adjust srcArray
+// Cloud Function to detect yellow screen frames and store ranges.
+// This no longer mutates originalSrcArray; it just records yellowScreenRanges
+// so the player or client-side logic can "leap frog" over them.
 exports.detectYellowScreen = onCall(
   {
     memory: "1GiB",
@@ -171,37 +194,15 @@ exports.detectYellowScreen = onCall(
     const yellowRanges = await detectYellowFrames(tmpFile);
     console.log("Detected yellow screen ranges:", yellowRanges);
 
-    // Get current srcArray
-    const videoDoc = await db.collection("lessons").doc(videoFilename).get();
-    if (!videoDoc.exists) {
-      throw new Error(`Video document not found: ${videoFilename}`);
-    }
-
-    const currentData = videoDoc.data();
-    const originalSrcArray = currentData.originalSrcArray || currentData.srcArray || [];
-    const currentSrcArray = currentData.srcArray || [];
-
-    // Store original if not already stored
-    if (!currentData.originalSrcArray) {
-      await db.collection("lessons").doc(videoFilename).set({
-        originalSrcArray: currentSrcArray
-      }, { merge: true });
-    }
-
-    // Adjust srcArray to skip yellow screen ranges
-    const adjustedSrcArray = adjustSrcArrayForYellowScreen(originalSrcArray, yellowRanges);
-
-    // Update with adjusted srcArray
+    // Store ranges alongside existing srcArray/originalSrcArray without changing them
     await db.collection("lessons").doc(videoFilename).set({
-      srcArray: adjustedSrcArray,
       yellowScreenRanges: yellowRanges
     }, { merge: true });
 
-    console.log("Yellow screen detection complete");
+    console.log("Yellow screen detection complete (ranges stored only)");
     return {
       success: true,
-      yellowRanges: yellowRanges,
-      adjustedSegments: adjustedSrcArray.length
+      yellowRanges: yellowRanges
     };
   } catch (error) {
     console.error("Error detecting yellow screen:", error);
