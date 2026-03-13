@@ -295,10 +295,11 @@ function detectYellowFrames(video) {
     
     // Yellow target in LAB color space
     const yellowLAB = { L: 97, A: -21, B: 94 };
-    // More aggressive thresholds so we reliably catch *all* bright yellow cards:
-    const deltaEThreshold = 70;  // larger ΔE allows more variation around target yellow
-    const sampleStep = 16;       // denser sampling grid
-    const yellowPixelThreshold = 0.18; // at least 18% of sampled pixels must be yellow
+    // Tuned thresholds: aim to catch full-screen bright yellow cards,
+    // but avoid flagging normal lesson slides that only contain small yellow elements.
+    const deltaEThreshold = 55;     // tighter ΔE so only strong yellows match
+    const sampleStep = 24;          // coarser sampling grid for performance
+    const yellowPixelThreshold = 0.4; // frame counted as yellow only if ~40%+ of sampled pixels are yellow
 
     // First, get video dimensions from FFmpeg
     getVideoDimensions(video).then(({ width, height }) => {

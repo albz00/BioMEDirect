@@ -1174,7 +1174,7 @@ function getLessonCardHTML(lesson) {
                     </select>
                     <button class="assign-btn" onclick="assignVideo('${escId}', this)" id="assign-btn-${lesson.lessonId}">${lesson.hasVideo ? 'Update' : 'Assign'}</button>
                     <button type="button" class="btn btn-secondary btn-sm" onclick="resetLessonAssignment('${escId}', this)"><span class="btn-label">Reset</span></button>
-                    <button type="button" class="btn btn-secondary btn-sm" onclick="regenerateSrcArrayFromYellow('${escId}', this)"><span class="btn-label">Regenerate from yellow</span></button>
+                    <!-- Regenerate-from-yellow disabled now that generation handles yellow in a single path -->
                 </div>
                 <div class="lesson-chapters-block">
                     <button type="button" class="btn btn-secondary btn-chapters" onclick="showChaptersForLesson('${escId}')"><span class="btn-label">Show chapters</span></button>
