@@ -506,14 +506,18 @@ function mergeYellowRanges(ranges) {
   return merged;
 }
 
-// Adjust srcArray to skip yellow screen ranges
+// Adjust srcArray to skip yellow screen ranges completely:
+// - Any segment fully inside a yellow range is dropped.
+// - Any segment that touches a yellow range is truncated so its end never enters yellow.
+//   (We keep only the pre-yellow portion; we do NOT keep a "tail" after yellow.)
 function adjustSrcArrayForYellowScreen(srcArray, yellowRanges) {
   if (!yellowRanges || yellowRanges.length === 0) {
     return srcArray; // No yellow screens detected, return original
   }
 
   const adjusted = [];
-  
+  const ranges = (yellowRanges || []).slice().sort((a, b) => a.start - b.start);
+
   for (const segment of srcArray) {
     // Keep opening segment (no timing)
     if (segment.src_start === null || segment.src_end === null) {
@@ -523,41 +527,29 @@ function adjustSrcArrayForYellowScreen(srcArray, yellowRanges) {
 
     let segmentStart = segment.src_start;
     let segmentEnd = segment.src_end;
-    let segmentSkipped = false;
+    let skip = false;
 
-    // Check if segment overlaps with any yellow screen range
-    for (const yellowRange of yellowRanges) {
-      // If segment is entirely within yellow range, skip it
-      if (segmentStart >= yellowRange.start && segmentEnd <= yellowRange.end) {
-        segmentSkipped = true;
+    for (const r of ranges) {
+      const ys = typeof r.start === "number" ? r.start : null;
+      const ye = typeof r.end === "number" ? r.end : null;
+      if (ys == null || ye == null) continue;
+
+      // Segment entirely inside yellow → drop it
+      if (segmentStart >= ys && segmentEnd <= ye) {
+        skip = true;
         break;
       }
-      
-      // If segment overlaps with yellow range, adjust it
-      if (segmentStart < yellowRange.end && segmentEnd > yellowRange.start) {
-        // Segment starts before yellow but overlaps
-        if (segmentStart < yellowRange.start && segmentEnd > yellowRange.start) {
-          // Split: keep part before yellow
-          if (yellowRange.start - segmentStart > 0.1) {
-            adjusted.push({
-              ...segment,
-              src_start: segmentStart,
-              src_end: yellowRange.start
-            });
-          }
-          // Adjust segment to start after yellow
-          segmentStart = yellowRange.end;
-        }
-        
-        // Segment starts in yellow but extends beyond
-        if (segmentStart < yellowRange.end && segmentEnd > yellowRange.end) {
-          segmentStart = yellowRange.end;
-        }
+
+      // If yellow starts before our end and after our start, clamp segmentEnd
+      if (ys < segmentEnd && ye > segmentStart) {
+        // We only keep content strictly before the yellow card
+        segmentEnd = Math.min(segmentEnd, ys);
       }
     }
 
-    // Add segment if it wasn't entirely skipped and has valid timing
-    if (!segmentSkipped && segmentEnd > segmentStart && segmentEnd - segmentStart > 0.1) {
+    if (skip) continue;
+
+    if (segmentEnd - segmentStart > 0.1) {
       adjusted.push({
         ...segment,
         src_start: Math.round(segmentStart * 100) / 100,
