@@ -17,7 +17,7 @@ const functions = firebase.functions();
 // State
 let availableVideos = [];
 let lessonsData = [];
-let loginScreen, dashboardScreen, loginForm, scanBtn, refreshVideosBtn, statusText, loginError, videosList;
+let loginScreen, dashboardScreen, loginForm, refreshVideosBtn, statusText, loginError, videosList;
 let uploadVideoBtn, uploadVideoInput;
 let instructionsBtn, changelogBtn, instructionsModal, changelogModal;
 let profileBtn, profileModal;
@@ -87,7 +87,6 @@ document.addEventListener('DOMContentLoaded', () => {
     profileModal = document.getElementById('profileModal');
     instructionsBtn = document.getElementById('instructionsBtn');
     changelogBtn = document.getElementById('changelogBtn');
-    scanBtn = document.getElementById('scanBtn');
     refreshVideosBtn = document.getElementById('refreshVideosBtn');
     uploadVideoBtn = document.getElementById('uploadVideoBtn');
     uploadVideoInput = document.getElementById('uploadVideoInput');
@@ -118,10 +117,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const currentUser = auth.currentUser;
     if (currentUser) {
         showDashboard();
-        // Automatically scan lessons on load for convenience
-        if (scanBtn) {
-            scanLessons().catch((e) => console.error('Auto-scan failed:', e));
-        }
+        // Automatically scan lessons and videos on load for convenience
+        refreshDashboard().catch((e) => console.error('Auto-refresh failed:', e));
     } else {
         showLogin();
     }
@@ -355,13 +352,6 @@ function setupEventListeners() {
                 console.error('Logout error:', error);
                 alert('Error logging out: ' + error.message);
             }
-        });
-    }
-
-    // Scan Lessons
-    if (scanBtn) {
-        scanBtn.addEventListener('click', async () => {
-            await scanLessons();
         });
     }
 
@@ -887,7 +877,8 @@ async function scanLessons() {
     }
     
     setStatus('Scanning lessons from menu...', 'scanning');
-    scanBtn.disabled = true;
+    const refreshBtn = refreshVideosBtn;
+    if (refreshBtn) refreshBtn.disabled = true;
     const lessonDetailEl = document.getElementById('lessonDetail');
     const sidebarTreeEl = document.getElementById('sidebarTree');
     if (lessonDetailEl) lessonDetailEl.innerHTML = '<div class="spinner"></div>';
@@ -989,7 +980,7 @@ async function scanLessons() {
         const lessonDetail = document.getElementById('lessonDetail');
         if (lessonDetail) lessonDetail.innerHTML = '<p class="placeholder">Error loading lessons</p>';
     } finally {
-        scanBtn.disabled = false;
+        if (refreshBtn) refreshBtn.disabled = false;
     }
 }
 
@@ -1183,6 +1174,7 @@ function getLessonCardHTML(lesson) {
                     </select>
                     <button class="assign-btn" onclick="assignVideo('${escId}', this)" id="assign-btn-${lesson.lessonId}">${lesson.hasVideo ? 'Update' : 'Assign'}</button>
                     <button type="button" class="btn btn-secondary btn-sm" onclick="resetLessonAssignment('${escId}', this)"><span class="btn-label">Reset</span></button>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="regenerateSrcArrayFromYellow('${escId}', this)"><span class="btn-label">Regenerate from yellow</span></button>
                 </div>
                 <div class="lesson-chapters-block">
                     <button type="button" class="btn btn-secondary btn-chapters" onclick="showChaptersForLesson('${escId}')"><span class="btn-label">Show chapters</span></button>
@@ -1771,6 +1763,64 @@ async function resetLessonAssignment(lessonId, btn) {
     }
 }
 
+// Regenerate srcArray for a lesson's video using yellow-screen detection (server-side)
+async function regenerateSrcArrayFromYellow(lessonId, btn) {
+    try {
+        requireAuth();
+    } catch (error) {
+        alert('Authentication required. Please log in again.');
+        return;
+    }
+
+    const lesson = lessonsData.find(l => l.lessonId === lessonId);
+    if (!lesson) {
+        setStatus('Lesson not found', 'error');
+        return;
+    }
+
+    const confirmed = window.confirm(`Regenerate the srcArray for "${lesson.name}" from yellow-screen detections? This will overwrite the current timeline for this video.`);
+    if (!confirmed) return;
+
+    setButtonLoading(btn, true);
+    setStatus(`Regenerating srcArray for ${lesson.name} from yellow screens...`, 'scanning');
+
+    try {
+        // Resolve video path and filename
+        const videoPathDoc = await db.collection('videoPaths').doc(lessonId).get();
+        const vpData = videoPathDoc.exists ? videoPathDoc.data() : {};
+        const videoPath = vpData.videoPath || `videos/${lessonId}.mp4`;
+
+        const match = videoPath.match(/videos\/([^\/]+)\.mp4$/);
+        if (!match) {
+            throw new Error('Invalid video path format for this lesson');
+        }
+        const videoFilename = match[1]; // without extension
+
+        const detectYellow = functions.httpsCallable('detectYellowScreen');
+        const result = await detectYellow({ videoPath, videoFilename });
+
+        if (!result.data || !result.data.success) {
+            throw new Error('Yellow detection function reported failure');
+        }
+
+        // Reload the updated srcArray into the Timeline editor if this is the selected lesson
+        if (selectedLessonId === lessonId) {
+            await refreshSrcArrayEditor();
+        }
+
+        const rangesCount = Array.isArray(result.data.yellowRanges) ? result.data.yellowRanges.length : 0;
+        const segs = typeof result.data.adjustedSegments === 'number' ? result.data.adjustedSegments : 'updated';
+        setStatus(`Regenerated from yellow: ${rangesCount} ranges detected, ${segs} segments in srcArray`, 'success');
+        setTimeout(() => setStatus('Ready'), 3000);
+    } catch (error) {
+        console.error('Error regenerating srcArray from yellow:', error);
+        alert('Error regenerating srcArray from yellow: ' + error.message);
+        setStatus('Error regenerating srcArray from yellow: ' + error.message, 'error');
+    } finally {
+        setButtonLoading(btn, false);
+    }
+}
+
 // Simple fallback (kept for backwards compatibility, currently unused)
 function adjustSrcArraySimple(srcArray) {
     if (!srcArray || srcArray.length === 0) return srcArray;
@@ -2266,6 +2316,7 @@ window.saveChapterDisplayName = saveChapterDisplayName;
 window.adjustChapterIndexSequence = adjustChapterIndexSequence;
 window.saveAllChapters = saveAllChapters;
 window.resetLessonAssignment = resetLessonAssignment;
+window.regenerateSrcArrayFromYellow = regenerateSrcArrayFromYellow;
 window.saveSectionDisplayName = async function saveSectionDisplayName(originalSection, btn) {
     try {
         requireAuth();
