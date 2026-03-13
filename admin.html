@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BioME - Admin</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="admin.css">
     <!-- Firebase SDKs -->
         <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
@@ -13,6 +16,19 @@
         <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-functions-compat.js"></script>
 </head>
 <body>
+    <!-- Heroicons sprite (hidden but available for <use>; display:none can break refs in some browsers) -->
+    <svg class="icon-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <symbol id="icon-document-text" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5v-7.5H8.25v7.5z"/></symbol>
+      <symbol id="icon-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"/></symbol>
+      <symbol id="icon-code-bracket" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5"/></symbol>
+      <symbol id="icon-arrow-left-on-rectangle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75"/></symbol>
+      <symbol id="icon-arrow-path" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"/></symbol>
+      <symbol id="icon-arrow-up-tray" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"/></symbol>
+      <symbol id="icon-chevron-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15.75 19.5L8.25 12l7.5-7.5"/></symbol>
+      <symbol id="icon-chevron-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8.25 4.5l7.5 7.5-7.5 7.5"/></symbol>
+      <symbol id="icon-play" viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" d="M4.5 5.653c0-1.426 1.529-2.33 2.779-1.643l11.54 6.348c1.295.712 1.295 2.573 0 3.285L7.28 19.991c-1.25.687-2.779-.217-2.779-1.643V5.653z" clip-rule="evenodd"/></symbol>
+      <symbol id="icon-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25"/></symbol>
+    </svg>
     <!-- Login Screen -->
     <div id="loginScreen" class="screen">
         <div class="login-layout">
@@ -64,22 +80,23 @@
     <!-- Admin Dashboard -->
     <div id="dashboardScreen" class="screen hidden">
         <header class="dashboard-header">
-            <h1>BioME - Admin Dashboard</h1>
+            <h1>BioME - Control Panel</h1>
             <div class="header-buttons">
                 <button id="instructionsBtn" class="btn btn-secondary">
-                    <span class="btn-icon">?</span>
+                    <svg class="btn-icon heroicon" width="20" height="20" aria-hidden="true"><use href="#icon-document-text"/></svg>
                     <span class="btn-label">Instructions</span>
                 </button>
                 <button id="changelogBtn" class="btn btn-secondary">
-                    <span class="btn-icon">&lt;/&gt;</span>
+                    <svg class="btn-icon heroicon" width="20" height="20" aria-hidden="true"><use href="#icon-code-bracket"/></svg>
                     <span class="btn-label">Changelog</span>
                 </button>
                 <button id="viewMainMenuBtn" class="btn btn-secondary">
+                    <svg class="btn-icon heroicon" width="20" height="20" aria-hidden="true"><use href="#icon-home"/></svg>
                     <span class="btn-label">View Main Menu</span>
                 </button>
-                <button id="logoutBtn" class="btn btn-secondary">
-                    <span class="btn-icon">↩</span>
-                    <span class="btn-label">Logout</span>
+                <button id="profileBtn" class="btn btn-secondary">
+                    <svg class="btn-icon heroicon" width="20" height="20" aria-hidden="true"><use href="#icon-user"/></svg>
+                    <span class="btn-label">Profile</span>
                 </button>
             </div>
         </header>
@@ -88,11 +105,11 @@
             <div class="controls-section">
                 <button id="scanBtn" class="btn btn-primary">Scan All Sections + Lessons</button>
                 <button id="refreshVideosBtn" class="btn btn-secondary">
-                    <span class="btn-icon">⟳</span>
+                    <svg class="btn-icon heroicon" width="20" height="20" aria-hidden="true"><use href="#icon-arrow-path"/></svg>
                     <span class="btn-label">Refresh</span>
                 </button>
                 <button id="uploadVideoBtn" class="btn btn-secondary">
-                    <span class="btn-icon">⬆</span>
+                    <svg class="btn-icon heroicon" width="20" height="20" aria-hidden="true"><use href="#icon-arrow-up-tray"/></svg>
                     <span class="btn-label">Upload Video</span>
                 </button>
                 <input type="file" id="uploadVideoInput" accept="video/mp4" multiple style="display:none;">
@@ -119,7 +136,7 @@
                 <aside id="lessonsSidebar" class="lessons-sidebar">
                     <div class="sidebar-header">
                         <h2 class="sidebar-title">Lessons</h2>
-                        <button type="button" id="sidebarToggle" class="sidebar-toggle" title="Collapse sidebar" aria-label="Collapse sidebar">◀</button>
+                        <button type="button" id="sidebarToggle" class="sidebar-toggle" title="Collapse sidebar" aria-label="Collapse sidebar"><svg class="heroicon sidebar-chevron" width="18" height="18" aria-hidden="true"><use id="sidebarToggleIcon" href="#icon-chevron-left"/></svg></button>
                     </div>
                     <div class="search-filter-controls sidebar-controls">
                         <input type="text" id="searchInput" class="search-input" placeholder="Search lessons...">
@@ -133,13 +150,56 @@
                 </aside>
 
                 <div class="main-content">
-                    <div id="lessonDetail" class="lesson-detail-panel">
-                        <p class="placeholder">Select a lesson from the tree</p>
+                    <div id="selectedLessonCard" class="collapsible-card">
+                        <button type="button" class="collapsible-card-header" id="selectedLessonToggle" aria-expanded="true" aria-controls="selectedLessonBody">
+                            <span class="collapsible-card-title">Selected Lesson</span>
+                            <svg class="collapsible-card-chevron heroicon" width="20" height="20" aria-hidden="true"><use href="#icon-chevron-right"/></svg>
+                        </button>
+                        <div id="selectedLessonBody" class="collapsible-card-body">
+                            <div id="lessonDetail" class="lesson-detail-panel">
+                                <p class="placeholder">Select a lesson from the tree</p>
+                            </div>
+                        </div>
                     </div>
-                    <div class="videos-section">
-                        <h2>Available Videos</h2>
-                        <div id="videosList" class="videos-list">
-                            <p class="placeholder">Click "Refresh Available Videos" to load videos from Storage</p>
+                    <div id="srcArrayEditorCard" class="srcarray-editor-card collapsed">
+                        <button type="button" class="srcarray-editor-header" id="srcArrayEditorToggle" aria-expanded="false" aria-controls="srcArrayEditorBody">
+                            <span class="srcarray-editor-title">Timeline / srcArray Editor</span>
+                            <svg class="srcarray-editor-chevron heroicon" width="20" height="20" aria-hidden="true"><use href="#icon-chevron-right"/></svg>
+                        </button>
+                        <div id="srcArrayEditorBody" class="srcarray-editor-body" hidden>
+                            <div class="srcarray-editor-toolbar">
+                                <button type="button" id="srcArraySyncChaptersBtn" class="btn btn-secondary btn-sm">Sync from chapters</button>
+                                <button type="button" id="srcArraySaveAllBtn" class="btn btn-primary btn-sm">Save all</button>
+                                <span id="srcArrayEditorStatus" class="srcarray-editor-status"></span>
+                            </div>
+                            <div class="srcarray-editor-table-wrap">
+                                <table class="srcarray-editor-table" id="srcArrayEditorTable">
+                                    <thead>
+                                        <tr>
+                                            <th>index</th>
+                                            <th>start</th>
+                                            <th>end</th>
+                                            <th>title / chapter</th>
+                                            <th>source label</th>
+                                            <th>confidence</th>
+                                            <th>actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="srcArrayEditorTbody"></tbody>
+                                </table>
+                            </div>
+                            <p id="srcArrayEditorEmpty" class="srcarray-editor-empty">Select a lesson with an assigned video to view or edit the timeline.</p>
+                        </div>
+                    </div>
+                    <div id="videosCard" class="collapsible-card collapsed">
+                        <button type="button" class="collapsible-card-header" id="videosCardToggle" aria-expanded="false" aria-controls="videosCardBody">
+                            <span class="collapsible-card-title">Available Videos <span id="videosCount" class="videos-count"></span></span>
+                            <svg class="collapsible-card-chevron heroicon" width="20" height="20" aria-hidden="true"><use href="#icon-chevron-right"/></svg>
+                        </button>
+                        <div id="videosCardBody" class="collapsible-card-body" hidden>
+                            <div id="videosList" class="videos-list">
+                                <p class="placeholder">Click "Refresh Available Videos" to load videos from Storage</p>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -147,170 +207,125 @@
         </div>
     </div>
 
+    <!-- Video quick-play modal -->
+    <div id="videoPreviewModal" class="modal hidden" aria-hidden="true" role="dialog" aria-label="Preview video">
+        <div class="modal-backdrop video-preview-backdrop"></div>
+        <div class="modal-content video-preview-content">
+            <button type="button" class="modal-close" id="videoPreviewClose">&times;</button>
+            <h2 id="videoPreviewTitle" class="video-preview-title">Preview</h2>
+            <div class="video-preview-wrapper">
+                <video id="videoPreviewPlayer" class="video-preview-player" controls></video>
+            </div>
+        </div>
+    </div>
+
     <!-- Instructions Modal -->
     <div id="instructionsModal" class="modal hidden" aria-hidden="true" role="dialog" aria-labelledby="instructionsTitle">
         <div class="modal-backdrop"></div>
-        <div class="modal-content">
-            <button class="modal-close" data-close-modal>&times;</button>
-            <h2 id="instructionsTitle">Admin Panel Instructions</h2>
-            <div class="modal-body">
-                <h3>1. Logging In</h3>
-                <ul>
-                    <li>Use your admin Firebase email and password to log in.</li>
-                    <li>Optionally check <strong>Remember Me</strong> to store your credentials locally on this device.</li>
-                </ul>
+        <div class="modal-content instructions-paper">
+            <button class="modal-close" data-close-modal aria-label="Close">&times;</button>
+            <div class="instructions-header">
+                <h2 id="instructionsTitle">Admin Panel Instructions</h2>
+                <p class="instructions-subtitle">BioME Control Panel — quick reference</p>
+                <div class="instructions-export">
+                    <button type="button" id="instructionsPrintBtn" class="btn btn-secondary btn-sm"><span class="btn-label">Print / Save as PDF</span></button>
+                    <button type="button" id="instructionsCopyBtn" class="btn btn-secondary btn-sm"><span class="btn-label">Copy text</span></button>
+                </div>
+            </div>
+            <div class="modal-body instructions-body" id="instructionsContent">
+                <section class="inst-section inst-section--login">
+                    <h3><span class="inst-num">1</span> Logging In</h3>
+                    <ul>
+                        <li>Use your admin Firebase email and password to log in.</li>
+                        <li>Optionally check <strong>Remember Me</strong> to store your credentials locally on this device.</li>
+                    </ul>
+                </section>
 
-                <h3>2. Overall Workflow</h3>
-                <ol>
-                    <li><strong>Scan All Sections + Lessons</strong> – reads the main TextT central menu and discovers every lesson, section name, and lessonId.</li>
-                    <li><strong>Refresh Available Videos</strong> – lists all `.mp4` files in Firebase Storage under `videos/`.</li>
-                    <li><strong>Assign / Update Videos</strong> – for each lesson, choose a video from the dropdown and click <strong>Assign</strong> or <strong>Update</strong>.</li>
-                    <li><strong>Optional: Map Segment Links</strong> – copies menu button labels into the `menuLink` field of matching `srcArray` segments.</li>
-                    <li><strong>Optional: Detect Video Titles (OCR)</strong> – uses a Cloud Function to read video titles on-frame and refine `srcArray` segment titles.</li>
-                </ol>
+                <section class="inst-section inst-section--workflow">
+                    <h3><span class="inst-num">2</span> Overall Workflow</h3>
+                    <ol class="inst-steps">
+                        <li><strong>Scan All Sections + Lessons</strong> — reads the main TextT central menu and discovers every lesson, section name, and lessonId.</li>
+                        <li><strong>Refresh Available Videos</strong> — lists all <code>.mp4</code> files in Firebase Storage under <code>videos/</code>.</li>
+                        <li><strong>Assign / Update Videos</strong> — for each lesson, choose a video from the dropdown and click <strong>Assign</strong> or <strong>Update</strong>.</li>
+                        <li><strong>Optional: Map Segment Links</strong> — copies menu button labels into the <code>menuLink</code> field of matching <code>srcArray</code> segments.</li>
+                        <li><strong>Optional: Detect Video Titles (OCR)</strong> — uses a Cloud Function to read video titles on-frame and refine <code>srcArray</code> segment titles.</li>
+                    </ol>
+                </section>
 
-                <h3>3. Controls Section</h3>
-                <ul>
-                    <li><strong>Scan All Sections + Lessons</strong> (`scanBtn`)
-                        <ul>
-                            <li>Parses `TextT/CentralMenuT.html`.</li>
-                            <li>Finds each lesson button and infers a <code>lessonId</code> from the HTML or filename.</li>
-                            <li>For each lesson, looks up:
-                                <ul>
-                                    <li><code>videoPaths/&lt;lessonId&gt;</code> document (custom videoPath, yellowScreen flag).</li>
-                                    <li><code>lessonMetadata/&lt;lessonId&gt;</code> document (display name override).</li>
-                                    <li><code>sectionNames/&lt;originalSection&gt;</code> document (section display name override).</li>
-                                    <li>Video existence in Storage based on the resolved path.</li>
-                                </ul>
-                            </li>
-                            <li>Lessons with missing videos are listed first; then everything is alphabetized.</li>
-                        </ul>
-                    </li>
-                    <li><strong>Refresh Available Videos</strong> (`refreshVideosBtn`)
-                        <ul>
-                            <li>Lists all `.mp4` files in the `videos/` folder in Firebase Storage.</li>
-                            <li>Populates the dropdown for every lesson so you can assign or change videos.</li>
-                        </ul>
-                    </li>
-                    <li><strong>Map Segment Links</strong> (`mapSegmentLinksBtn`)
-                        <ul>
-                            <li>For each lesson:
-                                <ul>
-                                    <li>Reads the lesson HTML to find `menu` buttons (segment links).</li>
-                                    <li>Reads the corresponding JS file to find which `currentSlide` index each menu button jumps to.</li>
-                                    <li>Loads the video’s `srcArray` in the `lessons` collection.</li>
-                                    <li>Sets <code>menuLink</code> on `srcArray` segments where it is empty, using the labels from the HTML menu buttons.</li>
-                                </ul>
-                            </li>
-                            <li>Skips lessons if there are more menu buttons than segments or if the required files are missing.</li>
-                        </ul>
-                    </li>
-                    <li><strong>Detect Video Titles (OCR)</strong> (`detectVideoTitlesBtn`)
-                        <ul>
-                            <li>For each lesson, calls the <code>detectVideoTitles</code> Cloud Function.</li>
-                            <li>The function:
-                                <ul>
-                                    <li>Analyzes video frames around each segment.</li>
-                                    <li>Uses OCR to detect on-screen titles.</li>
-                                    <li>Refines <code>srcArray</code> segment titles and, when possible, assigns menuLink labels.</li>
-                                </ul>
-                            </li>
-                            <li>Best used after a full scan and after videos are assigned.</li>
-                        </ul>
-                    </li>
-                </ul>
+                <section class="inst-section inst-section--controls">
+                    <h3><span class="inst-num">3</span> Controls Section</h3>
+                    <ul class="inst-list">
+                        <li><strong>Scan All Sections + Lessons</strong> — Parses <code>TextT/CentralMenuT.html</code>, infers <code>lessonId</code>, looks up <code>videoPaths</code>, <code>lessonMetadata</code>, <code>sectionNames</code>, and video existence. Lessons with missing videos listed first.</li>
+                        <li><strong>Refresh Available Videos</strong> — Lists all <code>.mp4</code> in Storage <code>videos/</code> and populates each lesson’s dropdown.</li>
+                        <li><strong>Map Segment Links</strong> — Reads lesson HTML menu buttons and JS <code>currentSlide</code>, then sets <code>menuLink</code> on <code>srcArray</code> segments. Skips if menu/segment counts don’t match.</li>
+                        <li><strong>Detect Video Titles (OCR)</strong> — Calls <code>detectVideoTitles</code> Cloud Function to analyze frames and refine <code>srcArray</code> titles. Best after scan and video assignment.</li>
+                    </ul>
+                </section>
 
-                <h3>4. Lessons Panel</h3>
-                <ul>
-                    <li><strong>Search</strong> – filters on lesson display name, lessonId, or HTML path (case-insensitive).</li>
-                    <li><strong>Filter Buttons</strong>
-                        <ul>
-                            <li><strong>All</strong> – shows every discovered lesson.</li>
-                            <li><strong>Missing</strong> – shows only lessons where the resolved video path does not exist in Storage.</li>
-                            <li><strong>Has Video</strong> – shows only lessons with a confirmed video file.</li>
-                        </ul>
-                    </li>
-                    <li><strong>Lesson Card Fields</strong>
-                        <ul>
-                            <li><strong>Section</strong> – effective section display name. May be overridden for all lessons in a section.</li>
-                            <li><strong>Original</strong> – original section + button label from the TextT menu (never changes).</li>
-                            <li><strong>ID</strong> – canonical <code>lessonId</code> used as document key in Firestore.</li>
-                            <li><strong>Path</strong> – HTML lesson file path under <code>TextT/</code>.</li>
-                            <li><strong>Video</strong> – currently linked video path (from <code>videoPaths</code> or default pattern).</li>
-                        </ul>
-                    </li>
-                    <li><strong>Section Name</strong> input
-                        <ul>
-                            <li>Edits the shared section display name for all lessons whose original section matches.</li>
-                            <li>Stored in <code>sectionNames/&lt;originalSection&gt;.displayName</code>.</li>
-                            <li>Clearing the field or resetting it to the original name removes the override.</li>
-                        </ul>
-                    </li>
-                    <li><strong>Lesson Name</strong> input
-                        <ul>
-                            <li>Edits only this lesson’s display name.</li>
-                            <li>Stored in <code>lessonMetadata/&lt;lessonId&gt;.displayName</code>.</li>
-                            <li>Clearing the field or matching the original name removes the override.</li>
-                        </ul>
-                    </li>
-                    <li><strong>Save Names</strong> button
-                        <ul>
-                            <li>Writes the appropriate overrides to Firestore.</li>
-                            <li>Immediately refreshes the in-memory list and re-renders the UI.</li>
-                            <li>Status text shows “Lesson metadata saved” when complete.</li>
-                        </ul>
-                    </li>
-                    <li><strong>Video Select + Assign / Update</strong>
-                        <ul>
-                            <li>Dropdown lists all Storage videos discovered by <strong>Refresh Available Videos</strong>.</li>
-                            <li>Click <strong>Assign</strong> or <strong>Update</strong> to:
-                                <ul>
-                                    <li>Write <code>videoPaths/&lt;lessonId&gt;.videoPath</code>.</li>
-                                    <li>Verify that the selected file exists in Storage.</li>
-                                    <li>Update the lesson row to show the new path and status.</li>
-                                </ul>
-                            </li>
-                        </ul>
-                    </li>
-                    <li><strong>Remove yellow screen (adjust srcArray)</strong>
-                        <ul>
-                            <li>When checked:
-                                <ul>
-                                    <li>Calls the <code>detectYellowScreen</code> Cloud Function with the video path.</li>
-                                    <li>Function analyzes opening frames and updates the video’s <code>lessons/&lt;videoFilename&gt;.srcArray</code> to skip yellow-screen segments.</li>
-                                    <li>Also records your preference in <code>videoPaths/&lt;lessonId&gt;.yellowScreen</code>.</li>
-                                </ul>
-                            </li>
-                            <li>When unchecked:
-                                <ul>
-                                    <li>Restores the original <code>srcArray</code> (if <code>originalSrcArray</code> is available in the document).</li>
-                                </ul>
-                            </li>
-                            <li>If the Cloud Function is unavailable, a local “simple heuristic” fallback drops very short initial segments instead.</li>
-                        </ul>
-                    </li>
-                </ul>
+                <section class="inst-section inst-section--lessons">
+                    <h3><span class="inst-num">4</span> Lessons Panel</h3>
+                    <ul class="inst-list">
+                        <li><strong>Search</strong> — Filters by lesson name, lessonId, or path (case-insensitive).</li>
+                        <li><strong>Filters</strong> — <strong>All</strong> / <strong>Missing</strong> (no video) / <strong>Has Video</strong>.</li>
+                        <li><strong>Section name</strong> — Edit and save; stored in <code>sectionNames/&lt;originalSection&gt;.displayName</code>.</li>
+                        <li><strong>Lesson name</strong> — Edit and save; stored in <code>lessonMetadata/&lt;lessonId&gt;.displayName</code>.</li>
+                        <li><strong>Video Select + Assign / Update</strong> — Writes <code>videoPaths/&lt;lessonId&gt;.videoPath</code> and updates the row.</li>
+                        <li><strong>Remove yellow screen</strong> — When checked, calls <code>detectYellowScreen</code> and updates <code>srcArray</code>; when unchecked, restores <code>originalSrcArray</code> if present.</li>
+                    </ul>
+                </section>
 
-                <h3>5. Available Videos Panel</h3>
-                <ul>
-                    <li>Shows every `.mp4` Storage object under `videos/`.</li>
-                    <li>This list is read-only and for reference; actual linking is done from each lesson card.</li>
-                </ul>
+                <section class="inst-section inst-section--videos">
+                    <h3><span class="inst-num">5</span> Available Videos Panel</h3>
+                    <p>Shows every <code>.mp4</code> in Storage with size and duration. Click a video to quick-play. Actual linking is done from each lesson card.</p>
+                </section>
 
-                <h3>6. Status Indicator</h3>
-                <ul>
-                    <li><strong>Ready</strong> – idle; no background operations.</li>
-                    <li><strong>Scanning...</strong> – long-running tasks in progress (scan, mapping, OCR, yellow-screen handling).</li>
-                    <li><strong>Green</strong> styling – operation completed successfully.</li>
-                    <li><strong>Red</strong> styling – an error occurred; check the browser console for details.</li>
-                </ul>
+                <section class="inst-section inst-section--status">
+                    <h3><span class="inst-num">6</span> Status Indicator</h3>
+                    <ul class="inst-status-list">
+                        <li><span class="inst-status inst-status--ready">Ready</span> — idle</li>
+                        <li><span class="inst-status inst-status--scanning">Scanning…</span> — task in progress</li>
+                        <li><span class="inst-status inst-status--success">Green</span> — success</li>
+                        <li><span class="inst-status inst-status--error">Red</span> — error; check console</li>
+                    </ul>
+                </section>
 
-                <h3>7. Safety Notes</h3>
-                <ul>
-                    <li>All writes go through Firestore security rules; make sure you are logged in as an authorized admin.</li>
-                    <li>Changes are live for any deployed clients reading from the same Firestore project.</li>
-                    <li>When in doubt, test on a staging project before using production credentials.</li>
-                </ul>
+                <section class="inst-section inst-section--safety">
+                    <h3><span class="inst-num">7</span> Safety Notes</h3>
+                    <ul>
+                        <li>All writes use Firestore security rules; stay logged in as an authorized admin.</li>
+                        <li>Changes are live for clients using the same project.</li>
+                        <li>Test on staging before production.</li>
+                    </ul>
+                </section>
+            </div>
+        </div>
+    </div>
+
+    <!-- Profile Modal -->
+    <div id="profileModal" class="modal hidden" aria-hidden="true" role="dialog" aria-labelledby="profileTitle">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content profile-modal-content">
+            <button class="modal-close" data-close-modal aria-label="Close">&times;</button>
+            <h2 id="profileTitle">Profile</h2>
+            <div class="modal-body profile-modal-body">
+                <div class="profile-field">
+                    <span class="profile-label">Email</span>
+                    <span id="profileEmail" class="profile-value">—</span>
+                </div>
+                <div class="profile-field">
+                    <span class="profile-label">Display name</span>
+                    <span id="profileDisplayName" class="profile-value">—</span>
+                </div>
+                <div class="profile-field">
+                    <span class="profile-label">User ID</span>
+                    <span id="profileUid" class="profile-value profile-value--mono">—</span>
+                </div>
+                <div class="profile-actions">
+                    <button type="button" id="profileLogoutBtn" class="btn btn-primary">
+                        <svg class="btn-icon heroicon" width="18" height="18" aria-hidden="true"><use href="#icon-arrow-left-on-rectangle"/></svg>
+                        <span class="btn-label">Logout</span>
+                    </button>
+                </div>
             </div>
         </div>
     </div>

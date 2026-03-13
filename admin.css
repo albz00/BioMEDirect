@@ -4,8 +4,20 @@
     box-sizing: border-box;
 }
 
+/* SVG sprite: hide visually but keep in DOM so <use> refs render (display:none can break icons in some browsers) */
+.icon-sprite {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    clip: rect(0, 0, 0, 0);
+    clip-path: inset(50%);
+    pointer-events: none;
+}
+
 body {
-    font-family: 'Arial Rounded MT', Arial, sans-serif;
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     background-color: #1a1f2e;
     background-image: url('CommonFiles/Images/CutBackground.png');
     background-repeat: no-repeat;
@@ -254,6 +266,17 @@ html {
     display: flex;
     gap: 1rem;
     align-items: center;
+}
+
+/* Header buttons: same color as panel/box content (muted slate), not white */
+.header-buttons .btn {
+    color: #94a3b8;
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+.header-buttons .btn:hover {
+    color: #cbd5e1;
+    border-color: rgba(255, 255, 255, 0.2);
 }
 
 .dashboard-content {
@@ -528,12 +551,6 @@ html {
     background: rgba(255, 255, 255, 0.1);
 }
 
-.tree-lesson.selected {
-    background: rgba(59, 130, 246, 0.28);
-    color: #f1f5f9;
-    border: 1px solid rgba(59, 130, 246, 0.5);
-}
-
 .tree-lesson-status {
     font-size: 0.6rem;
     flex-shrink: 0;
@@ -576,13 +593,68 @@ html {
     padding-left: 1.5rem;
 }
 
+/* Generic collapsible card (Selected Lesson, Available Videos) */
+.collapsible-card {
+    background: #1e293b;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+    overflow: hidden;
+}
+
+.collapsible-card-header {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    background: transparent;
+    border: none;
+    color: #e8eef4;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.2s ease;
+}
+
+.collapsible-card-header:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.collapsible-card-title {
+    flex: 1;
+}
+
+.collapsible-card-chevron {
+    flex-shrink: 0;
+    transition: transform 0.2s ease;
+    color: #94a3b8;
+}
+
+.collapsible-card:not(.collapsed) .collapsible-card-chevron {
+    transform: rotate(90deg);
+}
+
+.collapsible-card-body {
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 1rem;
+}
+
+.collapsible-card.collapsed .collapsible-card-body {
+    display: none !important;
+}
+
+.collapsible-card .videos-count {
+    font-weight: 400;
+    color: #94a3b8;
+    margin-left: 0.25rem;
+}
+
 .lesson-detail-panel {
     flex: 1;
     min-height: 200px;
-    background: #1e293b;
-    border: 1px solid rgba(255, 255, 255, 0.15);
     padding: 1.5rem;
-    border-radius: 8px;
     overflow-y: auto;
 }
 
@@ -590,12 +662,127 @@ html {
     margin: 2rem 0;
 }
 
-.videos-section {
-    flex-shrink: 0;
+/* Timeline / srcArray Editor card — collapsible, between lesson detail and Available Videos */
+.srcarray-editor-card {
+    background: #1e293b;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+    overflow: hidden;
 }
 
-.lessons-section,
-.videos-section {
+.srcarray-editor-header {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    background: transparent;
+    border: none;
+    color: #e8eef4;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.2s ease;
+}
+
+.srcarray-editor-header:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.srcarray-editor-title {
+    flex: 1;
+}
+
+.srcarray-editor-chevron {
+    flex-shrink: 0;
+    transition: transform 0.2s ease;
+    color: #94a3b8;
+}
+
+.srcarray-editor-card:not(.collapsed) .srcarray-editor-chevron {
+    transform: rotate(90deg);
+}
+
+.srcarray-editor-body {
+    padding: 0 1rem 1rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.srcarray-editor-card.collapsed .srcarray-editor-body {
+    display: none !important;
+}
+
+.srcarray-editor-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin: 1rem 0 0.75rem;
+}
+
+.srcarray-editor-status {
+    font-size: 0.85rem;
+    color: #94a3b8;
+}
+
+.srcarray-editor-table-wrap {
+    overflow-x: auto;
+    max-height: 360px;
+    overflow-y: auto;
+    margin-bottom: 0.5rem;
+}
+
+.srcarray-editor-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+}
+
+.srcarray-editor-table th,
+.srcarray-editor-table td {
+    padding: 0.4rem 0.6rem;
+    text-align: left;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.srcarray-editor-table th {
+    color: #94a3b8;
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+    background: #1e293b;
+    z-index: 1;
+}
+
+.srcarray-editor-table td {
+    color: #e8eef4;
+}
+
+.srcarray-editor-table input {
+    width: 100%;
+    min-width: 60px;
+    padding: 0.25rem 0.4rem;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 4px;
+    color: #e8eef4;
+    font-size: 0.85rem;
+}
+
+.srcarray-editor-table input:focus {
+    outline: none;
+    border-color: #3b82f6;
+}
+
+.srcarray-editor-empty {
+    margin: 1rem 0;
+    color: #94a3b8;
+    font-style: italic;
+}
+
+.lessons-section {
     background: #1e293b;
     border: 1px solid rgba(255, 255, 255, 0.15);
     padding: 1.5rem;
@@ -696,12 +883,6 @@ html {
 }
 
 .lessons-section h2,
-.videos-section h2 {
-    margin-bottom: 1rem;
-    color: #f1f5f9;
-    font-size: 1.3rem;
-    font-weight: bold;
-}
 
 .lessons-header {
     margin-bottom: 1rem;
@@ -751,7 +932,7 @@ html {
     cursor: pointer;
     font-size: 0.9rem;
     transition: background-color 0.2s, color 0.2s, border-color 0.2s;
-    font-family: 'Arial Rounded MT', Arial, sans-serif;
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
 .filter-btn:hover {
@@ -820,7 +1001,45 @@ html {
 
 .btn .btn-icon {
     margin-right: 0.25rem;
-    font-size: 0.95em;
+    flex-shrink: 0;
+}
+
+.btn .btn-icon.heroicon {
+    display: inline-block;
+    vertical-align: middle;
+    flex-shrink: 0;
+}
+
+.btn svg.heroicon {
+    vertical-align: middle;
+}
+
+.btn .btn-icon svg {
+    width: 100%;
+    height: 100%;
+}
+
+/* Ensure icon color inherits in buttons (fixes sprite refs in some browsers) */
+.btn .btn-icon {
+    color: inherit;
+}
+
+.heroicon {
+    stroke: currentColor;
+    fill: none;
+}
+
+.heroicon use {
+    fill: inherit;
+}
+
+.heroicon-play {
+    fill: currentColor;
+    stroke: none;
+}
+
+.sidebar-chevron {
+    display: block;
 }
 
 .btn .btn-label {
@@ -865,11 +1084,6 @@ html {
     border-radius: 8px;
     margin-bottom: 0.75rem;
     background: #1e293b;
-}
-
-.lesson-item:hover {
-    border-color: rgba(255, 255, 255, 0.2);
-    background: #334155;
 }
 
 .lesson-item-header {
@@ -1154,6 +1368,10 @@ html {
 
 /* Video Item */
 .video-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
     padding: 0.75rem;
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 6px;
@@ -1161,12 +1379,76 @@ html {
     background: #1e293b;
     font-size: 0.9rem;
     color: #b8c5d4;
+    cursor: pointer;
 }
 
 .video-item:hover {
     background: #334155;
     border-color: rgba(255, 255, 255, 0.2);
     color: #f1f5f9;
+}
+
+.video-item-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.video-item-meta {
+    flex-shrink: 0;
+    font-size: 0.75rem;
+    color: #94a3b8;
+    margin-left: 0.25rem;
+}
+
+.video-item-play {
+    flex-shrink: 0;
+    font-size: 0.75rem;
+    opacity: 0.85;
+    margin-left: 0.5rem;
+}
+
+.video-item:hover .video-item-play {
+    opacity: 1;
+}
+
+.videos-count {
+    font-weight: normal;
+    font-size: 0.75rem;
+    color: #94a3b8;
+    margin-left: 0.35rem;
+}
+
+/* Video preview modal */
+.video-preview-content {
+    max-width: 90vw;
+    max-height: 90vh;
+    width: 720px;
+}
+
+.video-preview-title {
+    font-size: 1rem;
+    margin-bottom: 0.75rem;
+    word-break: break-all;
+}
+
+.video-preview-wrapper {
+    position: relative;
+    background: #0f172a;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.video-preview-player {
+    width: 100%;
+    max-height: 70vh;
+    display: block;
+}
+
+#videoPreviewModal:not(.hidden) {
+    pointer-events: auto;
 }
 
 /* Modals (Instructions / Changelog) */
@@ -1258,6 +1540,273 @@ html {
     color: #ffffff;
 }
 
+/* Instructions modal — paper-like, color-coded, larger */
+.instructions-paper {
+    max-width: min(920px, 92vw);
+    width: 92vw;
+    max-height: 88vh;
+    background: linear-gradient(180deg, #faf8f5 0%, #f5f1eb 100%);
+    color: #2d3748;
+    border: 1px solid #e2ddd4;
+    border-radius: 6px;
+    box-shadow:
+        0 25px 50px -12px rgba(0, 0, 0, 0.35),
+        0 0 0 1px rgba(0, 0, 0, 0.04) inset,
+        2px 2px 0 rgba(255, 255, 255, 0.6);
+    padding: 1.75rem 2rem 2rem;
+    display: flex;
+    flex-direction: column;
+}
+
+.instructions-paper .instructions-body {
+    max-height: calc(88vh - 8rem);
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.instructions-paper .modal-close {
+    color: #64748b;
+}
+
+.instructions-paper .modal-close:hover {
+    color: #1e293b;
+}
+
+.instructions-header {
+    margin-bottom: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid #e8e4dc;
+    flex-shrink: 0;
+}
+
+.instructions-export {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+}
+
+.instructions-export .btn-sm {
+    padding: 0.35rem 0.75rem;
+    font-size: 0.8rem;
+}
+
+.instructions-export .btn-label {
+    font-size: 0.8rem;
+}
+
+.instructions-paper #instructionsTitle {
+    color: #1e293b;
+    font-size: 1.35rem;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+}
+
+.instructions-subtitle {
+    font-size: 0.85rem;
+    color: #64748b;
+    font-weight: 400;
+}
+
+.instructions-body {
+    font-size: 0.9rem;
+    line-height: 1.55;
+}
+
+.inst-section {
+    margin-bottom: 1.25rem;
+    padding: 0.9rem 1rem 0.9rem 1.15rem;
+    border-radius: 6px;
+    border-left: 4px solid transparent;
+    background: rgba(255, 255, 255, 0.5);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.inst-section h3 {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0 0 0.5rem 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.inst-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    flex-shrink: 0;
+}
+
+.inst-section--login {
+    border-left-color: #3b82f6;
+}
+
+.inst-section--login .inst-num {
+    background: #dbeafe;
+    color: #1d4ed8;
+}
+
+.inst-section--workflow {
+    border-left-color: #059669;
+}
+
+.inst-section--workflow .inst-num {
+    background: #d1fae5;
+    color: #047857;
+}
+
+.inst-section--controls {
+    border-left-color: #7c3aed;
+}
+
+.inst-section--controls .inst-num {
+    background: #ede9fe;
+    color: #5b21b6;
+}
+
+.inst-section--lessons {
+    border-left-color: #d97706;
+}
+
+.inst-section--lessons .inst-num {
+    background: #fffbeb;
+    color: #b45309;
+}
+
+.inst-section--videos {
+    border-left-color: #0ea5e9;
+}
+
+.inst-section--videos .inst-num {
+    background: #e0f2fe;
+    color: #0369a1;
+}
+
+.inst-section--status {
+    border-left-color: #64748b;
+}
+
+.inst-section--status .inst-num {
+    background: #f1f5f9;
+    color: #475569;
+}
+
+.inst-section--safety {
+    border-left-color: #dc2626;
+}
+
+.inst-section--safety .inst-num {
+    background: #fee2e2;
+    color: #b91c1c;
+}
+
+.inst-steps {
+    margin-left: 1.25rem;
+    margin-bottom: 0;
+}
+
+.inst-steps li {
+    margin-bottom: 0.4rem;
+}
+
+.inst-list {
+    margin-left: 1.25rem;
+    margin-bottom: 0;
+}
+
+.inst-list li {
+    margin-bottom: 0.4rem;
+}
+
+.inst-status-list {
+    list-style: none;
+    margin-left: 0;
+}
+
+.inst-status-list li {
+    margin-bottom: 0.35rem;
+}
+
+.inst-status {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.inst-status--ready {
+    background: #e2e8f0;
+    color: #475569;
+}
+
+.inst-status--scanning {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.inst-status--success {
+    background: #d1fae5;
+    color: #065f46;
+}
+
+.inst-status--error {
+    background: #fee2e2;
+    color: #b91c1c;
+}
+
+.instructions-body code {
+    background: #e8e4dc;
+    color: #475569;
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+    font-family: 'Consolas', 'Menlo', monospace;
+    font-size: 0.88em;
+}
+
+/* Profile modal */
+.profile-modal-content {
+    max-width: 420px;
+}
+
+.profile-modal-body {
+    padding-top: 0.5rem;
+}
+
+.profile-field {
+    margin-bottom: 1rem;
+}
+
+.profile-label {
+    display: block;
+    font-size: 0.8rem;
+    color: #94a3b8;
+    margin-bottom: 0.25rem;
+}
+
+.profile-value {
+    color: #e8eef4;
+    word-break: break-all;
+}
+
+.profile-value--mono {
+    font-family: Consolas, Menlo, monospace;
+    font-size: 0.9rem;
+}
+
+.profile-actions {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.15);
+}
+
 .changelog-body .changelog-list {
     list-style-type: disc;
 }
@@ -1282,5 +1831,46 @@ html {
 @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
+}
+
+/* Print: show only instructions modal for "Print / Save as PDF" */
+@media print {
+    body * {
+        visibility: hidden;
+    }
+    #instructionsModal,
+    #instructionsModal .modal-content,
+    #instructionsModal .modal-content * {
+        visibility: visible;
+    }
+    #instructionsModal {
+        position: fixed !important;
+        inset: 0 !important;
+        display: flex !important;
+        align-items: flex-start !important;
+        justify-content: center !important;
+        background: #fff !important;
+        z-index: 99999;
+        overflow: visible;
+    }
+    #instructionsModal .modal-backdrop {
+        display: none !important;
+    }
+    #instructionsModal .modal-close,
+    #instructionsModal .instructions-export {
+        display: none !important;
+    }
+    #instructionsModal .modal-content {
+        position: static !important;
+        max-width: 100% !important;
+        width: 100% !important;
+        max-height: none !important;
+        box-shadow: none !important;
+        margin: 0;
+        padding: 1.5rem 2rem !important;
+    }
+    #instructionsModal .instructions-body {
+        max-height: none !important;
+    }
 }
 

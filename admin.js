@@ -17,14 +17,18 @@ const functions = firebase.functions();
 // State
 let availableVideos = [];
 let lessonsData = [];
-let loginScreen, dashboardScreen, loginForm, logoutBtn, scanBtn, refreshVideosBtn, mapSegmentLinksBtn, detectVideoTitlesBtn, statusText, loginError, videosList;
+let loginScreen, dashboardScreen, loginForm, scanBtn, refreshVideosBtn, mapSegmentLinksBtn, detectVideoTitlesBtn, statusText, loginError, videosList;
 let uploadVideoBtn, uploadVideoInput;
 let instructionsBtn, changelogBtn, instructionsModal, changelogModal;
+let profileBtn, profileModal;
 let searchInput, filterButtons;
 let currentFilter = 'all';
 let searchQuery = '';
 let selectedLessonId = null;
 let collapsedSections = new Set();
+/** Current srcArray and video doc id for the Timeline editor (so Save all knows where to write) */
+let currentSrcArrayForEditor = [];
+let currentSrcArrayVideoFilename = null;
 
 // Check authentication state on load and on changes (set up immediately)
 auth.onAuthStateChanged((user) => {
@@ -67,7 +71,8 @@ document.addEventListener('DOMContentLoaded', () => {
     loginScreen = document.getElementById('loginScreen');
     dashboardScreen = document.getElementById('dashboardScreen');
     loginForm = document.getElementById('loginForm');
-    logoutBtn = document.getElementById('logoutBtn');
+    profileBtn = document.getElementById('profileBtn');
+    profileModal = document.getElementById('profileModal');
     instructionsBtn = document.getElementById('instructionsBtn');
     changelogBtn = document.getElementById('changelogBtn');
     scanBtn = document.getElementById('scanBtn');
@@ -214,12 +219,59 @@ function setupEventListeners() {
         instructionsBtn.addEventListener('click', () => openModal(instructionsModal));
     }
 
+    function getInstructionsPlainText(container) {
+        if (!container) return '';
+        const parts = [];
+        const sections = container.querySelectorAll('.inst-section');
+        sections.forEach((sec) => {
+            const h3 = sec.querySelector('h3');
+            const title = h3 ? h3.innerText.trim() : '';
+            if (title) parts.push(title);
+            const lists = sec.querySelectorAll('ul, ol');
+            lists.forEach((list) => {
+                const isOrdered = list.tagName === 'OL';
+                list.querySelectorAll('li').forEach((li, i) => {
+                    const pre = isOrdered ? `${i + 1}. ` : '• ';
+                    parts.push(pre + li.innerText.trim().replace(/\s+/g, ' '));
+                });
+            });
+            const p = sec.querySelector('p');
+            if (p) parts.push(p.innerText.trim().replace(/\s+/g, ' '));
+            parts.push('');
+        });
+        return parts.join('\n').trim();
+    }
+
+    const instructionsPrintBtn = document.getElementById('instructionsPrintBtn');
+    const instructionsCopyBtn = document.getElementById('instructionsCopyBtn');
+    const instructionsContent = document.getElementById('instructionsContent');
+    if (instructionsPrintBtn && instructionsModal) {
+        instructionsPrintBtn.addEventListener('click', () => {
+            if (!instructionsModal.classList.contains('hidden')) {
+                window.print();
+            }
+        });
+    }
+    if (instructionsCopyBtn && instructionsContent) {
+        instructionsCopyBtn.addEventListener('click', () => {
+            const text = getInstructionsPlainText(instructionsContent);
+            navigator.clipboard.writeText(text).then(() => {
+                const label = instructionsCopyBtn.querySelector('.btn-label');
+                if (label) {
+                    const orig = label.textContent;
+                    label.textContent = 'Copied!';
+                    setTimeout(() => { label.textContent = orig; }, 1500);
+                }
+            }).catch(() => {});
+        });
+    }
+
     if (changelogBtn && changelogModal) {
         changelogBtn.addEventListener('click', () => openModal(changelogModal));
     }
 
     // Generic close handlers (backdrop or [data-close-modal] button)
-    [instructionsModal, changelogModal].forEach((modal) => {
+    [instructionsModal, changelogModal, profileModal].forEach((modal) => {
         if (!modal) return;
 
         modal.addEventListener('click', (e) => {
@@ -232,24 +284,58 @@ function setupEventListeners() {
         });
     });
 
+    // Video preview modal close
+    const videoPreviewModal = document.getElementById('videoPreviewModal');
+    const videoPreviewClose = document.getElementById('videoPreviewClose');
+    if (videoPreviewModal) {
+        videoPreviewModal.addEventListener('click', (e) => {
+            if (e.target === videoPreviewClose || e.target.classList.contains('video-preview-backdrop')) {
+                closeVideoPreview();
+            }
+        });
+        if (videoPreviewClose) {
+            videoPreviewClose.addEventListener('click', closeVideoPreview);
+        }
+    }
+
+    setupSrcArrayEditorListeners();
+
+    // Profile button: open profile modal and fill with current user
+    if (profileBtn && profileModal) {
+        profileBtn.addEventListener('click', () => {
+            const user = auth.currentUser;
+            const emailEl = document.getElementById('profileEmail');
+            const displayNameEl = document.getElementById('profileDisplayName');
+            const uidEl = document.getElementById('profileUid');
+            if (emailEl) emailEl.textContent = user ? user.email || '—' : '—';
+            if (displayNameEl) displayNameEl.textContent = (user && user.displayName) ? user.displayName : '—';
+            if (uidEl) uidEl.textContent = user ? user.uid : '—';
+            openModal(profileModal);
+        });
+    }
+
     // Close modals with Escape key
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
-            [instructionsModal, changelogModal].forEach((modal) => {
+            [instructionsModal, changelogModal, profileModal].forEach((modal) => {
                 if (modal && !modal.classList.contains('hidden')) {
                     closeModal(modal);
                 }
             });
+            if (videoPreviewModal && !videoPreviewModal.classList.contains('hidden')) {
+                closeVideoPreview();
+            }
         }
     });
 
-    // Logout
-    if (logoutBtn) {
-        logoutBtn.addEventListener('click', async () => {
+    // Logout (from profile modal)
+    const profileLogoutBtn = document.getElementById('profileLogoutBtn');
+    if (profileLogoutBtn) {
+        profileLogoutBtn.addEventListener('click', async () => {
             try {
                 await auth.signOut();
                 console.log('User logged out successfully');
-                // Redirect to main menu after logout
+                if (profileModal) closeModal(profileModal);
                 window.location.href = 'TextT/CentralMenuT.html';
             } catch (error) {
                 console.error('Logout error:', error);
@@ -354,7 +440,8 @@ function setupEventListeners() {
     if (sidebarToggle && lessonsSidebar) {
         sidebarToggle.addEventListener('click', () => {
             lessonsSidebar.classList.toggle('collapsed');
-            sidebarToggle.textContent = lessonsSidebar.classList.contains('collapsed') ? '▶' : '◀';
+            const useEl = document.getElementById('sidebarToggleIcon');
+            if (useEl) useEl.setAttribute('href', lessonsSidebar.classList.contains('collapsed') ? '#icon-chevron-right' : '#icon-chevron-left');
             sidebarToggle.title = lessonsSidebar.classList.contains('collapsed') ? 'Expand sidebar' : 'Collapse sidebar';
             sidebarToggle.setAttribute('aria-label', lessonsSidebar.classList.contains('collapsed') ? 'Expand sidebar' : 'Collapse sidebar');
         });
@@ -459,7 +546,7 @@ async function loadAvailableVideos() {
         }
         
         availableVideos.sort();
-        displayAvailableVideos();
+        await displayAvailableVideos();
         setStatus(`Loaded ${availableVideos.length} videos`, 'success');
     } catch (error) {
         console.error('Error loading videos:', error);
@@ -469,15 +556,153 @@ async function loadAvailableVideos() {
     }
 }
 
-function displayAvailableVideos() {
+function formatBytes(bytes) {
+    if (bytes == null || isNaN(bytes)) return '—';
+    const mb = bytes / (1024 * 1024);
+    return mb >= 1 ? mb.toFixed(1) + ' MB' : (bytes / 1024).toFixed(0) + ' KB';
+}
+
+function formatDuration(seconds) {
+    if (seconds == null || isNaN(seconds) || seconds < 0) return '—:—';
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return m + ':' + (s < 10 ? '0' : '') + s;
+}
+
+function getAssignedVideoCount() {
+    if (!lessonsData.length || !availableVideos.length) return 0;
+    const assignedFilenames = new Set();
+    lessonsData.forEach(lesson => {
+        const path = lesson.currentPath || '';
+        const match = path.match(/videos\/([^/]+)$/);
+        if (match) assignedFilenames.add(match[1]);
+    });
+    // Count how many of the *available* videos (in Storage) are tied to at least one lesson
+    return availableVideos.filter((fileName) => assignedFilenames.has(fileName)).length;
+}
+
+function updateVideosCountDisplay() {
+    const countEl = document.getElementById('videosCount');
+    if (!countEl) return;
+    const inUse = getAssignedVideoCount();
+    countEl.textContent = `(${availableVideos.length} available · ${inUse} tied to lessons)`;
+}
+
+async function displayAvailableVideos() {
+    const countEl = document.getElementById('videosCount');
+    if (countEl) {
+        updateVideosCountDisplay();
+    }
+
     if (availableVideos.length === 0) {
         videosList.innerHTML = '<p class="placeholder">No videos found in Storage</p>';
+        updateVideosCountDisplay();
         return;
     }
-    
-    videosList.innerHTML = availableVideos.map(video => 
-        `<div class="video-item">${video}</div>`
-    ).join('');
+
+    videosList.innerHTML = availableVideos.map(video => {
+        const esc = video.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        return `<div class="video-item" data-video="${esc}" title="Click to play">
+            <span class="video-item-name">${esc}</span>
+            <span class="video-item-meta"><span class="video-item-size" data-video="${esc}">—</span> · <span class="video-item-duration" data-video="${esc}">—:—</span></span>
+            <span class="video-item-play" aria-label="Play"><svg class="heroicon heroicon-play" width="18" height="18" aria-hidden="true"><use href="#icon-play"/></svg></span>
+        </div>`;
+    }).join('');
+
+    videosList.querySelectorAll('.video-item').forEach(el => {
+        el.addEventListener('click', () => openVideoPreview(el.getAttribute('data-video')));
+    });
+
+    // Load size and duration for each video (size from Storage metadata, duration from video element)
+    const BATCH = 4;
+    for (let i = 0; i < availableVideos.length; i += BATCH) {
+        const batch = availableVideos.slice(i, i + BATCH);
+        await Promise.all(batch.map(async (fileName) => {
+            const ref = storage.ref().child('videos/' + fileName);
+            try {
+                const meta = await ref.getMetadata();
+                const sizeEl = videosList.querySelector(`.video-item-size[data-video="${CSS.escape(fileName)}"]`);
+                if (sizeEl) sizeEl.textContent = formatBytes(meta.size);
+            } catch (e) {
+                const sizeEl = videosList.querySelector(`.video-item-size[data-video="${CSS.escape(fileName)}"]`);
+                if (sizeEl) sizeEl.textContent = '—';
+            }
+        }));
+    }
+
+    for (let i = 0; i < availableVideos.length; i += BATCH) {
+        const batch = availableVideos.slice(i, i + BATCH);
+        await Promise.all(batch.map((fileName) => loadVideoDuration(fileName)));
+    }
+}
+
+function loadVideoDuration(fileName) {
+    return new Promise((resolve) => {
+        const durationEl = videosList.querySelector(`.video-item-duration[data-video="${CSS.escape(fileName)}"]`);
+        if (!durationEl) {
+            resolve();
+            return;
+        }
+        const ref = storage.ref().child('videos/' + fileName);
+        ref.getDownloadURL()
+            .then((url) => {
+                const video = document.createElement('video');
+                video.preload = 'metadata';
+                const onDone = () => {
+                    const d = video.duration;
+                    if (durationEl) durationEl.textContent = formatDuration(d);
+                    video.removeAttribute('src');
+                    video.load();
+                    resolve();
+                };
+                video.addEventListener('loadedmetadata', onDone, { once: true });
+                video.addEventListener('error', () => {
+                    if (durationEl) durationEl.textContent = '—:—';
+                    resolve();
+                }, { once: true });
+                video.src = url;
+            })
+            .catch(() => {
+                if (durationEl) durationEl.textContent = '—:—';
+                resolve();
+            });
+    });
+}
+
+async function openVideoPreview(fileName) {
+    if (!fileName) return;
+    const modal = document.getElementById('videoPreviewModal');
+    const titleEl = document.getElementById('videoPreviewTitle');
+    const player = document.getElementById('videoPreviewPlayer');
+    if (!modal || !player) return;
+    titleEl.textContent = fileName;
+    player.removeAttribute('src');
+    player.load();
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+    try {
+        const ref = storage.ref().child('videos/' + fileName);
+        const url = await ref.getDownloadURL();
+        player.src = url;
+        player.play().catch(() => {});
+    } catch (e) {
+        console.error('Error loading video:', e);
+        setStatus('Could not load video for preview', 'error');
+    }
+}
+
+function closeVideoPreview() {
+    const modal = document.getElementById('videoPreviewModal');
+    const player = document.getElementById('videoPreviewPlayer');
+    if (modal) {
+        modal.classList.add('hidden');
+        modal.setAttribute('aria-hidden', 'true');
+    }
+    if (player) {
+        player.pause();
+        player.removeAttribute('src');
+        player.load();
+    }
 }
 
 // Parse central menu to extract section names, lesson paths and names
@@ -662,6 +887,7 @@ async function scanLessons() {
         const missingCount = lessonsData.filter(l => !l.hasVideo).length;
         const totalCount = lessonsData.length;
         
+        updateVideosCountDisplay();
         setStatus(`Scan complete: ${missingCount} missing, ${totalCount - missingCount} found`, 
                   missingCount > 0 ? 'error' : 'success');
     } catch (error) {
@@ -744,9 +970,8 @@ function renderSidebarTree() {
                 const safeLessonName = lesson.name.replace(/</g, '&lt;').replace(/>/g, '&gt;');
                 const status = lesson.hasVideo ? '●' : '○';
                 const statusClass = lesson.hasVideo ? 'has-video' : 'missing';
-                const selected = lesson.lessonId === selectedLessonId ? ' selected' : '';
                 const escId = lesson.lessonId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-                return `<div class="tree-lesson ${statusClass}${selected}" data-lesson-id="${lesson.lessonId}" onclick="selectLesson('${escId}')"><span class="tree-lesson-status">${status}</span><span class="tree-lesson-name">${safeLessonName}</span></div>`;
+                return `<div class="tree-lesson ${statusClass}" data-lesson-id="${lesson.lessonId}" onclick="selectLesson('${escId}')"><span class="tree-lesson-status">${status}</span><span class="tree-lesson-name">${safeLessonName}</span></div>`;
             }).join('');
         const sectionKeyAttr = section.originalSection.replace(/"/g, '&quot;');
         return `
@@ -849,10 +1074,168 @@ function selectLesson(lessonId) {
     selectedLessonId = lessonId;
     renderSidebarTree();
     displaySelectedLesson();
+    refreshSrcArrayEditor();
     const treeEl = document.getElementById('sidebarTree');
     if (treeEl) {
         const node = treeEl.querySelector(`.tree-lesson[data-lesson-id="${lessonId}"]`);
         if (node) node.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+}
+
+/** Get video filename (no extension) for the selected lesson's video doc in Firestore */
+async function getVideoFilenameForLesson(lessonId) {
+    const lesson = lessonsData.find(l => l.lessonId === lessonId);
+    if (!lesson) return null;
+    const videoPathDoc = await db.collection('videoPaths').doc(lessonId).get();
+    const videoPath = videoPathDoc.exists && videoPathDoc.data().videoPath
+        ? videoPathDoc.data().videoPath
+        : `videos/${lessonId}.mp4`;
+    const match = videoPath.match(/videos\/([^/]+)\.mp4$/);
+    return match ? match[1] : null;
+}
+
+/** Load srcArray from Firestore for the Timeline editor */
+async function loadSrcArrayForEditor(lessonId) {
+    const videoFilename = await getVideoFilenameForLesson(lessonId);
+    if (!videoFilename) return { videoFilename: null, srcArray: [] };
+    const videoDoc = await db.collection('lessons').doc(videoFilename).get();
+    const srcArray = (videoDoc.exists && videoDoc.data().srcArray) ? videoDoc.data().srcArray : [];
+    return { videoFilename, srcArray };
+}
+
+function renderSrcArrayTable(srcArray, videoFilename) {
+    const tbody = document.getElementById('srcArrayEditorTbody');
+    const tableWrap = document.querySelector('.srcarray-editor-table-wrap');
+    const emptyEl = document.getElementById('srcArrayEditorEmpty');
+    if (!tbody || !tableWrap || !emptyEl) return;
+
+    currentSrcArrayForEditor = Array.isArray(srcArray) ? srcArray.map(s => ({ ...s })) : [];
+    currentSrcArrayVideoFilename = videoFilename;
+
+    if (currentSrcArrayForEditor.length === 0) {
+        tbody.innerHTML = '';
+        tableWrap.style.display = 'none';
+        emptyEl.style.display = 'block';
+        return;
+    }
+
+    tableWrap.style.display = 'block';
+    emptyEl.style.display = 'none';
+
+    const rows = currentSrcArrayForEditor.map((seg, index) => {
+        const start = seg.src_start != null ? Number(seg.src_start) : '';
+        const end = seg.src_end != null ? Number(seg.src_end) : '';
+        const menuLink = (seg.menuLink != null ? String(seg.menuLink) : '').replace(/"/g, '&quot;');
+        const title = (seg.title != null ? String(seg.title) : '').replace(/"/g, '&quot;');
+        const confidence = (seg.confidence != null ? String(seg.confidence) : '').replace(/"/g, '&quot;');
+        return `<tr data-index="${index}">
+            <td class="srcarray-col-index">${index}</td>
+            <td><input type="number" step="0.01" class="srcarray-input-start" value="${start}" data-index="${index}"></td>
+            <td><input type="number" step="0.01" class="srcarray-input-end" value="${end}" data-index="${index}"></td>
+            <td><input type="text" class="srcarray-input-menuLink" value="${menuLink}" data-index="${index}" placeholder="chapter / menu"></td>
+            <td><input type="text" class="srcarray-input-title" value="${title}" data-index="${index}" placeholder="source label"></td>
+            <td><input type="text" class="srcarray-input-confidence" value="${confidence}" data-index="${index}" placeholder="—"></td>
+            <td class="srcarray-col-actions"></td>
+        </tr>`;
+    }).join('');
+    tbody.innerHTML = rows;
+}
+
+async function refreshSrcArrayEditor() {
+    const statusEl = document.getElementById('srcArrayEditorStatus');
+    if (!selectedLessonId) {
+        currentSrcArrayForEditor = [];
+        currentSrcArrayVideoFilename = null;
+        renderSrcArrayTable([], null);
+        if (statusEl) statusEl.textContent = '';
+        return;
+    }
+    if (statusEl) statusEl.textContent = 'Loading…';
+    try {
+        const { videoFilename, srcArray } = await loadSrcArrayForEditor(selectedLessonId);
+        renderSrcArrayTable(srcArray, videoFilename);
+        if (statusEl) statusEl.textContent = videoFilename ? `${srcArray.length} segments` : 'No video assigned';
+    } catch (e) {
+        console.error('refreshSrcArrayEditor:', e);
+        renderSrcArrayTable([], null);
+        if (statusEl) statusEl.textContent = 'Error loading';
+    }
+}
+
+function setupCollapsibleCard(cardId, toggleId, bodyId) {
+    const card = document.getElementById(cardId);
+    const toggleBtn = document.getElementById(toggleId);
+    const body = document.getElementById(bodyId);
+    if (!toggleBtn || !card || !body) return;
+    toggleBtn.addEventListener('click', () => {
+        const collapsed = card.classList.toggle('collapsed');
+        body.hidden = collapsed;
+        toggleBtn.setAttribute('aria-expanded', !collapsed);
+    });
+}
+
+function setupSrcArrayEditorListeners() {
+    setupCollapsibleCard('srcArrayEditorCard', 'srcArrayEditorToggle', 'srcArrayEditorBody');
+    setupCollapsibleCard('selectedLessonCard', 'selectedLessonToggle', 'selectedLessonBody');
+    setupCollapsibleCard('videosCard', 'videosCardToggle', 'videosCardBody');
+    const syncBtn = document.getElementById('srcArraySyncChaptersBtn');
+    if (syncBtn) {
+        syncBtn.addEventListener('click', async () => {
+            if (!selectedLessonId) {
+                setStatus('Select a lesson first', 'error');
+                return;
+            }
+            setStatus('Syncing from chapters…', 'scanning');
+            try {
+                const result = await mapSegmentLinksForLesson(selectedLessonId);
+                if (result.skipped) {
+                    setStatus(result.reason || 'Skipped', 'error');
+                } else {
+                    setStatus(`Mapped ${result.mapped} segment links`, 'success');
+                    await refreshSrcArrayEditor();
+                }
+            } catch (e) {
+                setStatus('Sync failed: ' + e.message, 'error');
+            }
+        });
+    }
+    const saveBtn = document.getElementById('srcArraySaveAllBtn');
+    if (saveBtn) {
+        saveBtn.addEventListener('click', async () => {
+            if (!currentSrcArrayVideoFilename || currentSrcArrayForEditor.length === 0) {
+                setStatus('No timeline to save. Select a lesson and open the editor.', 'error');
+                return;
+            }
+            const tbody = document.getElementById('srcArrayEditorTbody');
+            if (!tbody) return;
+            const rows = tbody.querySelectorAll('tr[data-index]');
+            const updated = [];
+            for (const row of rows) {
+                const index = parseInt(row.getAttribute('data-index'), 10);
+                const seg = currentSrcArrayForEditor[index] ? { ...currentSrcArrayForEditor[index] } : {};
+                const startInput = row.querySelector('.srcarray-input-start');
+                const endInput = row.querySelector('.srcarray-input-end');
+                const menuLinkInput = row.querySelector('.srcarray-input-menuLink');
+                const titleInput = row.querySelector('.srcarray-input-title');
+                const confidenceInput = row.querySelector('.srcarray-input-confidence');
+                if (startInput) seg.src_start = startInput.value === '' ? null : parseFloat(startInput.value);
+                if (endInput) seg.src_end = endInput.value === '' ? null : parseFloat(endInput.value);
+                if (menuLinkInput) seg.menuLink = menuLinkInput.value.trim() || '';
+                if (titleInput) seg.title = titleInput.value.trim() || '';
+                if (confidenceInput) seg.confidence = confidenceInput.value.trim() || '';
+                updated.push(seg);
+            }
+            setStatus('Saving timeline…', 'scanning');
+            try {
+                await db.collection('lessons').doc(currentSrcArrayVideoFilename).set({ srcArray: updated }, { merge: true });
+                currentSrcArrayForEditor = updated;
+                setStatus('Timeline saved', 'success');
+                const statusEl = document.getElementById('srcArrayEditorStatus');
+                if (statusEl) statusEl.textContent = `${updated.length} segments saved`;
+            } catch (e) {
+                setStatus('Save failed: ' + e.message, 'error');
+            }
+        });
     }
 }
 
@@ -1111,6 +1494,7 @@ async function assignVideo(lessonId) {
         
         renderSidebarTree();
         displaySelectedLesson();
+        updateVideosCountDisplay();
         
         const lessonName = lesson ? lesson.name : lessonId;
         setStatus(`Video assigned to ${lessonName}`, 'success');
