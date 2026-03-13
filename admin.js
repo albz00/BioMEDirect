@@ -365,10 +365,10 @@ function setupEventListeners() {
         });
     }
 
-    // Refresh Videos
+    // Refresh dashboard (lessons + videos + panels)
     if (refreshVideosBtn) {
         refreshVideosBtn.addEventListener('click', async () => {
-            await loadAvailableVideos();
+            await refreshDashboard();
         });
     }
 
@@ -992,6 +992,45 @@ async function scanLessons() {
         if (lessonDetail) lessonDetail.innerHTML = '<p class="placeholder">Error loading lessons</p>';
     } finally {
         scanBtn.disabled = false;
+    }
+}
+
+// Refresh the entire admin dashboard: lessons tree, selected lesson, timeline editor, and available videos
+async function refreshDashboard() {
+    try {
+        requireAuth();
+    } catch (error) {
+        alert('Authentication required. Please log in again.');
+        return;
+    }
+
+    if (!refreshVideosBtn) {
+        await scanLessons();
+        await loadAvailableVideos();
+        return;
+    }
+
+    setButtonLoading(refreshVideosBtn, true);
+    setStatus('Refreshing dashboard...', 'scanning');
+
+    try {
+        await scanLessons();
+        await loadAvailableVideos();
+
+        // scanLessons already calls renderSidebarTree + displaySelectedLesson
+        // loadAvailableVideos updates the videos card and counts
+        if (selectedLessonId) {
+            displaySelectedLesson();
+            await refreshSrcArrayEditor();
+        }
+
+        setStatus('Dashboard refreshed', 'success');
+        setTimeout(() => setStatus('Ready'), 2500);
+    } catch (error) {
+        console.error('Error refreshing dashboard:', error);
+        setStatus('Error refreshing dashboard: ' + error.message, 'error');
+    } finally {
+        setButtonLoading(refreshVideosBtn, false);
     }
 }
 

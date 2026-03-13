@@ -102,10 +102,6 @@ function updateVideoId(play=true){ // FindMe3
 		else {
 			console.error("Invalid srcArray/currentSlide/src_start. currentSlide = " + currentSlide);
         }
-		try {
-			videoId.play(); // Go to FindMe4
-		}
-		catch (err) { console.log(err); }
 	}
 	else {
 		//Go to end of last clip
