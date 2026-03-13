@@ -287,10 +287,10 @@ function detectYellowFrames(video) {
     
     // Yellow target in LAB color space
     const yellowLAB = { L: 97, A: -21, B: 94 };
-    // Relaxed thresholds so we reliably see bright yellow title cards:
-    const deltaEThreshold = 55; // larger ΔE allows more variation around target yellow
-    const sampleStep = 24; // sample grid a bit more coarsely
-    const yellowPixelThreshold = 0.25; // at least 25% of sampled pixels must be yellow
+    // More aggressive thresholds so we reliably catch *all* bright yellow cards:
+    const deltaEThreshold = 70;  // larger ΔE allows more variation around target yellow
+    const sampleStep = 16;       // denser sampling grid
+    const yellowPixelThreshold = 0.18; // at least 18% of sampled pixels must be yellow
 
     // First, get video dimensions from FFmpeg
     getVideoDimensions(video).then(({ width, height }) => {
