@@ -687,7 +687,7 @@ async function openVideoPreview(fileName) {
         const ref = storage.ref().child('videos/' + fileName);
         const url = await ref.getDownloadURL();
         player.src = url;
-        player.play().catch(() => {});
+        // Do not autoplay; user can press play in the modal
     } catch (e) {
         console.error('Error loading video:', e);
         setStatus('Could not load video for preview', 'error');
