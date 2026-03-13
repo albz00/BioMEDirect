@@ -168,13 +168,12 @@ function update(playVid){ // FindMe2
     
     if (currentSlide > 0) {
     	if (playVid) {
-            if (clickedLink) { // Go to end of last clip when menu link is clicked
+            if (clickedLink) { // Added this to go to end of last clip when menu link is clicked
                 updateVideoId(false);
                 clickedLink = false;
             }
             else {
-                // Seek to segment start but do not autoplay; user can press play
-                updateVideoId(false);
+                updateVideoId(true); // Go to FindMe3
             }
         }
         else {

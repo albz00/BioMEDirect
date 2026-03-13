@@ -606,14 +606,37 @@ async function displayAvailableVideos() {
     videosList.innerHTML = availableVideos.map(video => {
         const esc = video.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         return `<div class="video-item" data-video="${esc}" title="Click to play">
-            <span class="video-item-name">${esc}</span>
-            <span class="video-item-meta"><span class="video-item-size" data-video="${esc}">—</span> · <span class="video-item-duration" data-video="${esc}">—:—</span></span>
-            <span class="video-item-play" aria-label="Play"><svg class="heroicon heroicon-play" width="18" height="18" aria-hidden="true"><use href="#icon-play"/></svg></span>
+            <div class="video-item-main">
+                <span class="video-item-name">${esc}</span>
+                <span class="video-item-meta"><span class="video-item-size" data-video="${esc}">—</span> · <span class="video-item-duration" data-video="${esc}">—:—</span></span>
+            </div>
+            <div class="video-item-actions">
+                <button type="button" class="btn btn-secondary btn-ghost btn-sm video-item-preview" data-video="${esc}">
+                    <span class="btn-label">Preview</span>
+                </button>
+                <button type="button" class="btn btn-secondary btn-sm video-item-delete" data-video="${esc}">
+                    <span class="btn-label">Delete</span>
+                </button>
+            </div>
         </div>`;
     }).join('');
 
-    videosList.querySelectorAll('.video-item').forEach(el => {
-        el.addEventListener('click', () => openVideoPreview(el.getAttribute('data-video')));
+    // Preview click (video row, or Preview button)
+    videosList.querySelectorAll('.video-item-preview').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const file = btn.getAttribute('data-video');
+            openVideoPreview(file);
+        });
+    });
+
+    // Delete click
+    videosList.querySelectorAll('.video-item-delete').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const file = btn.getAttribute('data-video');
+            deleteVideo(file, btn);
+        });
     });
 
     // Load size and duration for each video (size from Storage metadata, duration from video element)
@@ -691,6 +714,75 @@ async function openVideoPreview(fileName) {
     } catch (e) {
         console.error('Error loading video:', e);
         setStatus('Could not load video for preview', 'error');
+    }
+}
+
+// Delete a video from Storage and its associated srcArray (lessons doc), then refresh lists
+async function deleteVideo(fileName, btn) {
+    try {
+        requireAuth();
+    } catch (error) {
+        alert('Authentication required. Please log in again.');
+        return;
+    }
+    if (!fileName) return;
+
+    const confirmed = window.confirm(`Delete video "${fileName}" from Storage and its srcArray? This cannot be undone.`);
+    if (!confirmed) return;
+
+    setButtonLoading(btn, true);
+    setStatus(`Deleting video ${fileName}...`, 'scanning');
+
+    try {
+        const storageRef = storage.ref().child('videos/' + fileName);
+        // Delete video file from Storage
+        await storageRef.delete();
+
+        // Delete srcArray document keyed by video filename (without extension)
+        const baseMatch = fileName.match(/^(.+)\.mp4$/i);
+        if (baseMatch) {
+            const videoDocId = baseMatch[1];
+            try {
+                await db.collection('lessons').doc(videoDocId).delete();
+            } catch (e) {
+                // Ignore not-found
+                console.warn('No srcArray doc to delete for', videoDocId, e);
+            }
+        }
+
+        // Clear any lesson assignments that used this video
+        const tasks = [];
+        lessonsData.forEach(lesson => {
+            if ((lesson.currentPath || '') === `videos/${fileName}`) {
+                lesson.currentPath = '';
+                lesson.hasVideo = false;
+                tasks.push(
+                    db.collection('videoPaths').doc(lesson.lessonId).set({
+                        videoPath: firebase.firestore.FieldValue.delete()
+                    }, { merge: true })
+                );
+            }
+        });
+        if (tasks.length) {
+            await Promise.all(tasks);
+        }
+
+        // Remove from availableVideos and refresh UI
+        availableVideos = availableVideos.filter(v => v !== fileName);
+        await displayAvailableVideos();
+        renderSidebarTree();
+        displaySelectedLesson();
+        refreshSrcArrayEditor();
+        updateVideosCountDisplay();
+
+        setStatus(`Deleted video ${fileName}`, 'success');
+        setTimeout(() => setStatus('Ready'), 2500);
+    } catch (error) {
+        console.error('Error deleting video:', error);
+        alert('Error deleting video: ' + error.message);
+        setStatus('Error deleting video: ' + error.message, 'error');
+    } finally {
+        setButtonLoading(btn, false);
     }
 }
 
@@ -1052,7 +1144,8 @@ function getLessonCardHTML(lesson) {
                         <option value="">${lesson.hasVideo ? 'Change video...' : 'Select a video...'}</option>
                         ${videoOptions}
                     </select>
-                    <button onclick="assignVideo('${escId}', this)" id="assign-btn-${lesson.lessonId}">${lesson.hasVideo ? 'Update' : 'Assign'}</button>
+                    <button class="assign-btn" onclick="assignVideo('${escId}', this)" id="assign-btn-${lesson.lessonId}">${lesson.hasVideo ? 'Update' : 'Assign'}</button>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="resetLessonAssignment('${escId}', this)"><span class="btn-label">Reset</span></button>
                 </div>
                 <div class="yellow-screen-option">
                     <label>
@@ -1553,8 +1646,6 @@ async function assignVideo(lessonId, btn) {
     const videoPath = `videos/${selectedVideo}`;
     
     setButtonLoading(buttonElement, true);
-    const previousText = buttonElement.textContent;
-    
     try {
         // Update videoPaths collection with custom videoPath (not lessons collection)
         await db.collection('videoPaths').doc(lessonId).set({
@@ -1593,6 +1684,61 @@ async function assignVideo(lessonId, btn) {
     } finally {
         setButtonLoading(buttonElement, false);
         buttonElement.textContent = (lessonsData.find(l => l.lessonId === lessonId)?.hasVideo) ? 'Update' : 'Assign';
+    }
+}
+
+// Reset lesson assignment back to its original/default video mapping and yellow-screen setting
+async function resetLessonAssignment(lessonId, btn) {
+    try {
+        requireAuth();
+    } catch (error) {
+        alert('Authentication required. Please log in again.');
+        return;
+    }
+
+    const lesson = lessonsData.find(l => l.lessonId === lessonId);
+    if (!lesson) {
+        setStatus('Lesson not found', 'error');
+        return;
+    }
+
+    const confirmed = window.confirm(`Reset lesson "${lesson.name}" to its original video and yellow-screen settings?`);
+    if (!confirmed) return;
+
+    setButtonLoading(btn, true);
+    setStatus(`Resetting ${lesson.name} to original settings...`, 'scanning');
+
+    try {
+        // Clear overrides in videoPaths (videoPath + yellowScreen)
+        const vpRef = db.collection('videoPaths').doc(lessonId);
+        await vpRef.set({
+            videoPath: firebase.firestore.FieldValue.delete(),
+            yellowScreen: firebase.firestore.FieldValue.delete()
+        }, { merge: true });
+
+        // Default path is videos/<lessonId>.mp4
+        const defaultPath = `videos/${lessonId}.mp4`;
+        const availability = await checkVideoAvailability(lessonId, null);
+
+        lesson.currentPath = availability.exists ? defaultPath : '';
+        lesson.hasVideo = availability.exists;
+        lesson.yellowScreen = true;
+
+        renderSidebarTree();
+        displaySelectedLesson();
+        updateVideosCountDisplay();
+        if (selectedLessonId === lessonId) {
+            await refreshSrcArrayEditor();
+        }
+
+        setStatus(`Lesson reset to original settings`, 'success');
+        setTimeout(() => setStatus('Ready'), 2500);
+    } catch (error) {
+        console.error('Error resetting lesson:', error);
+        alert('Error resetting lesson: ' + error.message);
+        setStatus('Error resetting lesson: ' + error.message, 'error');
+    } finally {
+        setButtonLoading(btn, false);
     }
 }
 
@@ -2217,6 +2363,7 @@ window.showChaptersForLesson = showChaptersForLesson;
 window.saveChapterDisplayName = saveChapterDisplayName;
 window.adjustChapterIndexSequence = adjustChapterIndexSequence;
 window.saveAllChapters = saveAllChapters;
+window.resetLessonAssignment = resetLessonAssignment;
 window.saveSectionDisplayName = async function saveSectionDisplayName(originalSection, btn) {
     try {
         requireAuth();

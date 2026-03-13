@@ -552,8 +552,6 @@ html {
 
 .tree-lesson.has-video .tree-lesson-status {
     color: #22c55e;
-    filter: drop-shadow(0 0 4px rgba(34, 197, 94, 0.9));
-    text-shadow: 0 0 6px rgba(34, 197, 94, 0.8);
 }
 
 /* Section edit row (inside tree section header or below it) */
@@ -970,6 +968,38 @@ html {
     font-style: italic;
 }
 
+.video-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.4rem 0.6rem;
+    border-radius: 6px;
+    margin-bottom: 0.25rem;
+    background: rgba(15, 23, 42, 0.5);
+}
+
+.video-item-main {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+}
+
+.video-item-name {
+    font-size: 0.9rem;
+    color: #e5e7eb;
+}
+
+.video-item-meta {
+    font-size: 0.75rem;
+    color: #9ca3af;
+}
+
+.video-item-actions {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+}
+
 /* Buttons */
 .btn {
     padding: 0.6rem 1.2rem;
@@ -1231,6 +1261,7 @@ html {
     gap: 0.5rem;
     align-items: center;
     margin-bottom: 0.5rem;
+    flex-wrap: wrap;
 }
 
 .yellow-screen-option {
@@ -1373,6 +1404,7 @@ html {
 
 .lesson-assignment select {
     flex: 1;
+    min-width: 0;
     padding: 0.5rem;
     border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 4px;
@@ -1386,7 +1418,7 @@ html {
     border-color: #3b82f6;
 }
 
-.lesson-assignment button {
+.lesson-assignment .assign-btn {
     padding: 0.5rem 1rem;
     background: #22c55e;
     color: white;
@@ -1397,12 +1429,12 @@ html {
     transition: background-color 0.2s;
 }
 
-.lesson-assignment button:hover {
+.lesson-assignment .assign-btn:hover {
     background: #16a34a;
     border-color: #16a34a;
 }
 
-.lesson-assignment button:disabled {
+.lesson-assignment .assign-btn:disabled {
     background: rgba(108, 117, 125, 0.3);
     border-color: rgba(108, 117, 125, 0.5);
     color: rgba(108, 117, 125, 0.7);
@@ -1418,9 +1450,10 @@ html {
 /* Video Item */
 .video-item {
     display: flex;
-    align-items: center;
+    flex-wrap: wrap;
+    align-items: flex-start;
     justify-content: space-between;
-    gap: 0.5rem;
+    gap: 0.5rem 0.75rem;
     padding: 0.75rem;
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 6px;
@@ -1428,7 +1461,6 @@ html {
     background: #1e293b;
     font-size: 0.9rem;
     color: #b8c5d4;
-    cursor: pointer;
 }
 
 .video-item:hover {
@@ -1437,30 +1469,33 @@ html {
     color: #f1f5f9;
 }
 
-.video-item-name {
-    flex: 1;
+.video-item-main {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    flex: 1 1 180px;
     min-width: 0;
+}
+
+.video-item-name {
+    font-size: 0.9rem;
+    color: #e5e7eb;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 .video-item-meta {
-    flex-shrink: 0;
     font-size: 0.75rem;
-    color: #94a3b8;
-    margin-left: 0.25rem;
+    color: #9ca3af;
 }
 
-.video-item-play {
-    flex-shrink: 0;
-    font-size: 0.75rem;
-    opacity: 0.85;
-    margin-left: 0.5rem;
-}
-
-.video-item:hover .video-item-play {
-    opacity: 1;
+.video-item-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    align-items: center;
+    justify-content: flex-end;
 }
 
 .videos-count {
