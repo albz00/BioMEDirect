@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Video Path CMS - Admin</title>
+    <title>BioME - Admin</title>
     <link rel="stylesheet" href="admin.css">
     <!-- Firebase SDKs -->
         <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
@@ -17,7 +17,7 @@
     <div id="loginScreen" class="screen">
         <div class="login-layout">
             <div class="login-container">
-                <h1>Video Path CMS</h1>
+                <h1>BioME</h1>
                 <h2>Admin Login</h2>
                 <form id="loginForm">
                     <div class="form-group">
@@ -64,7 +64,7 @@
     <!-- Admin Dashboard -->
     <div id="dashboardScreen" class="screen hidden">
         <header class="dashboard-header">
-            <h1>Video Path CMS - Admin Dashboard</h1>
+            <h1>BioME - Admin Dashboard</h1>
             <div class="header-buttons">
                 <button id="instructionsBtn" class="btn btn-secondary">
                     <span class="btn-icon">?</span>
@@ -115,29 +115,32 @@
                 </button>
             </div>
 
-            <div class="main-content">
-                <div class="lessons-section">
-                    <div class="lessons-header">
-                        <h2>Lessons</h2>
-                        <div class="search-filter-controls">
-                            <input type="text" id="searchInput" class="search-input" placeholder="Search lessons...">
-                            <div class="filter-buttons">
-                                <button class="filter-btn active" data-filter="all">All</button>
-                                <button class="filter-btn" data-filter="missing">Missing</button>
-                                <button class="filter-btn" data-filter="has-video">Has Video</button>
-                            </div>
+            <div class="admin-layout">
+                <aside id="lessonsSidebar" class="lessons-sidebar">
+                    <div class="sidebar-header">
+                        <h2 class="sidebar-title">Lessons</h2>
+                        <button type="button" id="sidebarToggle" class="sidebar-toggle" title="Collapse sidebar" aria-label="Collapse sidebar">◀</button>
+                    </div>
+                    <div class="search-filter-controls sidebar-controls">
+                        <input type="text" id="searchInput" class="search-input" placeholder="Search lessons...">
+                        <div class="filter-buttons">
+                            <button class="filter-btn active" data-filter="all">All</button>
+                            <button class="filter-btn" data-filter="missing">Missing</button>
+                            <button class="filter-btn" data-filter="has-video">Has Video</button>
                         </div>
                     </div>
-                    <div id="sectionIndex" class="section-index"></div>
-                    <div id="lessonsList" class="lessons-list">
-                        <p class="placeholder">Click "Scan All Lessons" to check video availability</p>
-                    </div>
-                </div>
+                    <div id="sidebarTree" class="sidebar-tree"></div>
+                </aside>
 
-                <div class="videos-section">
-                    <h2>Available Videos</h2>
-                    <div id="videosList" class="videos-list">
-                        <p class="placeholder">Click "Refresh Available Videos" to load videos from Storage</p>
+                <div class="main-content">
+                    <div id="lessonDetail" class="lesson-detail-panel">
+                        <p class="placeholder">Select a lesson from the tree</p>
+                    </div>
+                    <div class="videos-section">
+                        <h2>Available Videos</h2>
+                        <div id="videosList" class="videos-list">
+                            <p class="placeholder">Click "Refresh Available Videos" to load videos from Storage</p>
+                        </div>
                     </div>
                 </div>
             </div>

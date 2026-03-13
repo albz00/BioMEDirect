@@ -17,12 +17,14 @@ const functions = firebase.functions();
 // State
 let availableVideos = [];
 let lessonsData = [];
-let loginScreen, dashboardScreen, loginForm, logoutBtn, scanBtn, refreshVideosBtn, mapSegmentLinksBtn, detectVideoTitlesBtn, statusText, loginError, lessonsList, videosList;
+let loginScreen, dashboardScreen, loginForm, logoutBtn, scanBtn, refreshVideosBtn, mapSegmentLinksBtn, detectVideoTitlesBtn, statusText, loginError, videosList;
 let uploadVideoBtn, uploadVideoInput;
 let instructionsBtn, changelogBtn, instructionsModal, changelogModal;
 let searchInput, filterButtons;
 let currentFilter = 'all';
 let searchQuery = '';
+let selectedLessonId = null;
+let collapsedSections = new Set();
 
 // Check authentication state on load and on changes (set up immediately)
 auth.onAuthStateChanged((user) => {
@@ -76,7 +78,6 @@ document.addEventListener('DOMContentLoaded', () => {
     detectVideoTitlesBtn = document.getElementById('detectVideoTitlesBtn');
     statusText = document.getElementById('statusText');
     loginError = document.getElementById('loginError');
-    lessonsList = document.getElementById('lessonsList');
     videosList = document.getElementById('videosList');
     instructionsModal = document.getElementById('instructionsModal');
     changelogModal = document.getElementById('changelogModal');
@@ -329,7 +330,8 @@ function setupEventListeners() {
     if (searchInput) {
         searchInput.addEventListener('input', (e) => {
             searchQuery = e.target.value.toLowerCase().trim();
-            displayLessons();
+            renderSidebarTree();
+            displaySelectedLesson();
         });
     }
 
@@ -337,14 +339,38 @@ function setupEventListeners() {
     if (filterButtons) {
         filterButtons.forEach(btn => {
             btn.addEventListener('click', (e) => {
-                // Remove active class from all buttons
                 filterButtons.forEach(b => b.classList.remove('active'));
-                // Add active class to clicked button
                 e.target.classList.add('active');
-                // Update current filter
                 currentFilter = e.target.getAttribute('data-filter');
-                displayLessons();
+                renderSidebarTree();
+                displaySelectedLesson();
             });
+        });
+    }
+
+    // Sidebar collapse toggle
+    const sidebarToggle = document.getElementById('sidebarToggle');
+    const lessonsSidebar = document.getElementById('lessonsSidebar');
+    if (sidebarToggle && lessonsSidebar) {
+        sidebarToggle.addEventListener('click', () => {
+            lessonsSidebar.classList.toggle('collapsed');
+            sidebarToggle.textContent = lessonsSidebar.classList.contains('collapsed') ? '▶' : '◀';
+            sidebarToggle.title = lessonsSidebar.classList.contains('collapsed') ? 'Expand sidebar' : 'Collapse sidebar';
+            sidebarToggle.setAttribute('aria-label', lessonsSidebar.classList.contains('collapsed') ? 'Expand sidebar' : 'Collapse sidebar');
+        });
+    }
+
+    // Tree section expand/collapse (delegated)
+    const sidebarTree = document.getElementById('sidebarTree');
+    if (sidebarTree) {
+        sidebarTree.addEventListener('click', (e) => {
+            const header = e.target.closest('.tree-section-header');
+            if (!header) return;
+            e.preventDefault();
+            const sectionEl = header.closest('.tree-section');
+            if (!sectionEl) return;
+            const key = sectionEl.getAttribute('data-section');
+            if (key) toggleSectionInSidebar(key);
         });
     }
 }
@@ -542,7 +568,10 @@ async function scanLessons() {
     
     setStatus('Scanning lessons from menu...', 'scanning');
     scanBtn.disabled = true;
-    lessonsList.innerHTML = '<div class="spinner"></div>';
+    const lessonDetailEl = document.getElementById('lessonDetail');
+    const sidebarTreeEl = document.getElementById('sidebarTree');
+    if (lessonDetailEl) lessonDetailEl.innerHTML = '<div class="spinner"></div>';
+    if (sidebarTreeEl) sidebarTreeEl.innerHTML = '';
     
     try {
         // Step 1: Parse central menu to get all lesson paths
@@ -627,8 +656,8 @@ async function scanLessons() {
             return a.name.localeCompare(b.name);
         });
         
-        renderSectionIndex();
-        displayLessons();
+        renderSidebarTree();
+        displaySelectedLesson();
         
         const missingCount = lessonsData.filter(l => !l.hasVideo).length;
         const totalCount = lessonsData.length;
@@ -638,7 +667,8 @@ async function scanLessons() {
     } catch (error) {
         console.error('Error scanning lessons:', error);
         setStatus('Error scanning lessons: ' + error.message, 'error');
-        lessonsList.innerHTML = '<p class="placeholder">Error loading lessons</p>';
+        const lessonDetail = document.getElementById('lessonDetail');
+        if (lessonDetail) lessonDetail.innerHTML = '<p class="placeholder">Error loading lessons</p>';
     } finally {
         scanBtn.disabled = false;
     }
@@ -662,13 +692,34 @@ async function checkVideoAvailability(lessonId, customVideoPath) {
     }
 }
 
-function renderSectionIndex() {
-    const sectionIndexEl = document.getElementById('sectionIndex');
-    if (!sectionIndexEl || lessonsData.length === 0) return;
+function getFilteredLessons() {
+    return lessonsData.filter(lesson => {
+        if (searchQuery) {
+            const matchesSearch = lesson.name.toLowerCase().includes(searchQuery) ||
+                                 lesson.lessonId.toLowerCase().includes(searchQuery) ||
+                                 lesson.path.toLowerCase().includes(searchQuery);
+            if (!matchesSearch) return false;
+        }
+        if (currentFilter === 'missing') return !lesson.hasVideo;
+        if (currentFilter === 'has-video') return lesson.hasVideo;
+        return true;
+    });
+}
 
-    // Group lessons by originalSection
+function renderSidebarTree() {
+    const treeEl = document.getElementById('sidebarTree');
+    if (!treeEl) return;
+    if (lessonsData.length === 0) {
+        treeEl.innerHTML = '<p class="placeholder">Click "Scan All Lessons" to load the tree</p>';
+        return;
+    }
+    const filteredLessons = getFilteredLessons();
+    if (filteredLessons.length === 0) {
+        treeEl.innerHTML = '<p class="placeholder">No lessons match your search/filter</p>';
+        return;
+    }
     const groups = {};
-    for (const lesson of lessonsData) {
+    for (const lesson of filteredLessons) {
         const key = lesson.originalSection || 'Uncategorized';
         if (!groups[key]) {
             groups[key] = {
@@ -679,171 +730,141 @@ function renderSectionIndex() {
         }
         groups[key].lessons.push(lesson);
     }
-
     const sections = Object.values(groups).sort((a, b) =>
         a.sectionName.localeCompare(b.sectionName)
     );
-
     const html = sections.map(section => {
         const safeSectionName = section.sectionName.replace(/</g, '&lt;').replace(/>/g, '&gt;');
         const safeOriginalSection = section.originalSection.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-        const lessonItems = section.lessons
+        const sectionKey = section.originalSection.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const isCollapsed = collapsedSections.has(section.originalSection);
+        const lessonRows = section.lessons
             .sort((a, b) => a.name.localeCompare(b.name))
             .map(lesson => {
                 const safeLessonName = lesson.name.replace(/</g, '&lt;').replace(/>/g, '&gt;');
                 const status = lesson.hasVideo ? '●' : '○';
                 const statusClass = lesson.hasVideo ? 'has-video' : 'missing';
-                return `
-                    <li class="section-lesson ${statusClass}" data-lesson-id="${lesson.lessonId}"
-                        onclick="scrollToLesson('${lesson.lessonId}')">
-                        <span class="section-lesson-status">${status}</span>
-                        <span class="section-lesson-name">${safeLessonName}</span>
-                    </li>
-                `;
+                const selected = lesson.lessonId === selectedLessonId ? ' selected' : '';
+                const escId = lesson.lessonId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                return `<div class="tree-lesson ${statusClass}${selected}" data-lesson-id="${lesson.lessonId}" onclick="selectLesson('${escId}')"><span class="tree-lesson-status">${status}</span><span class="tree-lesson-name">${safeLessonName}</span></div>`;
             }).join('');
-
+        const sectionKeyAttr = section.originalSection.replace(/"/g, '&quot;');
         return `
-            <div class="section-index-item">
-                <div class="section-index-header">
-                    <div class="section-index-title">
-                        <span class="section-index-original">${safeOriginalSection}</span>
-                    </div>
-                    <div class="section-index-edit">
-                        <input
-                            type="text"
-                            class="section-index-input"
-                            id="section-index-input-${section.originalSection.replace(/[^a-zA-Z0-9_-]/g, '_')}"
-                            value="${safeSectionName}"
-                        >
-                        <button
-                            type="button"
-                            class="btn-section-save"
-                            onclick="saveSectionDisplayName('${section.originalSection.replace(/'/g, "\\'")}')"
-                        >
-                            Save
-                        </button>
-                    </div>
+            <div class="tree-section${isCollapsed ? ' collapsed' : ''}" data-section="${sectionKeyAttr}">
+                <div class="tree-section-header">
+                    <span class="tree-section-chevron">▼</span>
+                    <span class="tree-section-title">${safeSectionName}</span>
                 </div>
-                <ul class="section-lesson-list">
-                    ${lessonItems}
-                </ul>
-            </div>
-        `;
+                <div class="tree-section-edit">
+                    <input type="text" class="section-index-input" id="section-index-input-${sectionKey}" value="${safeSectionName}">
+                    <button type="button" class="btn-section-save" onclick="saveSectionDisplayName('${section.originalSection.replace(/'/g, "\\'")}')">Save</button>
+                </div>
+                <div class="tree-section-children">${lessonRows}</div>
+            </div>`;
     }).join('');
-
-    sectionIndexEl.innerHTML = html;
+    treeEl.innerHTML = html;
 }
 
-function displayLessons() {
-    if (lessonsData.length === 0) {
-        lessonsList.innerHTML = '<p class="placeholder">No lessons found</p>';
+function displaySelectedLesson() {
+    const panel = document.getElementById('lessonDetail');
+    if (!panel) return;
+    if (!selectedLessonId) {
+        panel.innerHTML = '<p class="placeholder">Select a lesson from the tree</p>';
         return;
     }
-    
-    // Filter lessons based on search query and filter type
-    let filteredLessons = lessonsData.filter(lesson => {
-        // Apply search filter
-        if (searchQuery) {
-            const matchesSearch = lesson.name.toLowerCase().includes(searchQuery) ||
-                                 lesson.lessonId.toLowerCase().includes(searchQuery) ||
-                                 lesson.path.toLowerCase().includes(searchQuery);
-            if (!matchesSearch) return false;
-        }
-        
-        // Apply status filter
-        if (currentFilter === 'missing') {
-            return !lesson.hasVideo;
-        } else if (currentFilter === 'has-video') {
-            return lesson.hasVideo;
-        }
-        // currentFilter === 'all'
-        return true;
-    });
-    
-    if (filteredLessons.length === 0) {
-        lessonsList.innerHTML = '<p class="placeholder">No lessons match your search/filter criteria</p>';
+    const lesson = lessonsData.find(l => l.lessonId === selectedLessonId);
+    if (!lesson) {
+        panel.innerHTML = '<p class="placeholder">Lesson not found</p>';
         return;
     }
-    
-    lessonsList.innerHTML = filteredLessons.map(lesson => {
-        const statusClass = lesson.hasVideo ? 'has-video' : 'missing';
-        const statusText = lesson.hasVideo ? 'Has Video' : 'Missing';
-        
-        // Create options for video selector
-        const videoOptions = availableVideos.map(video => {
-            const selected = lesson.currentPath === `videos/${video}` ? 'selected' : '';
-            return `<option value="${video}" ${selected}>${video}</option>`;
-        }).join('');
-        
-        // Escape HTML in lesson name and section to prevent XSS
-        const safeName = lesson.name.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        const safeLessonId = lesson.lessonId.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        const safePath = lesson.path.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        const safeSection = (lesson.section || 'Uncategorized').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        const safeOriginalName = (lesson.originalName || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        const safeOriginalSection = (lesson.originalSection || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        
-        return `
-            <div class="lesson-item" id="lesson-${lesson.lessonId}">
-                <div class="lesson-item-header">
-                    <span class="lesson-name">${safeName}</span>
-                    <span class="lesson-status ${statusClass}">${statusText}</span>
+    panel.innerHTML = getLessonCardHTML(lesson);
+}
+
+function getLessonCardHTML(lesson) {
+    const statusClass = lesson.hasVideo ? 'has-video' : 'missing';
+    const statusText = lesson.hasVideo ? 'Has Video' : 'Missing';
+    const videoOptions = availableVideos.map(video => {
+        const selected = lesson.currentPath === `videos/${video}` ? 'selected' : '';
+        return `<option value="${video}" ${selected}>${video}</option>`;
+    }).join('');
+    const safeName = lesson.name.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const safeLessonId = lesson.lessonId.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const safePath = lesson.path.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const safeSection = (lesson.section || 'Uncategorized').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const safeOriginalName = (lesson.originalName || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const safeOriginalSection = (lesson.originalSection || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const escId = lesson.lessonId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    return `
+        <div class="lesson-item" id="lesson-${lesson.lessonId}">
+            <div class="lesson-item-header">
+                <span class="lesson-name">${safeName}</span>
+                <span class="lesson-status ${statusClass}">${statusText}</span>
+            </div>
+            <div class="lesson-details">
+                <div class="lesson-section">Section: ${safeSection}</div>
+                <div class="lesson-original">
+                    <span class="lesson-original-label">Original:</span>
+                    <span class="lesson-original-values">${safeOriginalSection} &raquo; ${safeOriginalName}</span>
                 </div>
-                <div class="lesson-details">
-                    <div class="lesson-section">Section: ${safeSection}</div>
-                    <div class="lesson-original">
-                        <span class="lesson-original-label">Original:</span>
-                        <span class="lesson-original-values">${safeOriginalSection} &raquo; ${safeOriginalName}</span>
+                <div class="lesson-id">ID: ${safeLessonId}</div>
+                <div class="lesson-path">Path: ${safePath}</div>
+                <div class="current-video">Video: ${lesson.currentPath}</div>
+            </div>
+            <div class="lesson-assignment">
+                <div class="lesson-metadata-edit">
+                    <div class="metadata-row">
+                        <label for="name-input-${lesson.lessonId}">Lesson Name:</label>
+                        <input type="text" id="name-input-${lesson.lessonId}" value="${safeName}">
                     </div>
-                    <div class="lesson-id">ID: ${safeLessonId}</div>
-                    <div class="lesson-path">Path: ${safePath}</div>
-                    <div class="current-video">Video: ${lesson.currentPath}</div>
+                    <button class="btn-metadata-save" onclick="saveLessonMetadata('${escId}')">Save Lesson Name</button>
                 </div>
-                <div class="lesson-assignment">
-                    <div class="lesson-metadata-edit">
-                        <div class="metadata-row">
-                            <label for="name-input-${lesson.lessonId}">Lesson Name:</label>
-                            <input type="text" id="name-input-${lesson.lessonId}" value="${safeName}">
-                        </div>
-                        <button class="btn-metadata-save" onclick="saveLessonMetadata('${lesson.lessonId}')">
-                            Save Lesson Name
-                        </button>
-                    </div>
-                    <div class="assignment-row">
-                        <select id="video-select-${lesson.lessonId}">
-                            <option value="">${lesson.hasVideo ? 'Change video...' : 'Select a video...'}</option>
-                            ${videoOptions}
-                        </select>
-                        <button onclick="assignVideo('${lesson.lessonId}')" id="assign-btn-${lesson.lessonId}">
-                            ${lesson.hasVideo ? 'Update' : 'Assign'}
-                        </button>
-                    </div>
-                    <div class="yellow-screen-option">
-                        <label>
-                            <input type="checkbox" id="yellow-screen-${lesson.lessonId}" 
-                                   ${lesson.yellowScreen ? 'checked' : ''} 
-                                   onchange="toggleYellowScreen('${lesson.lessonId}')">
-                            Remove yellow screen (adjust srcArray)
-                        </label>
-                    </div>
-                    <div class="lesson-chapters-block">
-                        <button type="button" class="btn btn-secondary btn-chapters" onclick="showChaptersForLesson('${lesson.lessonId}')">
-                            <span class="btn-label">Show chapters</span>
-                        </button>
-                        <div id="chapters-container-${lesson.lessonId}" class="chapters-container" style="display:none;">
-                            <label class="chapters-dropdown-label">Chapters</label>
-                            <select id="chapters-dropdown-${lesson.lessonId}" class="chapters-dropdown">
-                                <option value="">— Select a chapter —</option>
-                            </select>
-                            <div id="chapters-edit-list-${lesson.lessonId}" class="chapters-edit-list"></div>
-                        </div>
+                <div class="assignment-row">
+                    <select id="video-select-${lesson.lessonId}">
+                        <option value="">${lesson.hasVideo ? 'Change video...' : 'Select a video...'}</option>
+                        ${videoOptions}
+                    </select>
+                    <button onclick="assignVideo('${escId}')" id="assign-btn-${lesson.lessonId}">${lesson.hasVideo ? 'Update' : 'Assign'}</button>
+                </div>
+                <div class="yellow-screen-option">
+                    <label>
+                        <input type="checkbox" id="yellow-screen-${lesson.lessonId}" ${lesson.yellowScreen ? 'checked' : ''} onchange="toggleYellowScreen('${escId}')">
+                        Remove yellow screen (adjust srcArray)
+                    </label>
+                </div>
+                <div class="lesson-chapters-block">
+                    <button type="button" class="btn btn-secondary btn-chapters" onclick="showChaptersForLesson('${escId}')"><span class="btn-label">Show chapters</span></button>
+                    <div id="chapters-container-${lesson.lessonId}" class="chapters-container" style="display:none;">
+                        <label class="chapters-dropdown-label">Chapters</label>
+                        <select id="chapters-dropdown-${lesson.lessonId}" class="chapters-dropdown"><option value="">— Select a chapter —</option></select>
+                        <div id="chapters-edit-list-${lesson.lessonId}" class="chapters-edit-list"></div>
                     </div>
                 </div>
             </div>
-        `;
-    }).join('');
+        </div>`;
 }
+
+function selectLesson(lessonId) {
+    const lesson = lessonsData.find(l => l.lessonId === lessonId);
+    if (lesson) collapsedSections.delete(lesson.originalSection);
+    selectedLessonId = lessonId;
+    renderSidebarTree();
+    displaySelectedLesson();
+    const treeEl = document.getElementById('sidebarTree');
+    if (treeEl) {
+        const node = treeEl.querySelector(`.tree-lesson[data-lesson-id="${lessonId}"]`);
+        if (node) node.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+}
+
+// Expose for tree section header click (collapse/expand)
+function toggleSectionInSidebar(sectionKey) {
+    if (collapsedSections.has(sectionKey)) collapsedSections.delete(sectionKey);
+    else collapsedSections.add(sectionKey);
+    renderSidebarTree();
+}
+
+window.selectLesson = selectLesson;
+window.toggleSectionInSidebar = toggleSectionInSidebar;
 
 async function saveLessonMetadata(lessonId) {
     try {
@@ -913,8 +934,8 @@ async function saveLessonMetadata(lessonId) {
             }
         }
 
-        displayLessons();
-        renderSectionIndex();
+        renderSidebarTree();
+        displaySelectedLesson();
         setStatus('Lesson metadata saved', 'success');
         setTimeout(() => setStatus('Ready'), 3000);
     } catch (error) {
@@ -1017,25 +1038,32 @@ async function saveChapterDisplayName(lessonId, menuId) {
     const metaRef = db.collection('lessonMetadata').doc(lessonId);
 
     if (!newName || newName === originalLabel) {
-        await metaRef.update({
-            [`chapterDisplayNames.${menuId}`]: firebase.firestore.FieldValue.delete()
-        });
+        try {
+            await metaRef.update({
+                [`chapterDisplayNames.${menuId}`]: firebase.firestore.FieldValue.delete()
+            });
+        } catch (e) {
+            if (e.code !== 'not-found') throw e;
+        }
         input.value = originalLabel;
         input.setAttribute('data-original', originalLabel);
     } else {
-        await metaRef.set(
-            { chapterDisplayNames: { [menuId]: newName } },
-            { merge: true }
-        );
+        const snap = await metaRef.get();
+        const existing = (snap.exists && snap.data().chapterDisplayNames) ? { ...snap.data().chapterDisplayNames } : {};
+        existing[menuId] = newName;
+        await metaRef.set({ chapterDisplayNames: existing }, { merge: true });
         input.setAttribute('data-original', newName);
     }
     const dropdown = document.getElementById(`chapters-dropdown-${lessonId}`);
     if (dropdown) {
         const rows = document.querySelectorAll(`#chapters-edit-list-${lessonId} .chapter-row`);
-        const options = dropdown.querySelectorAll('option[value]');
-        options.forEach((opt, i) => {
-            const inp = rows[i] ? rows[i].querySelector('.chapter-name-input') : null;
-            if (inp) opt.textContent = inp.value.trim() || inp.getAttribute('data-original');
+        const options = dropdown.querySelectorAll('option');
+        options.forEach((opt) => {
+            if (opt.value === '') return;
+            const rowIndex = parseInt(opt.value, 10);
+            const row = rows[rowIndex];
+            const inp = row ? row.querySelector('.chapter-name-input') : null;
+            if (inp) opt.textContent = inp.value.trim() || inp.getAttribute('data-original') || '';
         });
     }
     setStatus('Chapter name saved', 'success');
@@ -1081,8 +1109,8 @@ async function assignVideo(lessonId) {
             lesson.hasVideo = videoCheck.exists;
         }
         
-        // Re-render to show updated status
-        displayLessons();
+        renderSidebarTree();
+        displaySelectedLesson();
         
         const lessonName = lesson ? lesson.name : lessonId;
         setStatus(`Video assigned to ${lessonName}`, 'success');
@@ -1700,8 +1728,8 @@ window.saveSectionDisplayName = async function saveSectionDisplayName(originalSe
             }
         });
 
-        renderSectionIndex();
-        displayLessons();
+        renderSidebarTree();
+        displaySelectedLesson();
         setStatus('Section name saved', 'success');
         setTimeout(() => setStatus('Ready'), 3000);
     } catch (error) {
@@ -1712,8 +1740,6 @@ window.saveSectionDisplayName = async function saveSectionDisplayName(originalSe
     }
 };
 window.scrollToLesson = function scrollToLesson(lessonId) {
-    const el = document.getElementById(`lesson-${lessonId}`);
-    if (!el) return;
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    selectLesson(lessonId);
 };
 
