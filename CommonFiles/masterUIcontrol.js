@@ -20,7 +20,23 @@ function initializePlayer(videoUrl, srcArray) {
     
     // Listener to pause video when reach specified time and implements looping // FindMe4
     videoId.addEventListener("timeupdate", function(){
-        if(this.currentTime >= srcArray[currentSlide].src_end){
+        var t = this.currentTime;
+
+        // If we are inside a yellow-screen range and skipping is enabled, jump past it
+        if (typeof window.shouldSkipYellow !== 'undefined' && window.shouldSkipYellow &&
+            Array.isArray(window.yellowScreenRanges) && window.yellowScreenRanges.length > 0) {
+            var eps = 0.05;
+            for (var i = 0; i < window.yellowScreenRanges.length; i++) {
+                var r = window.yellowScreenRanges[i];
+                if (!r || typeof r.start !== 'number' || typeof r.end !== 'number') continue;
+                if (t >= r.start && t < r.end) {
+                    this.currentTime = r.end + eps;
+                    return;
+                }
+            }
+        }
+
+        if (this.currentTime >= srcArray[currentSlide].src_end) {
             // if next slide is a loop, then autoplay next slide
             if (currentSlide + 1 < lastSlide &&
                 srcArray[currentSlide + 1].loop) {
