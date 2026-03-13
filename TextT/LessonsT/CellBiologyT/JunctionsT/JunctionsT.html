@@ -96,37 +96,17 @@
     };
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
+    window.shouldSkipYellow = false;
+    window.yellowScreenRanges = [];
 
-    // Load srcArray from Firestore
+        // Load srcArray from Firestore (timeline keyed by lessonId only)
     async function loadSrcArray(lessonId) {
         try {
-            // First, get videoPath from videoPaths collection
-            const videoPathDoc = await db.collection("videoPaths").doc(lessonId).get();
-            let videoPath;
-            
-            if (videoPathDoc.exists && videoPathDoc.data().videoPath) {
-                videoPath = videoPathDoc.data().videoPath;
-            } else {
-                // Fall back to default path
-                videoPath = `videos/${lessonId}.mp4`;
-            }
-            
-            // Extract video filename from videoPath (e.g., "videos/filename.mp4" → "filename")
-            const match = videoPath.match(/videos\/([^\/]+)\.mp4$/);
-            if (!match) {
-                console.error("Invalid video path format:", videoPath);
-                return [];
-            }
-            const videoFilename = match[1]; // Video filename without extension
-            
-            // Get srcArray from lessons collection using video filename (not lessonId)
-            const videoDoc = await db.collection("lessons").doc(videoFilename).get();
-            if (!videoDoc.exists) {
-                console.error("Video document not found:", videoFilename);
-                return [];
-            }
-            
-            return videoDoc.data().srcArray || [];
+            const lessonDoc = await db.collection("lessons").doc(lessonId).get();
+            if (!lessonDoc.exists) return [];
+            const data = lessonDoc.data() || {};
+            if (Array.isArray(data.yellowScreenRanges)) window.yellowScreenRanges = data.yellowScreenRanges;
+            return data.srcArray || [];
         } catch (error) {
             console.error("Error loading srcArray:", error);
             return [];
@@ -170,6 +150,8 @@
 
             const srcArray = await loadSrcArray(lessonId);
             const videoUrl = await loadVideoUrl(lessonId);
+
+            if (window.yellowScreenRanges && window.yellowScreenRanges.length > 0) window.shouldSkipYellow = true;
 
             console.log("Loaded timing array:", srcArray);
             console.log("Loaded video URL:", videoUrl);

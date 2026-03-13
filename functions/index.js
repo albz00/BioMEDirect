@@ -30,7 +30,7 @@ exports.generateSrcArray = onObjectFinalized(
     console.log("Skipping non-video file:", filePath);
     return;
   }
-
+  // Convention: videos/<lessonId>.mp4 so this lesson's timeline is stored at lessons.doc(lessonId)
   const lessonId = path.basename(filePath, ".mp4");
 
   const bucket = storage.bucket(bucketName);
@@ -227,10 +227,9 @@ exports.detectYellowScreen = onCall(
     timeoutSeconds: 120,
   },
   async (request) => {
-  const { videoPath, videoFilename } = request.data;
-  
-  if (!videoPath || !videoFilename) {
-    throw new Error("videoPath and videoFilename are required");
+  const { videoPath, lessonId } = request.data;
+  if (!videoPath || !lessonId) {
+    throw new Error("videoPath and lessonId are required");
   }
 
   const bucket = admin.storage().bucket();
@@ -244,8 +243,8 @@ exports.detectYellowScreen = onCall(
     const yellowRanges = await detectYellowFrames(tmpFile);
     console.log("Detected yellow screen ranges:", yellowRanges);
 
-    // Load current srcArray/originalSrcArray
-    const videoDocRef = db.collection("lessons").doc(videoFilename);
+    // Timeline is keyed by lessonId
+    const videoDocRef = db.collection("lessons").doc(lessonId);
     const videoSnap = await videoDocRef.get();
     const videoData = videoSnap.exists ? videoSnap.data() : {};
     const currentSrcArray = Array.isArray(videoData.srcArray) ? videoData.srcArray : [];
@@ -478,21 +477,19 @@ function framesToRanges(sortedFrameTimes, frameInterval) {
     end: Math.round((rangeEnd + interval) * 100) / 100
   });
 
-  return mergeYellowRanges(ranges);
+  const merged = mergeYellowRanges(ranges);
+  // Drop very short blips (e.g. single-frame noise) so they don't create tiny segments
+  return filterShortYellowRanges(merged, 0.2);
 }
 
 // Merge yellow ranges that are close together (within 0.5 seconds)
 function mergeYellowRanges(ranges) {
   if (ranges.length === 0) return [];
-  
   const merged = [];
   ranges.sort((a, b) => a.start - b.start);
-  
   let current = { ...ranges[0] };
-  
   for (let i = 1; i < ranges.length; i++) {
     const next = ranges[i];
-    // If ranges are close (within 0.5 seconds), merge them
     if (next.start - current.end < 0.5) {
       current.end = Math.max(current.end, next.end);
     } else {
@@ -501,8 +498,13 @@ function mergeYellowRanges(ranges) {
     }
   }
   merged.push(current);
-  
   return merged;
+}
+
+// Remove yellow ranges shorter than minDuration (seconds) to avoid single-frame false positives
+function filterShortYellowRanges(ranges, minDuration) {
+  if (!ranges.length || minDuration <= 0) return ranges;
+  return ranges.filter(r => typeof r.start === "number" && typeof r.end === "number" && (r.end - r.start) >= minDuration);
 }
 
 // Adjust srcArray to skip yellow screen ranges completely:
@@ -894,10 +896,9 @@ exports.detectVideoTitles = onCall(
     timeoutSeconds: 540,
   },
   async (request) => {
-    const { videoPath, videoFilename, lessonId, segmentLinks } = request.data;
-
-    if (!videoPath || !videoFilename) {
-      throw new Error("videoPath and videoFilename are required");
+    const { videoPath, lessonId, segmentLinks } = request.data;
+    if (!videoPath || !lessonId) {
+      throw new Error("videoPath and lessonId are required");
     }
 
     const bucket = admin.storage().bucket();
@@ -907,17 +908,13 @@ exports.detectVideoTitles = onCall(
       console.log("Downloading video for title detection:", videoPath);
       await bucket.file(videoPath).download({ destination: tmpFile });
 
-      // Get current srcArray from Firestore
-      const videoDoc = await db.collection("lessons").doc(videoFilename).get();
-      if (!videoDoc.exists) {
-        throw new Error(`Video document not found: ${videoFilename}`);
+      const lessonDoc = await db.collection("lessons").doc(lessonId).get();
+      if (!lessonDoc.exists) {
+        throw new Error(`Lesson timeline not found: ${lessonId}`);
       }
-
-      const videoData = videoDoc.data();
-      const srcArray = videoData.srcArray || [];
-
+      const srcArray = (lessonDoc.data().srcArray) || [];
       if (srcArray.length === 0) {
-        throw new Error(`srcArray is empty for video: ${videoFilename}`);
+        throw new Error(`srcArray is empty for lesson: ${lessonId}`);
       }
 
       console.log("Detecting titles in video...");
@@ -952,8 +949,7 @@ exports.detectVideoTitles = onCall(
         segmentLinksToUse
       );
 
-      // Update Firestore with adjusted srcArray
-      await db.collection("lessons").doc(videoFilename).set({
+      await db.collection("lessons").doc(lessonId).set({
         srcArray: adjustedSrcArray,
         titleDetectionResults: {
           detectedTitles: detectedTitles,
@@ -999,10 +995,9 @@ exports.generateSrcArrayFromYellowScreens = onCall(
     timeoutSeconds: 300,
   },
   async (request) => {
-    const { videoPath, videoFilename, lessonId, chapters } = request.data;
-
-    if (!videoPath || !videoFilename || !Array.isArray(chapters)) {
-      throw new Error("videoPath, videoFilename and chapters[] are required");
+    const { videoPath, lessonId, chapters } = request.data;
+    if (!videoPath || !lessonId || !Array.isArray(chapters)) {
+      throw new Error("videoPath, lessonId and chapters[] are required");
     }
 
     const bucket = admin.storage().bucket();
@@ -1064,7 +1059,7 @@ exports.generateSrcArrayFromYellowScreens = onCall(
 
       // If the mismatch is too large, don't attempt to auto-map segments
       if (status === "failed") {
-        await db.collection("lessons").doc(videoFilename).set(
+        await db.collection("lessons").doc(lessonId).set(
           {
             autoMapping: {
               method: "yellowSequential",
@@ -1147,7 +1142,7 @@ exports.generateSrcArrayFromYellowScreens = onCall(
       }
 
       console.log("Writing chapter-aware srcArray with yellowSequential mapping...");
-      await db.collection("lessons").doc(videoFilename).set(
+      await db.collection("lessons").doc(lessonId).set(
         {
           srcArray,
           autoMapping: {

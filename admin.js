@@ -26,9 +26,9 @@ let currentFilter = 'all';
 let searchQuery = '';
 let selectedLessonId = null;
 let collapsedSections = new Set();
-/** Current srcArray and video doc id for the Timeline editor (so Save all knows where to write) */
+/** Current srcArray and lesson id for the Timeline editor (Save All writes to lessons.doc(currentSrcArrayLessonId)) */
 let currentSrcArrayForEditor = [];
-let currentSrcArrayVideoFilename = null;
+let currentSrcArrayLessonId = null;
 
 /** Show loading state on a button (spinner, disabled). Pass the button element and true/false. */
 function setButtonLoading(btn, loading) {
@@ -392,8 +392,18 @@ function setupEventListeners() {
                     await fileRef.put(file);
                 }
 
-                setStatus('Upload complete. Refreshing video list...', 'success');
+                setStatus('Upload complete. Refreshing dashboard (timeline will update when Cloud Function runs)...', 'success');
                 await loadAvailableVideos();
+                // If a single file was uploaded and its name matches a lessonId, assign it so the lesson uses this video
+                if (files.length === 1) {
+                    const baseName = files[0].name.replace(/\.mp4$/i, '');
+                    const lesson = lessonsData.find(l => l.lessonId === baseName);
+                    if (lesson) {
+                        const videoPath = `videos/${files[0].name}`;
+                        await db.collection('videoPaths').doc(baseName).set({ videoPath }, { merge: true });
+                    }
+                }
+                await refreshDashboard();
             } catch (error) {
                 console.error('Error uploading videos:', error);
                 setStatus('Error uploading videos: ' + error.message, 'error');
@@ -1204,35 +1214,31 @@ function selectLesson(lessonId) {
     }
 }
 
-/** Get video filename (no extension) for the selected lesson's video doc in Firestore */
-async function getVideoFilenameForLesson(lessonId) {
+/** Get video path for a lesson (for Storage/callables). Timeline is keyed by lessonId only. */
+async function getVideoPathForLesson(lessonId) {
     const lesson = lessonsData.find(l => l.lessonId === lessonId);
     if (!lesson) return null;
     const videoPathDoc = await db.collection('videoPaths').doc(lessonId).get();
-    const videoPath = videoPathDoc.exists && videoPathDoc.data().videoPath
+    return (videoPathDoc.exists && videoPathDoc.data().videoPath)
         ? videoPathDoc.data().videoPath
         : `videos/${lessonId}.mp4`;
-    const match = videoPath.match(/videos\/([^/]+)\.mp4$/);
-    return match ? match[1] : null;
 }
 
-/** Load srcArray from Firestore for the Timeline editor */
+/** Load srcArray from Firestore for the Timeline editor (timeline keyed by lessonId). */
 async function loadSrcArrayForEditor(lessonId) {
-    const videoFilename = await getVideoFilenameForLesson(lessonId);
-    if (!videoFilename) return { videoFilename: null, srcArray: [] };
-    const videoDoc = await db.collection('lessons').doc(videoFilename).get();
-    const srcArray = (videoDoc.exists && videoDoc.data().srcArray) ? videoDoc.data().srcArray : [];
-    return { videoFilename, srcArray };
+    const lessonDoc = await db.collection('lessons').doc(lessonId).get();
+    const srcArray = (lessonDoc.exists && lessonDoc.data().srcArray) ? lessonDoc.data().srcArray : [];
+    return { lessonId, srcArray };
 }
 
-function renderSrcArrayTable(srcArray, videoFilename) {
+function renderSrcArrayTable(srcArray, lessonId) {
     const tbody = document.getElementById('srcArrayEditorTbody');
     const tableWrap = document.querySelector('.srcarray-editor-table-wrap');
     const emptyEl = document.getElementById('srcArrayEditorEmpty');
     if (!tbody || !tableWrap || !emptyEl) return;
 
     currentSrcArrayForEditor = Array.isArray(srcArray) ? srcArray.map(s => ({ ...s })) : [];
-    currentSrcArrayVideoFilename = videoFilename;
+    currentSrcArrayLessonId = lessonId;
 
     if (currentSrcArrayForEditor.length === 0) {
         tbody.innerHTML = '';
@@ -1267,16 +1273,16 @@ async function refreshSrcArrayEditor() {
     const statusEl = document.getElementById('srcArrayEditorStatus');
     if (!selectedLessonId) {
         currentSrcArrayForEditor = [];
-        currentSrcArrayVideoFilename = null;
+        currentSrcArrayLessonId = null;
         renderSrcArrayTable([], null);
         if (statusEl) statusEl.textContent = '';
         return;
     }
     if (statusEl) statusEl.textContent = 'Loading…';
     try {
-        const { videoFilename, srcArray } = await loadSrcArrayForEditor(selectedLessonId);
-        renderSrcArrayTable(srcArray, videoFilename);
-        if (statusEl) statusEl.textContent = videoFilename ? `${srcArray.length} segments` : 'No video assigned';
+        const { lessonId, srcArray } = await loadSrcArrayForEditor(selectedLessonId);
+        renderSrcArrayTable(srcArray, selectedLessonId);
+        if (statusEl) statusEl.textContent = selectedLessonId ? `${srcArray.length} segments` : 'No lesson selected';
     } catch (e) {
         console.error('refreshSrcArrayEditor:', e);
         renderSrcArrayTable([], null);
@@ -1303,7 +1309,7 @@ function setupSrcArrayEditorListeners() {
     const saveBtn = document.getElementById('srcArraySaveAllBtn');
     if (saveBtn) {
         saveBtn.addEventListener('click', async () => {
-            if (!currentSrcArrayVideoFilename || currentSrcArrayForEditor.length === 0) {
+            if (!currentSrcArrayLessonId || currentSrcArrayForEditor.length === 0) {
                 setStatus('No timeline to save. Select a lesson and open the editor.', 'error');
                 return;
             }
@@ -1329,7 +1335,7 @@ function setupSrcArrayEditorListeners() {
             setButtonLoading(saveBtn, true);
             setStatus('Saving timeline…', 'scanning');
             try {
-                await db.collection('lessons').doc(currentSrcArrayVideoFilename).set({ srcArray: updated }, { merge: true });
+                await db.collection('lessons').doc(currentSrcArrayLessonId).set({ srcArray: updated }, { merge: true });
                 currentSrcArrayForEditor = updated;
                 setStatus('Timeline saved', 'success');
                 const statusEl = document.getElementById('srcArrayEditorStatus');
@@ -1469,11 +1475,8 @@ async function showChaptersForLesson(lessonId) {
         const meta = metaDoc.exists ? metaDoc.data() : {};
         const chapterDisplayNames = meta.chapterDisplayNames || {};
         const chapterSegmentMap = meta.chapterSegmentMap || {};
-        const videoFilename = await getVideoFilenameForLesson(lessonId);
-        const srcMetaDoc = (videoFilename && videoFilename.trim())
-            ? await db.collection('lessons').doc(videoFilename).get().catch(() => null)
-            : null;
-        const srcArrayData = srcMetaDoc && srcMetaDoc.exists ? (srcMetaDoc.data().srcArray || []) : [];
+        const lessonDoc = await db.collection('lessons').doc(lessonId).get().catch(() => null);
+        const srcArrayData = (lessonDoc && lessonDoc.exists) ? (lessonDoc.data().srcArray || []) : [];
 
         const chapters = menuLinks.map(m => ({
             menuId: m.menuId,
@@ -1786,18 +1789,10 @@ async function regenerateSrcArrayFromYellow(lessonId, btn) {
 
     try {
         // Resolve video path and filename
-        const videoPathDoc = await db.collection('videoPaths').doc(lessonId).get();
-        const vpData = videoPathDoc.exists ? videoPathDoc.data() : {};
-        const videoPath = vpData.videoPath || `videos/${lessonId}.mp4`;
-
-        const match = videoPath.match(/videos\/([^\/]+)\.mp4$/);
-        if (!match) {
-            throw new Error('Invalid video path format for this lesson');
-        }
-        const videoFilename = match[1]; // without extension
-
+        const videoPath = await getVideoPathForLesson(lessonId);
+        if (!videoPath) throw new Error('No video path for this lesson');
         const detectYellow = functions.httpsCallable('detectYellowScreen');
-        const result = await detectYellow({ videoPath, videoFilename });
+        const result = await detectYellow({ videoPath, lessonId });
 
         if (!result.data || !result.data.success) {
             throw new Error('Yellow detection function reported failure');
@@ -1953,33 +1948,14 @@ async function mapSegmentLinksToSrcArray(lessonId) {
             throw new Error(`Lesson not found: ${lessonId}`);
         }
         
-        // Get video filename from videoPaths collection
-        const videoPathDoc = await db.collection('videoPaths').doc(lessonId).get();
-        if (!videoPathDoc.exists) {
-            throw new Error(`Video path not found for lesson: ${lessonId}`);
+        // Timeline is keyed by lessonId
+        const lessonDoc = await db.collection('lessons').doc(lessonId).get();
+        if (!lessonDoc.exists) {
+            throw new Error(`Lesson timeline not found: ${lessonId}`);
         }
-        
-        const videoPathData = videoPathDoc.data();
-        const videoPath = videoPathData.videoPath || `videos/${lessonId}.mp4`;
-        
-        // Extract video filename (without extension)
-        const match = videoPath.match(/videos\/([^\/]+)\.mp4$/);
-        if (!match) {
-            throw new Error(`Invalid video path format: ${videoPath}`);
-        }
-        const videoFilename = match[1];
-        
-        // Get srcArray from Firestore
-        const videoDoc = await db.collection('lessons').doc(videoFilename).get();
-        if (!videoDoc.exists) {
-            throw new Error(`Video document not found: ${videoFilename}`);
-        }
-        
-        const videoData = videoDoc.data();
-        const srcArray = videoData.srcArray || [];
-        
+        const srcArray = (lessonDoc.data().srcArray) || [];
         if (srcArray.length === 0) {
-            throw new Error(`srcArray is empty for video: ${videoFilename}`);
+            throw new Error(`srcArray is empty for lesson: ${lessonId}`);
         }
         
         // Extract menu links from HTML
@@ -2030,13 +2006,12 @@ async function mapSegmentLinksToSrcArray(lessonId) {
             }
         }
         
-        // Update Firestore if any mappings were made
+        // Update Firestore if any mappings were made (timeline keyed by lessonId)
         if (mappedCount > 0) {
-            await db.collection('lessons').doc(videoFilename).set({
+            await db.collection('lessons').doc(lessonId).set({
                 srcArray: updatedSrcArray
             }, { merge: true });
         }
-        
         return { mapped: mappedCount, skipped: false };
     } catch (error) {
         console.error(`Error mapping segment links for ${lessonId}:`, error);
@@ -2110,50 +2085,21 @@ async function detectVideoTitlesForLesson(lessonId) {
             throw new Error(`Lesson not found: ${lessonId}`);
         }
         
-        // Get video filename from videoPaths collection
-        const videoPathDoc = await db.collection('videoPaths').doc(lessonId).get();
-        if (!videoPathDoc.exists) {
+        const videoPath = await getVideoPathForLesson(lessonId);
+        if (!videoPath) {
             throw new Error(`Video path not found for lesson: ${lessonId}`);
         }
-        
-        const videoPathData = videoPathDoc.data();
-        const videoPath = videoPathData.videoPath || `videos/${lessonId}.mp4`;
-        
-        // Extract video filename (without extension)
-        const match = videoPath.match(/videos\/([^\/]+)\.mp4$/);
-        if (!match) {
-            throw new Error(`Invalid video path format: ${videoPath}`);
+        const lessonDoc = await db.collection('lessons').doc(lessonId).get();
+        if (!lessonDoc.exists || !(lessonDoc.data().srcArray || []).length) {
+            return { success: false, skipped: true, reason: 'Lesson timeline not found or srcArray empty' };
         }
-        const videoFilename = match[1];
-        
-        // Get srcArray to verify it exists
-        const videoDoc = await db.collection('lessons').doc(videoFilename).get();
-        if (!videoDoc.exists) {
-            throw new Error(`Video document not found: ${videoFilename}`);
-        }
-        
-        const videoData = videoDoc.data();
-        const srcArray = videoData.srcArray || [];
-        
-        if (srcArray.length === 0) {
-            return { 
-                success: false, 
-                skipped: true, 
-                reason: 'srcArray is empty for video' 
-            };
-        }
-        
-        // Extract menu links from HTML to get all available segment link labels
         const menuLinks = await extractMenuLinksFromHTML(lesson.path);
         const segmentLinks = menuLinks.map(link => ({ label: link.label }));
-        
-        // Call Cloud Function to detect titles and adjust srcArray
         const detectVideoTitlesFunction = functions.httpsCallable('detectVideoTitles');
         const result = await detectVideoTitlesFunction({
-            videoPath: videoPath,
-            videoFilename: videoFilename,
-            lessonId: lessonId,
-            segmentLinks: segmentLinks
+            videoPath,
+            lessonId,
+            segmentLinks
         });
         
         return {
@@ -2200,31 +2146,17 @@ async function generateSrcArrayFromYellowScreensForLesson(lessonId) {
             setStatus('No videoPath found for this lesson', 'error');
             return;
         }
-        const videoPathData = videoPathDoc.data();
-        const videoPath = videoPathData.videoPath;
-
-        // Extract video filename from videoPath (e.g., "videos/filename.mp4" → "filename")
-        const match = videoPath.match(/videos\/([^\/]+)\.mp4$/);
-        if (!match) {
-            setStatus('Invalid video path format for this lesson', 'error');
-            return;
-        }
-        const videoFilename = match[1];
-
-        // Get ordered chapter labels from lesson HTML (menu buttons)
+        const videoPath = videoPathDoc.data().videoPath;
         const menuLinks = await extractMenuLinksFromHTML(lesson.path);
         if (!menuLinks.length) {
             setStatus('No chapters found for this lesson', 'error');
             return;
         }
         const chapters = menuLinks.map(link => link.label);
-
         setStatus('Generating timeline from yellow screens...', 'scanning');
-
         const generateFn = functions.httpsCallable('generateSrcArrayFromYellowScreens');
         const result = await generateFn({
             videoPath,
-            videoFilename,
             lessonId,
             chapters
         });
