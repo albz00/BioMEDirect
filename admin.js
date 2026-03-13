@@ -17,7 +17,7 @@ const functions = firebase.functions();
 // State
 let availableVideos = [];
 let lessonsData = [];
-let loginScreen, dashboardScreen, loginForm, scanBtn, refreshVideosBtn, mapSegmentLinksBtn, detectVideoTitlesBtn, statusText, loginError, videosList;
+let loginScreen, dashboardScreen, loginForm, scanBtn, refreshVideosBtn, statusText, loginError, videosList;
 let uploadVideoBtn, uploadVideoInput;
 let instructionsBtn, changelogBtn, instructionsModal, changelogModal;
 let profileBtn, profileModal;
@@ -79,8 +79,6 @@ document.addEventListener('DOMContentLoaded', () => {
     refreshVideosBtn = document.getElementById('refreshVideosBtn');
     uploadVideoBtn = document.getElementById('uploadVideoBtn');
     uploadVideoInput = document.getElementById('uploadVideoInput');
-    mapSegmentLinksBtn = document.getElementById('mapSegmentLinksBtn');
-    detectVideoTitlesBtn = document.getElementById('detectVideoTitlesBtn');
     statusText = document.getElementById('statusText');
     loginError = document.getElementById('loginError');
     videosList = document.getElementById('videosList');
@@ -359,17 +357,6 @@ function setupEventListeners() {
     }
 
     // Map Segment Links
-    if (mapSegmentLinksBtn) {
-        mapSegmentLinksBtn.addEventListener('click', async () => {
-            await mapAllSegmentLinks();
-        });
-    }
-    if (detectVideoTitlesBtn) {
-        detectVideoTitlesBtn.addEventListener('click', async () => {
-            await detectVideoTitlesForAllLessons();
-        });
-    }
-
     // Upload Videos
     if (uploadVideoBtn && uploadVideoInput) {
         uploadVideoBtn.addEventListener('click', () => {
@@ -1237,6 +1224,16 @@ function setupSrcArrayEditorListeners() {
             }
         });
     }
+    const autoBtn = document.getElementById('srcArrayAutoGenerateBtn');
+    if (autoBtn) {
+        autoBtn.addEventListener('click', async () => {
+            if (!selectedLessonId) {
+                setStatus('Select a lesson first', 'error');
+                return;
+            }
+            await generateSrcArrayFromYellowScreensForLesson(selectedLessonId);
+        });
+    }
 }
 
 // Expose for tree section header click (collapse/expand)
@@ -1494,6 +1491,10 @@ async function assignVideo(lessonId) {
         
         renderSidebarTree();
         displaySelectedLesson();
+        // If this is the currently selected lesson, refresh the timeline editor too
+        if (selectedLessonId === lessonId) {
+            await refreshSrcArrayEditor();
+        }
         updateVideosCountDisplay();
         
         const lessonName = lesson ? lesson.name : lessonId;
@@ -1988,6 +1989,79 @@ async function detectVideoTitlesForLesson(lessonId) {
             skipped: true, 
             reason: error.message 
         };
+    }
+}
+
+// Generate a chapter-aware srcArray using yellow screens in order
+async function generateSrcArrayFromYellowScreensForLesson(lessonId) {
+    try {
+        requireAuth();
+    } catch (error) {
+        setStatus('Authentication required', 'error');
+        return;
+    }
+
+    if (!lessonId) {
+        setStatus('Select a lesson first', 'error');
+        return;
+    }
+
+    const lesson = lessonsData.find(l => l.lessonId === lessonId);
+    if (!lesson) {
+        setStatus('Lesson not found', 'error');
+        return;
+    }
+
+    try {
+        // Get videoPath from videoPaths collection
+        const videoPathDoc = await db.collection('videoPaths').doc(lessonId).get();
+        if (!videoPathDoc.exists || !videoPathDoc.data().videoPath) {
+            setStatus('No videoPath found for this lesson', 'error');
+            return;
+        }
+        const videoPathData = videoPathDoc.data();
+        const videoPath = videoPathData.videoPath;
+
+        // Extract video filename from videoPath (e.g., "videos/filename.mp4" → "filename")
+        const match = videoPath.match(/videos\/([^\/]+)\.mp4$/);
+        if (!match) {
+            setStatus('Invalid video path format for this lesson', 'error');
+            return;
+        }
+        const videoFilename = match[1];
+
+        // Get ordered chapter labels from lesson HTML (menu buttons)
+        const menuLinks = await extractMenuLinksFromHTML(lesson.path);
+        if (!menuLinks.length) {
+            setStatus('No chapters found for this lesson', 'error');
+            return;
+        }
+        const chapters = menuLinks.map(link => link.label);
+
+        setStatus('Generating timeline from yellow screens...', 'scanning');
+
+        const generateFn = functions.httpsCallable('generateSrcArrayFromYellowScreens');
+        const result = await generateFn({
+            videoPath,
+            videoFilename,
+            lessonId,
+            chapters
+        });
+
+        const data = result.data || {};
+        if (!data.success) {
+            const msg = data.reason || 'Generation failed';
+            setStatus(`Auto-generate failed: ${msg}`, 'error');
+        } else {
+            const segs = data.segments || 0;
+            setStatus(`Generated ${segs} segments from yellow screens`, data.status === 'ok' ? 'success' : 'scanning');
+        }
+
+        // Refresh the srcArray editor so the new timeline is visible
+        await refreshSrcArrayEditor();
+    } catch (error) {
+        console.error('Error generating srcArray from yellow screens:', error);
+        setStatus('Error generating timeline: ' + error.message, 'error');
     }
 }
 

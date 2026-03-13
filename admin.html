@@ -116,11 +116,6 @@
                     <span class="btn-label">Upload Video</span>
                 </button>
                 <input type="file" id="uploadVideoInput" accept="video/mp4" multiple style="display:none;">
-                <div class="controls-legacy">
-                    <span class="controls-legacy-label">Legacy:</span>
-                    <button id="mapSegmentLinksBtn" class="btn btn-legacy" type="button" disabled title="Legacy – map menu labels to srcArray">Map Segment Links</button>
-                    <button id="detectVideoTitlesBtn" class="btn btn-legacy" type="button" disabled title="Legacy – OCR titles from video">Detect Video Titles (OCR)</button>
-                </div>
                 <div class="status-indicator">
                     <span id="statusText">Ready</span>
                 </div>
@@ -172,6 +167,7 @@
                         <div id="srcArrayEditorBody" class="srcarray-editor-body" hidden>
                             <div class="srcarray-editor-toolbar">
                                 <button type="button" id="srcArraySyncChaptersBtn" class="btn btn-secondary btn-sm">Sync from chapters</button>
+                                <button type="button" id="srcArrayAutoGenerateBtn" class="btn btn-secondary btn-sm">Auto-generate from yellow screens</button>
                                 <button type="button" id="srcArraySaveAllBtn" class="btn btn-primary btn-sm">Save all</button>
                                 <span id="srcArrayEditorStatus" class="srcarray-editor-status"></span>
                             </div>

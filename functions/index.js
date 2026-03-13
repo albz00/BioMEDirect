@@ -928,3 +928,198 @@ exports.detectVideoTitles = onCall(
     }
   }
 );
+
+// Generate a chapter-aware srcArray using yellow screens in order (no OCR/AI).
+// This is a provisional, ordered mapping:
+// - If the number of yellow detections is close to the chapter count, it will
+//   map chapters to yellow ranges in order.
+// - Otherwise it records a status flag so the lesson can be reviewed.
+exports.generateSrcArrayFromYellowScreens = onCall(
+  {
+    memory: "1GiB",
+    timeoutSeconds: 300,
+  },
+  async (request) => {
+    const { videoPath, videoFilename, lessonId, chapters } = request.data;
+
+    if (!videoPath || !videoFilename || !Array.isArray(chapters)) {
+      throw new Error("videoPath, videoFilename and chapters[] are required");
+    }
+
+    const bucket = admin.storage().bucket();
+    const tmpFile = path.join(os.tmpdir(), `srcarray_yellow_${Date.now()}.mp4`);
+
+    try {
+      console.log("Downloading video for srcArray generation:", videoPath);
+      await bucket.file(videoPath).download({ destination: tmpFile });
+
+      // Get duration for fallback segment boundaries
+      const duration = await getDuration(tmpFile);
+      console.log("Video duration for srcArray:", duration);
+
+      // Detect yellow screen ranges
+      let yellowRanges = [];
+      try {
+        yellowRanges = await detectYellowFrames(tmpFile);
+      } catch (e) {
+        console.error("detectYellowFrames failed, continuing with no detections:", e);
+        yellowRanges = [];
+      }
+      console.log("Detected yellow ranges:", yellowRanges);
+
+      // Use the end of each yellow range as a boundary between chapters
+      let starts = yellowRanges
+        .map((r) => (r && typeof r.end === "number" ? r.end : r && typeof r.start === "number" ? r.start : null))
+        .filter((t) => typeof t === "number" && !isNaN(t))
+        .sort((a, b) => a - b);
+
+      // Filter out extremely short gaps between boundaries (likely noise)
+      const MIN_GAP = 0.3;
+      const filtered = [];
+      let last = null;
+      for (const t of starts) {
+        if (last == null || t - last >= MIN_GAP) {
+          filtered.push(t);
+          last = t;
+        }
+      }
+      starts = filtered;
+
+      const chapterCount = chapters.length;
+      const detectionCount = starts.length;
+
+      let status = "ok";
+      let reason = "";
+
+      const diff = Math.abs(chapterCount - detectionCount);
+      if (detectionCount === 0) {
+        status = "needs_review";
+        reason = "no yellow screens detected; using even spacing across duration";
+      } else if (diff > 3) {
+        status = "failed";
+        reason = `chapter/detection mismatch (chapters=${chapterCount}, detections=${detectionCount})`;
+      } else if (diff > 1) {
+        status = "needs_review";
+        reason = `counts differ (chapters=${chapterCount}, detections=${detectionCount})`;
+      }
+
+      // If the mismatch is too large, don't attempt to auto-map segments
+      if (status === "failed") {
+        await db.collection("lessons").doc(videoFilename).set(
+          {
+            autoMapping: {
+              method: "yellowSequential",
+              lessonId,
+              videoPath,
+              chapters: chapterCount,
+              detections: detectionCount,
+              status,
+              reason,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+          },
+          { merge: true }
+        );
+
+        return {
+          success: false,
+          status,
+          reason,
+          chapters: chapterCount,
+          detections: detectionCount,
+        };
+      }
+
+      // Build srcArray: Opening + one segment per chapter
+      // Trim or pad boundaries to chapter count
+      const usableCount = Math.min(chapterCount, detectionCount);
+      const usedStarts = starts.slice(0, usableCount);
+
+      const srcArray = [];
+
+      // Opening segment
+      srcArray.push({
+        src_start: null,
+        src_end: null,
+        freezeFrame: null,
+        menuLink: "Opening",
+        side: false,
+        loop: false,
+      });
+
+      for (let i = 0; i < chapterCount; i++) {
+        // For chapters beyond the number of detections, approximate their start
+        // by interpolating towards the end of the video.
+        let start;
+        if (i < usedStarts.length) {
+          start = usedStarts[i];
+        } else if (usedStarts.length > 0) {
+          const lastDetected = usedStarts[usedStarts.length - 1];
+          const remaining = chapterCount - usedStarts.length;
+          const offsetIndex = i - usedStarts.length + 1;
+          const gapPerChapter = (duration - lastDetected) / (remaining + 1);
+          start = lastDetected + gapPerChapter * offsetIndex;
+        } else {
+          // No detections at all: distribute evenly across the video
+          const gap = duration / (chapterCount + 1);
+          start = gap * (i + 1);
+        }
+
+        let end;
+        if (i + 1 < usedStarts.length) {
+          end = usedStarts[i + 1];
+        } else {
+          // Last chapter runs to the end of the video
+          end = duration;
+        }
+
+        // Clamp and round
+        start = Math.max(0, Math.min(start, duration));
+        end = Math.max(start + 0.01, Math.min(end, duration));
+
+        srcArray.push({
+          src_start: Math.round(start * 100) / 100,
+          src_end: Math.round(end * 100) / 100,
+          freezeFrame: i,
+          menuLink: chapters[i],
+          side: false,
+          loop: false,
+        });
+      }
+
+      console.log("Writing chapter-aware srcArray with yellowSequential mapping...");
+      await db.collection("lessons").doc(videoFilename).set(
+        {
+          srcArray,
+          autoMapping: {
+            method: "yellowSequential",
+            lessonId,
+            videoPath,
+            chapters: chapterCount,
+            detections: detectionCount,
+            status,
+            reason,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+        },
+        { merge: true }
+      );
+
+      return {
+        success: true,
+        status,
+        chapters: chapterCount,
+        detections: detectionCount,
+        reason,
+        segments: srcArray.length,
+      };
+    } catch (error) {
+      console.error("Error generating srcArray from yellow screens:", error);
+      throw new Error(`generateSrcArrayFromYellowScreens failed: ${error.message}`);
+    } finally {
+      if (fs.existsSync(tmpFile)) {
+        fs.unlinkSync(tmpFile);
+      }
+    }
+  }
+);
