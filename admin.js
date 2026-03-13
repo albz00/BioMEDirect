@@ -30,6 +30,18 @@ let collapsedSections = new Set();
 let currentSrcArrayForEditor = [];
 let currentSrcArrayVideoFilename = null;
 
+/** Show loading state on a button (spinner, disabled). Pass the button element and true/false. */
+function setButtonLoading(btn, loading) {
+    if (!btn || typeof btn.classList === 'undefined') return;
+    if (loading) {
+        btn.classList.add('btn-loading');
+        btn.disabled = true;
+    } else {
+        btn.classList.remove('btn-loading');
+        btn.disabled = false;
+    }
+}
+
 // Check authentication state on load and on changes (set up immediately)
 auth.onAuthStateChanged((user) => {
     console.log('Auth state changed, user:', user ? user.email : 'null');
@@ -959,10 +971,11 @@ function renderSidebarTree() {
             .sort((a, b) => a.name.localeCompare(b.name))
             .map(lesson => {
                 const safeLessonName = lesson.name.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                const status = lesson.hasVideo ? '●' : '○';
+                const status = '●';
                 const statusClass = lesson.hasVideo ? 'has-video' : 'missing';
+                const selectedClass = selectedLessonId === lesson.lessonId ? ' selected' : '';
                 const escId = lesson.lessonId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-                return `<div class="tree-lesson ${statusClass}" data-lesson-id="${lesson.lessonId}" onclick="selectLesson('${escId}')"><span class="tree-lesson-status">${status}</span><span class="tree-lesson-name">${safeLessonName}</span></div>`;
+                return `<div class="tree-lesson ${statusClass}${selectedClass}" data-lesson-id="${lesson.lessonId}" onclick="selectLesson('${escId}')"><span class="tree-lesson-status">${status}</span><span class="tree-lesson-name">${safeLessonName}</span></div>`;
             }).join('');
         const sectionKeyAttr = section.originalSection.replace(/"/g, '&quot;');
         return `
@@ -973,7 +986,7 @@ function renderSidebarTree() {
                 </div>
                 <div class="tree-section-edit">
                     <input type="text" class="section-index-input" id="section-index-input-${sectionKey}" value="${safeSectionName}">
-                    <button type="button" class="btn-section-save" onclick="saveSectionDisplayName('${section.originalSection.replace(/'/g, "\\'")}')">Save</button>
+                    <button type="button" class="btn-section-save" onclick="saveSectionDisplayName('${section.originalSection.replace(/'/g, "\\'")}', this)">Save</button>
                 </div>
                 <div class="tree-section-children">${lessonRows}</div>
             </div>`;
@@ -1032,14 +1045,14 @@ function getLessonCardHTML(lesson) {
                         <label for="name-input-${lesson.lessonId}">Lesson Name:</label>
                         <input type="text" id="name-input-${lesson.lessonId}" value="${safeName}">
                     </div>
-                    <button class="btn-metadata-save" onclick="saveLessonMetadata('${escId}')">Save Lesson Name</button>
+                    <button class="btn-metadata-save" onclick="saveLessonMetadata('${escId}', this)">Save Lesson Name</button>
                 </div>
                 <div class="assignment-row">
                     <select id="video-select-${lesson.lessonId}">
                         <option value="">${lesson.hasVideo ? 'Change video...' : 'Select a video...'}</option>
                         ${videoOptions}
                     </select>
-                    <button onclick="assignVideo('${escId}')" id="assign-btn-${lesson.lessonId}">${lesson.hasVideo ? 'Update' : 'Assign'}</button>
+                    <button onclick="assignVideo('${escId}', this)" id="assign-btn-${lesson.lessonId}">${lesson.hasVideo ? 'Update' : 'Assign'}</button>
                 </div>
                 <div class="yellow-screen-option">
                     <label>
@@ -1050,6 +1063,10 @@ function getLessonCardHTML(lesson) {
                 <div class="lesson-chapters-block">
                     <button type="button" class="btn btn-secondary btn-chapters" onclick="showChaptersForLesson('${escId}')"><span class="btn-label">Show chapters</span></button>
                     <div id="chapters-container-${lesson.lessonId}" class="chapters-container" style="display:none;">
+                        <div class="chapters-toolbar">
+                            <button type="button" class="btn btn-secondary btn-sm" onclick="adjustChapterIndexSequence('${escId}')">Adjust index sequence</button>
+                            <button type="button" class="btn btn-primary btn-sm" onclick="saveAllChapters('${escId}', this)">Save all</button>
+                        </div>
                         <div id="chapters-edit-list-${lesson.lessonId}" class="chapters-edit-list"></div>
                     </div>
                 </div>
@@ -1193,6 +1210,7 @@ function setupSrcArrayEditorListeners() {
                 if (confidenceInput) seg.confidence = confidenceInput.value.trim() || '';
                 updated.push(seg);
             }
+            setButtonLoading(saveBtn, true);
             setStatus('Saving timeline…', 'scanning');
             try {
                 await db.collection('lessons').doc(currentSrcArrayVideoFilename).set({ srcArray: updated }, { merge: true });
@@ -1202,6 +1220,8 @@ function setupSrcArrayEditorListeners() {
                 if (statusEl) statusEl.textContent = `${updated.length} segments saved`;
             } catch (e) {
                 setStatus('Save failed: ' + e.message, 'error');
+            } finally {
+                setButtonLoading(saveBtn, false);
             }
         });
     }
@@ -1217,7 +1237,7 @@ function toggleSectionInSidebar(sectionKey) {
 window.selectLesson = selectLesson;
 window.toggleSectionInSidebar = toggleSectionInSidebar;
 
-async function saveLessonMetadata(lessonId) {
+async function saveLessonMetadata(lessonId, btn) {
     try {
         requireAuth(); // Ensure user is authenticated
     } catch (error) {
@@ -1245,6 +1265,7 @@ async function saveLessonMetadata(lessonId) {
         return;
     }
 
+    setButtonLoading(btn, true);
     nameInput.disabled = true;
 
     try {
@@ -1294,6 +1315,7 @@ async function saveLessonMetadata(lessonId) {
         alert('Error saving lesson metadata: ' + error.message);
     } finally {
         nameInput.disabled = false;
+        setButtonLoading(btn, false);
     }
 }
 
@@ -1328,7 +1350,9 @@ async function showChaptersForLesson(lessonId) {
         }
 
         const metaDoc = await db.collection('lessonMetadata').doc(lessonId).get();
-        const chapterDisplayNames = (metaDoc.exists && metaDoc.data().chapterDisplayNames) ? metaDoc.data().chapterDisplayNames : {};
+        const meta = metaDoc.exists ? metaDoc.data() : {};
+        const chapterDisplayNames = meta.chapterDisplayNames || {};
+        const chapterSegmentMap = meta.chapterSegmentMap || {};
         const videoFilename = await getVideoFilenameForLesson(lessonId);
         const srcMetaDoc = (videoFilename && videoFilename.trim())
             ? await db.collection('lessons').doc(videoFilename).get().catch(() => null)
@@ -1346,14 +1370,19 @@ async function showChaptersForLesson(lessonId) {
             const safeDisplay = ch.displayName.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
             const safeMenuIdAttr = ch.menuId.replace(/"/g, '&quot;');
             const menuIdEscaped = ch.menuId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-            const currentSegmentIndex = (srcArrayData[idx] && typeof srcArrayData[idx].freezeFrame === 'number') ? srcArrayData[idx].freezeFrame : idx + 1;
+            // Segment index: saved map > srcArray freezeFrame > mirror order (1, 2, 3, ...)
+            const fromMap = chapterSegmentMap[ch.menuId];
+            const fromSrc = (srcArrayData[idx] && typeof srcArrayData[idx].freezeFrame === 'number') ? srcArrayData[idx].freezeFrame : null;
+            const currentSegmentIndex = (fromMap != null && !Number.isNaN(Number(fromMap)) && Number(fromMap) > 0)
+                ? Number(fromMap)
+                : (fromSrc != null ? fromSrc : idx + 1);
             return `
                 <div class="chapter-row" data-menu-id="${safeMenuIdAttr}">
                     <span class="chapter-menu-id">${ch.menuId}</span>
                     <input type="text" class="chapter-name-input" value="${safeDisplay}" data-original="${safeOriginal}" data-menu-id="${safeMenuIdAttr}">
                     <label class="chapter-index-label">Segment index:</label>
                     <input type="number" class="chapter-index-input" min="1" value="${currentSegmentIndex}" data-menu-id="${safeMenuIdAttr}">
-                    <button type="button" class="btn-section-save btn-chapter-save" onclick="saveChapterDisplayName('${lessonId.replace(/'/g, "\\'")}', '${menuIdEscaped}')">Save</button>
+                    <button type="button" class="btn-section-save btn-chapter-save" onclick="saveChapterDisplayName('${lessonId.replace(/'/g, "\\'")}', '${menuIdEscaped}', this)">Save</button>
                 </div>`;
         }).join('');
 
@@ -1368,7 +1397,7 @@ async function showChaptersForLesson(lessonId) {
     }
 }
 
-async function saveChapterDisplayName(lessonId, menuId) {
+async function saveChapterDisplayName(lessonId, menuId, btn) {
     try {
         requireAuth();
     } catch (error) {
@@ -1382,48 +1411,129 @@ async function saveChapterDisplayName(lessonId, menuId) {
     const indexInput = row.querySelector('.chapter-index-input');
     if (!input || !indexInput) return;
 
-    const newName = input.value.trim();
-    const originalLabel = input.getAttribute('data-original') || '';
-    const segmentIndexRaw = indexInput.value.trim();
-    const segmentIndex = segmentIndexRaw ? parseInt(segmentIndexRaw, 10) : null;
+    setButtonLoading(btn, true);
+    try {
+        const newName = input.value.trim();
+        const originalLabel = input.getAttribute('data-original') || '';
+        const segmentIndexRaw = indexInput.value.trim();
+        const segmentIndex = segmentIndexRaw ? parseInt(segmentIndexRaw, 10) : null;
 
+        const lesson = lessonsData.find(l => l.lessonId === lessonId);
+        if (!lesson) return;
+
+        const metaRef = db.collection('lessonMetadata').doc(lessonId);
+
+        // Update display name
+        if (!newName || newName === originalLabel) {
+            try {
+                await metaRef.update({
+                    [`chapterDisplayNames.${menuId}`]: firebase.firestore.FieldValue.delete()
+                });
+            } catch (e) {
+                if (e.code !== 'not-found') throw e;
+            }
+            input.value = originalLabel;
+            input.setAttribute('data-original', originalLabel);
+        } else {
+            const snap = await metaRef.get();
+            const existing = (snap.exists && snap.data().chapterDisplayNames) ? { ...snap.data().chapterDisplayNames } : {};
+            existing[menuId] = newName;
+            await metaRef.set({ chapterDisplayNames: existing }, { merge: true });
+            input.setAttribute('data-original', newName);
+        }
+
+        // Update chapter → segment index mapping
+        if (segmentIndex && !Number.isNaN(segmentIndex) && segmentIndex > 0) {
+            const snapIdx = await metaRef.get();
+            const existingMap = (snapIdx.exists && snapIdx.data().chapterSegmentMap) ? { ...snapIdx.data().chapterSegmentMap } : {};
+            existingMap[menuId] = segmentIndex;
+            await metaRef.set({ chapterSegmentMap: existingMap }, { merge: true });
+        }
+
+        setStatus('Chapter mapping saved', 'success');
+        setTimeout(() => setStatus('Ready'), 2000);
+    } finally {
+        setButtonLoading(btn, false);
+    }
+}
+
+function adjustChapterIndexSequence(lessonId) {
+    const editList = document.getElementById(`chapters-edit-list-${lessonId}`);
+    if (!editList) return;
+    const rows = editList.querySelectorAll('.chapter-row');
+    rows.forEach((row, idx) => {
+        const input = row.querySelector('.chapter-index-input');
+        if (input) input.value = idx + 1;
+    });
+    setStatus('Indexes set to 1, 2, 3… — click Save all to persist', 'success');
+    setTimeout(() => setStatus('Ready'), 2500);
+}
+
+async function saveAllChapters(lessonId, btn) {
+    try {
+        requireAuth();
+    } catch (error) {
+        alert('Authentication required. Please log in again.');
+        return;
+    }
+    const editList = document.getElementById(`chapters-edit-list-${lessonId}`);
+    if (!editList) return;
+    const rows = editList.querySelectorAll('.chapter-row');
+    if (!rows.length) {
+        setStatus('No chapters to save', 'error');
+        return;
+    }
     const lesson = lessonsData.find(l => l.lessonId === lessonId);
     if (!lesson) return;
 
+    setButtonLoading(btn, true);
     const metaRef = db.collection('lessonMetadata').doc(lessonId);
+    setStatus('Saving all chapters...', 'scanning');
 
-    // Update display name
-    if (!newName || newName === originalLabel) {
-        try {
-            await metaRef.update({
-                [`chapterDisplayNames.${menuId}`]: firebase.firestore.FieldValue.delete()
-            });
-        } catch (e) {
-            if (e.code !== 'not-found') throw e;
+    const metaSnap = await metaRef.get();
+    const existing = metaSnap.exists ? metaSnap.data() : {};
+    const chapterDisplayNames = { ...(existing.chapterDisplayNames || {}) };
+    const chapterSegmentMap = { ...(existing.chapterSegmentMap || {}) };
+
+    for (const row of rows) {
+        const menuId = row.getAttribute('data-menu-id');
+        if (!menuId) continue;
+        const nameInput = row.querySelector('.chapter-name-input');
+        const indexInput = row.querySelector('.chapter-index-input');
+        const newName = nameInput ? nameInput.value.trim() : '';
+        const originalLabel = nameInput ? (nameInput.getAttribute('data-original') || '') : '';
+        const segmentIndexRaw = indexInput ? indexInput.value.trim() : '';
+        const segmentIndex = segmentIndexRaw ? parseInt(segmentIndexRaw, 10) : null;
+
+        if (!newName || newName === originalLabel) {
+            delete chapterDisplayNames[menuId];
+            if (nameInput) {
+                nameInput.setAttribute('data-original', originalLabel);
+            }
+        } else {
+            chapterDisplayNames[menuId] = newName;
+            if (nameInput) nameInput.setAttribute('data-original', newName);
         }
-        input.value = originalLabel;
-        input.setAttribute('data-original', originalLabel);
-    } else {
-        const snap = await metaRef.get();
-        const existing = (snap.exists && snap.data().chapterDisplayNames) ? { ...snap.data().chapterDisplayNames } : {};
-        existing[menuId] = newName;
-        await metaRef.set({ chapterDisplayNames: existing }, { merge: true });
-        input.setAttribute('data-original', newName);
+        if (segmentIndex != null && !Number.isNaN(segmentIndex) && segmentIndex > 0) {
+            chapterSegmentMap[menuId] = segmentIndex;
+        } else {
+            delete chapterSegmentMap[menuId];
+        }
     }
 
-    // Update chapter → segment index mapping
-    if (segmentIndex && !Number.isNaN(segmentIndex) && segmentIndex > 0) {
-        const snapIdx = await metaRef.get();
-        const existingMap = (snapIdx.exists && snapIdx.data().chapterSegmentMap) ? { ...snapIdx.data().chapterSegmentMap } : {};
-        existingMap[menuId] = segmentIndex;
-        await metaRef.set({ chapterSegmentMap: existingMap }, { merge: true });
+    try {
+        await metaRef.set({
+            chapterDisplayNames,
+            chapterSegmentMap
+        }, { merge: true });
+        setStatus(`Saved ${rows.length} chapters`, 'success');
+        setTimeout(() => setStatus('Ready'), 2000);
+    } finally {
+        setButtonLoading(btn, false);
     }
-
-    setStatus('Chapter mapping saved', 'success');
-    setTimeout(() => setStatus('Ready'), 2000);
 }
 
-async function assignVideo(lessonId) {
+async function assignVideo(lessonId, btn) {
     try {
         requireAuth(); // Ensure user is authenticated
     } catch (error) {
@@ -1432,7 +1542,7 @@ async function assignVideo(lessonId) {
     }
     
     const selectElement = document.getElementById(`video-select-${lessonId}`);
-    const buttonElement = document.getElementById(`assign-btn-${lessonId}`);
+    const buttonElement = btn || document.getElementById(`assign-btn-${lessonId}`);
     
     if (!selectElement || !selectElement.value) {
         alert('Please select a video first');
@@ -1442,8 +1552,8 @@ async function assignVideo(lessonId) {
     const selectedVideo = selectElement.value;
     const videoPath = `videos/${selectedVideo}`;
     
-    buttonElement.disabled = true;
-    buttonElement.textContent = 'Assigning...';
+    setButtonLoading(buttonElement, true);
+    const previousText = buttonElement.textContent;
     
     try {
         // Update videoPaths collection with custom videoPath (not lessons collection)
@@ -1480,9 +1590,9 @@ async function assignVideo(lessonId) {
     } catch (error) {
         console.error('Error assigning video:', error);
         alert('Error assigning video: ' + error.message);
-        buttonElement.disabled = false;
-        const lesson = lessonsData.find(l => l.lessonId === lessonId);
-        buttonElement.textContent = (lesson && lesson.hasVideo) ? 'Update' : 'Assign';
+    } finally {
+        setButtonLoading(buttonElement, false);
+        buttonElement.textContent = (lessonsData.find(l => l.lessonId === lessonId)?.hasVideo) ? 'Update' : 'Assign';
     }
 }
 
@@ -2105,7 +2215,9 @@ window.toggleYellowScreen = toggleYellowScreen;
 window.saveLessonMetadata = saveLessonMetadata;
 window.showChaptersForLesson = showChaptersForLesson;
 window.saveChapterDisplayName = saveChapterDisplayName;
-window.saveSectionDisplayName = async function saveSectionDisplayName(originalSection) {
+window.adjustChapterIndexSequence = adjustChapterIndexSequence;
+window.saveAllChapters = saveAllChapters;
+window.saveSectionDisplayName = async function saveSectionDisplayName(originalSection, btn) {
     try {
         requireAuth();
     } catch (error) {
@@ -2133,6 +2245,7 @@ window.saveSectionDisplayName = async function saveSectionDisplayName(originalSe
         return;
     }
 
+    setButtonLoading(btn, true);
     inputEl.disabled = true;
 
     try {
@@ -2168,6 +2281,7 @@ window.saveSectionDisplayName = async function saveSectionDisplayName(originalSe
         alert('Error saving section display name: ' + error.message);
     } finally {
         inputEl.disabled = false;
+        setButtonLoading(btn, false);
     }
 };
 window.scrollToLesson = function scrollToLesson(lessonId) {

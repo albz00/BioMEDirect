@@ -523,8 +523,11 @@ html {
 }
 
 .tree-lesson-status {
-    font-size: 0.6rem;
+    font-size: 0.75rem;
+    line-height: 1;
     flex-shrink: 0;
+    width: 1em;
+    text-align: center;
 }
 
 .tree-lesson-name {
@@ -533,12 +536,24 @@ html {
     white-space: nowrap;
 }
 
+.tree-lesson.selected {
+    background: rgba(59, 130, 246, 0.25);
+    border-left: 3px solid #3b82f6;
+    padding-left: calc(0.5rem - 3px);
+}
+
+.tree-lesson.selected:hover {
+    background: rgba(59, 130, 246, 0.35);
+}
+
 .tree-lesson.missing .tree-lesson-status {
     color: #ff6b6b;
 }
 
 .tree-lesson.has-video .tree-lesson-status {
-    color: #28a745;
+    color: #22c55e;
+    filter: drop-shadow(0 0 4px rgba(34, 197, 94, 0.9));
+    text-shadow: 0 0 6px rgba(34, 197, 94, 0.8);
 }
 
 /* Section edit row (inside tree section header or below it) */
@@ -1043,6 +1058,36 @@ html {
     color: #f1f5f9;
 }
 
+/* Loading state for async buttons */
+.btn-loading {
+    position: relative;
+    pointer-events: none;
+    cursor: wait;
+    color: transparent !important;
+}
+
+.btn-loading .btn-label {
+    visibility: hidden;
+}
+
+.btn-loading::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 1em;
+    height: 1em;
+    margin: -0.5em 0 0 -0.5em;
+    border: 2px solid #e2e8f0;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: btn-spin 0.6s linear infinite;
+}
+
+@keyframes btn-spin {
+    to { transform: rotate(360deg); }
+}
+
 .btn:disabled {
     opacity: 0.6;
     cursor: not-allowed;
@@ -1249,6 +1294,18 @@ html {
     border-color: #3b82f6;
 }
 
+.chapters-toolbar {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.chapters-toolbar .btn-sm {
+    padding: 0.3rem 0.6rem;
+    font-size: 0.85rem;
+}
+
 .chapters-edit-list {
     max-height: 280px;
     overflow-y: auto;
@@ -1256,20 +1313,20 @@ html {
 
 .chapter-row {
     display: grid;
-    grid-template-columns: minmax(0, 1.5fr) minmax(0, 3fr) minmax(0, 2fr) auto;
-    gap: 0.5rem;
+    grid-template-columns: auto minmax(0, 2fr) auto 4rem 5rem;
+    gap: 0.35rem 0.6rem;
     align-items: center;
-    margin-bottom: 0.4rem;
+    margin-bottom: 0.25rem;
 }
 
 .chapter-row .chapter-menu-id {
     font-size: 0.75rem;
     color: #94a3b8;
-    min-width: 3rem;
+    min-width: 0;
 }
 
 .chapter-row .chapter-name-input {
-    padding: 0.35rem 0.5rem;
+    padding: 0.3rem 0.45rem;
     border-radius: 4px;
     border: 1px solid rgba(255, 255, 255, 0.2);
     background-color: #1e293b;
@@ -1285,20 +1342,26 @@ html {
 .chapter-index-label {
     font-size: 0.75rem;
     color: #94a3b8;
+    white-space: nowrap;
 }
 
 .chapter-index-input {
     width: 100%;
-    padding: 0.35rem 0.45rem;
+    min-width: 0;
+    max-width: 4rem;
+    padding: 0.3rem 0.35rem;
     border-radius: 4px;
     border: 1px solid rgba(148, 163, 184, 0.4);
     background: rgba(15, 23, 42, 0.85);
     color: #e2e8f0;
     font-size: 0.8rem;
+    box-sizing: border-box;
 }
 
 .chapter-row .btn-chapter-save {
-    flex-shrink: 0;
+    min-width: 5rem;
+    padding: 0.3rem 0.5rem;
+    font-size: 0.8rem;
 }
 
 .chapters-empty {
