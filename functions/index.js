@@ -48,13 +48,21 @@ exports.generateSrcArray = onObjectFinalized(
   try {
     yellowRanges = await detectYellowFrames(tmpFile);
   } catch (e) {
-    console.error("detectYellowFrames failed during generateSrcArray, continuing with no detections:", e);
+    console.error("detectYellowFrames failed during generateSrcArray:", e);
     yellowRanges = [];
   }
   console.log("Detected yellow ranges for srcArray generation:", yellowRanges);
 
-  console.log("Building srcArray from yellow ranges...");
-  const srcArray = buildSrcArrayFromYellow(yellowRanges, duration);
+  let srcArray;
+  if (yellowRanges && yellowRanges.length > 0) {
+    console.log("Building srcArray from yellow ranges...");
+    srcArray = buildSrcArrayFromYellow(yellowRanges, duration);
+  } else {
+    console.log("No yellow ranges detected, falling back to scene-based srcArray...");
+    const scenes = await detectScenes(tmpFile);
+    console.log("Detected scenes for fallback:", scenes);
+    srcArray = buildSceneBasedSrcArray(scenes, duration);
+  }
 
   console.log("Writing srcArray to Firestore...");
   await db.collection("lessons").doc(lessonId).set(
@@ -168,6 +176,41 @@ function buildSrcArrayFromYellow(yellowRanges, duration) {
   return arr;
 }
 
+// Fallback: original scene-based srcArray builder
+function buildSceneBasedSrcArray(scenes, duration) {
+  const boundaries = [0, ...scenes, duration];
+
+  const arr = [];
+  let freeze = 0;
+
+  arr.push({
+    src_start: null,
+    src_end: null,
+    freezeFrame: null,
+    menuLink: "Opening",
+    side: false,
+    loop: false,
+  });
+
+  for (let i = 0; i < boundaries.length - 1; i++) {
+    const start = boundaries[i];
+    const end = boundaries[i + 1];
+
+    if (end - start < 0.4) continue; // skip very short flashes
+
+    arr.push({
+      src_start: Math.round(start * 100) / 100,
+      src_end: Math.round(end * 100) / 100,
+      freezeFrame: freeze++,
+      menuLink: "",
+      side: false,
+      loop: false,
+    });
+  }
+
+  return arr;
+}
+
 // Cloud Function to detect yellow screen frames and store ranges.
 // This no longer mutates originalSrcArray; it just records yellowScreenRanges
 // so the player or client-side logic can "leap frog" over them.
@@ -229,9 +272,10 @@ function detectYellowFrames(video) {
     
     // Yellow target in LAB color space
     const yellowLAB = { L: 97, A: -21, B: 94 };
-    const deltaEThreshold = 40; // ΔE distance threshold for yellow detection
-    const sampleStep = 20; // Sample every 20th pixel
-    const yellowPixelThreshold = 0.5; // >50% of sampled pixels must be yellow
+    // Relaxed thresholds so we reliably see bright yellow title cards:
+    const deltaEThreshold = 55; // larger ΔE allows more variation around target yellow
+    const sampleStep = 24; // sample grid a bit more coarsely
+    const yellowPixelThreshold = 0.25; // at least 25% of sampled pixels must be yellow
 
     // First, get video dimensions from FFmpeg
     getVideoDimensions(video).then(({ width, height }) => {
@@ -392,14 +436,14 @@ function framesToRanges(yellowFrames) {
   for (let i = 1; i < yellowFrames.length; i++) {
     const currentFrame = yellowFrames[i];
     
-    // If frames are consecutive or close (within 2 seconds), extend range
-    if (currentFrame - rangeEnd <= 2) {
+    // If frames are consecutive or very close (within 0.6s), treat as same yellow card
+    if (currentFrame - rangeEnd <= 0.6) {
       rangeEnd = currentFrame;
     } else {
       // End current range and start new one
       ranges.push({
         start: Math.round(rangeStart * 100) / 100,
-        end: Math.round((rangeEnd + 1) * 100) / 100 // Add 1 second buffer
+        end: Math.round((rangeEnd + 0.2) * 100) / 100 // small buffer after last yellow frame
       });
       rangeStart = currentFrame;
       rangeEnd = currentFrame;
@@ -409,7 +453,7 @@ function framesToRanges(yellowFrames) {
   // Add final range
   ranges.push({
     start: Math.round(rangeStart * 100) / 100,
-    end: Math.round((rangeEnd + 1) * 100) / 100
+    end: Math.round((rangeEnd + 0.2) * 100) / 100
   });
   
   return mergeYellowRanges(ranges);
