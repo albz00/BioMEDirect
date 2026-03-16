@@ -111,6 +111,7 @@ p {
 
 .Funding {
     font-size: 1vw;
+    margin-top: 2vmin;
 }
 
 /* Adjust ratio or height if more people/content are added and overflows */
