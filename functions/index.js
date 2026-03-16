@@ -53,29 +53,41 @@ exports.generateSrcArray = onObjectFinalized(
       console.log("Downloading uploaded lesson video:", filePath);
       await bucket.file(filePath).download({ destination: tmpFile });
 
+      // Resolve which lesson this video belongs to (from custom metadata or videoPaths mapping)
       const lessonId = await resolveLessonIdForUploadedVideo({
         filePath,
         objectMetadata: object.metadata || {},
       });
-      const chapterTitles = lessonId ? await loadOrderedChapterTitles(lessonId) : [];
-      const pipeline = await runDeterministicYellowPipeline({
-        lessonId: lessonId || uploadedVideoId,
-        localVideoPath: tmpFile,
-        chapterTitles,
-        sourceLabel: "upload-trigger",
-      });
 
+      // Simple, fully timestamped path:
+      // 1) Measure duration
+      // 2) Detect yellow cards at low FPS
+      // 3) Build srcArray from the non‑yellow intervals
+      const duration = await getDuration(tmpFile);
+      console.log("Video duration (s):", duration);
+
+      const yellowRanges = await detectYellowFrames(tmpFile);
+      console.log("Yellow ranges for srcArray:", yellowRanges);
+
+      const srcArray = buildSrcArrayFromYellow(yellowRanges, duration);
+      console.log("Built srcArray segments:", srcArray.length);
+
+      // If we know the lesson, write directly to its timeline document.
+      // Otherwise, keep the proposal under videoAnalyses so it can be inspected later.
       if (lessonId) {
         await db.collection("lessons").doc(lessonId).set(
           {
-            srcArray: pipeline.srcArray,
-            originalSrcArray: pipeline.srcArray,
-            yellowScreenRanges: pipeline.yellowRanges,
-            yellowScreenEvents: pipeline.yellowEvents,
-            chapterTimeline: pipeline.chapterTimeline,
-            timelineReview: pipeline.review,
+            srcArray,
+            originalSrcArray: srcArray,
+            yellowScreenRanges: yellowRanges,
+            yellowScreenEvents: yellowRanges.map((r, i) => ({
+              index: i,
+              startTime: r.start,
+              endTime: r.end,
+              duration: r.end - r.start,
+            })),
             timelinePipeline: {
-              version: "deterministic-first-pass-v1",
+              version: "yellow-ranges-v1",
               source: "upload-trigger",
               status: "ok",
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -84,57 +96,39 @@ exports.generateSrcArray = onObjectFinalized(
           { merge: true }
         );
       } else {
-        // Keep deterministic analysis available even before a lesson assignment exists.
         await db.collection("videoAnalyses").doc(uploadedVideoId).set(
           {
             videoPath: filePath,
-            srcArrayProposal: pipeline.srcArray,
-            yellowScreenRanges: pipeline.yellowRanges,
-            yellowScreenEvents: pipeline.yellowEvents,
-            chapterTimeline: pipeline.chapterTimeline,
-            timelineReview: {
-              ...pipeline.review,
-              states: [...new Set([...(pipeline.review.states || []), "unassignedVideo"])],
-              needsManualReview: true,
-            },
-            status: "unassigned",
+            srcArrayProposal: srcArray,
+            yellowScreenRanges: yellowRanges,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            timelinePipeline: {
+              version: "yellow-ranges-v1",
+              source: "upload-trigger",
+              status: "unassigned",
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
           },
           { merge: true }
         );
       }
-
-      console.log("Deterministic pipeline complete:", {
-        lessonId: lessonId || "(unassigned)",
-        uploadedVideoId,
-        chapters: chapterTitles.length,
-        events: pipeline.yellowEvents.length,
-        states: pipeline.review.states,
-      });
     } catch (error) {
-      console.error("generateSrcArray pipeline failed:", error);
+      console.error("generateSrcArray failed:", error);
+      // Best‑effort error marker; do not rethrow so the upload itself still succeeds.
       await db.collection("videoAnalyses").doc(uploadedVideoId).set(
         {
-          timelineReview: {
-            states: ["processingFailed", "needsManualReview"],
-            needsManualReview: true,
-            error: error.message || String(error),
-            source: "upload-trigger",
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
+          videoPath: filePath,
           timelinePipeline: {
-            version: "deterministic-first-pass-v1",
+            version: "yellow-ranges-v1",
             source: "upload-trigger",
             status: "failed",
+            error: error.message || String(error),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
-          status: "failed",
-          videoPath: filePath,
         },
         { merge: true }
       );
-      throw error;
     } finally {
       if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
     }
@@ -695,7 +689,7 @@ async function runDeterministicYellowPipeline({ lessonId, localVideoPath, chapte
 // Build srcArray only from the complement of yellow (non-yellow intervals).
 // Segments: [0, firstYellow.start], [yellow[i].end, yellow[i+1].start], ..., [lastYellow.end, duration].
 // No segment overlaps any yellow range; leapfrog uses exact stored yellowScreenRanges.
-function buildSrcArrayFromYellow(yellowRanges, duration) {
+function buildSrcArrayFromYellow(yellowRanges, duration, minSegmentSeconds) {
   const arr = [];
   let freeze = 0;
 
@@ -707,6 +701,8 @@ function buildSrcArrayFromYellow(yellowRanges, duration) {
     side: false,
     loop: false,
   });
+
+  const minSegment = Number.isFinite(minSegmentSeconds) && minSegmentSeconds > 0 ? minSegmentSeconds : 0.05;
 
   if (!yellowRanges || yellowRanges.length === 0) {
     arr.push({
@@ -725,8 +721,6 @@ function buildSrcArrayFromYellow(yellowRanges, duration) {
     const bs = typeof b.start === "number" ? b.start : 0;
     return as - bs;
   });
-
-  const minSegment = 0.05;
 
   // Content before first yellow
   const firstStart = typeof ranges[0].start === "number" ? ranges[0].start : 0;
@@ -850,25 +844,95 @@ exports.detectYellowScreen = onCall(
   }
 );
 
-// Detect yellow screen frames using raw RGB frame data and LAB color space
-// Avoids all FFmpeg color filters - uses raw video output and pixel sampling
-// Returns yellow frame ranges after converting raw detections to contiguous spans
-function detectYellowFrames(video) {
+// Manually generate a srcArray for a lesson's assigned video using yellow detection
+// with configurable sampling FPS and minimum non-yellow segment length.
+exports.generateSrcArrayWithYellowOptions = onCall(
+  {
+    memory: "2GiB",
+    timeoutSeconds: 540,
+  },
+  async (request) => {
+    const { videoPath, lessonId, fps, minSegmentSeconds } = request.data || {};
+    if (!videoPath || !lessonId) {
+      throw new Error("videoPath and lessonId are required");
+    }
+
+    const effectiveFps = Number.isFinite(fps) && fps > 0 ? fps : 10;
+    const effectiveMinSeg = Number.isFinite(minSegmentSeconds) && minSegmentSeconds > 0 ? minSegmentSeconds : 0.05;
+
+    const bucket = admin.storage().bucket();
+    const tmpFile = path.join(os.tmpdir(), `yellow_manual_${Date.now()}.mp4`);
+
+    try {
+      await bucket.file(videoPath).download({ destination: tmpFile });
+
+      const duration = await getDuration(tmpFile);
+      const yellowRanges = await detectYellowFrames(tmpFile, { fps: effectiveFps });
+      const srcArray = buildSrcArrayFromYellow(
+        yellowRanges,
+        duration,
+        effectiveMinSeg
+      );
+
+      await db.collection("lessons").doc(lessonId).set(
+        {
+          srcArray,
+          originalSrcArray: srcArray,
+          yellowScreenRanges: yellowRanges,
+          yellowScreenEvents: yellowRanges.map((r, i) => ({
+            index: i,
+            startTime: r.start,
+            endTime: r.end,
+            duration: r.end - r.start,
+          })),
+          timelinePipeline: {
+            version: "yellow-ranges-manual-v1",
+            source: "manual-editor",
+            status: "ok",
+            fps: effectiveFps,
+            minSegmentSeconds: effectiveMinSeg,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+        },
+        { merge: true }
+      );
+
+      return {
+        success: true,
+        segments: srcArray.length,
+        yellowRanges: yellowRanges.length,
+        duration,
+        fps: effectiveFps,
+        minSegmentSeconds: effectiveMinSeg,
+      };
+    } catch (error) {
+      console.error("generateSrcArrayWithYellowOptions failed:", error);
+      throw new Error(`generateSrcArrayWithYellowOptions failed: ${error.message}`);
+    } finally {
+      if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+    }
+  }
+);
+
+// Detect yellow screen frames using raw RGB frame data and LAB color space.
+// Optional options: { fps, sampleStep, yellowPixelThreshold, deltaEThreshold }
+// Avoids all FFmpeg color filters - uses raw video output and pixel sampling.
+// Returns yellow frame ranges after converting raw detections to contiguous spans.
+function detectYellowFrames(video, options = {}) {
   return new Promise((resolve, reject) => {
     const yellowFrames = [];
     let videoWidth = null;
     let videoHeight = null;
-    const frameRate = 10; // higher fps for accurate per-card yellow duration
+    const frameRate = Number.isFinite(options.fps) && options.fps > 0 ? options.fps : 10;
     let frameIndex = 0;
     let frameBuffer = Buffer.alloc(0);
     
     // Yellow target in LAB color space
     const yellowLAB = { L: 97, A: -21, B: 94 };
-    // Tuned thresholds: aim to catch full-screen bright yellow cards,
-    // but avoid flagging normal lesson slides that only contain small yellow elements.
-    const deltaEThreshold = 55;     // tighter ΔE so only strong yellows match
-    const sampleStep = 24;          // coarser sampling grid for performance
-    const yellowPixelThreshold = 0.4; // frame counted as yellow only if ~40%+ of sampled pixels are yellow
+    // Tuned defaults; caller may override via options.
+    const deltaEThreshold = options.deltaEThreshold != null ? options.deltaEThreshold : 55;
+    const sampleStep = options.sampleStep != null ? options.sampleStep : 24;
+    const yellowPixelThreshold = options.yellowPixelThreshold != null ? options.yellowPixelThreshold : 0.4;
 
     // First, get video dimensions from FFmpeg
     getVideoDimensions(video).then(({ width, height }) => {
@@ -876,10 +940,10 @@ function detectYellowFrames(video) {
       videoHeight = height;
       const frameSize = width * height * 3; // RGB24 = 3 bytes per pixel
 
-      // Use ffmpeg to output raw RGB frames at 10 fps for accurate yellow ranges
+      // Use ffmpeg to output raw RGB frames at the requested fps for accurate yellow ranges
       const proc = spawn(ffmpegPath, [
         "-i", video,
-        "-vf", "fps=10",
+        "-vf", `fps=${frameRate}`,
         "-f", "image2pipe",
         "-vcodec", "rawvideo",
         "-pix_fmt", "rgb24",

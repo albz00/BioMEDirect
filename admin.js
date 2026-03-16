@@ -1310,6 +1310,9 @@ function setupSrcArrayEditorListeners() {
     setupCollapsibleCard('selectedLessonCard', 'selectedLessonToggle', 'selectedLessonBody');
     setupCollapsibleCard('videosCard', 'videosCardToggle', 'videosCardBody');
     const saveBtn = document.getElementById('srcArraySaveAllBtn');
+    const generateBtn = document.getElementById('srcArrayGenerateFromYellowBtn');
+    const fpsInput = document.getElementById('srcArrayFpsInput');
+    const minSegInput = document.getElementById('srcArrayMinSegInput');
     if (saveBtn) {
         saveBtn.addEventListener('click', async () => {
             if (!currentSrcArrayLessonId || currentSrcArrayForEditor.length === 0) {
@@ -1347,6 +1350,56 @@ function setupSrcArrayEditorListeners() {
                 setStatus('Save failed: ' + e.message, 'error');
             } finally {
                 setButtonLoading(saveBtn, false);
+            }
+        });
+    }
+    if (generateBtn && fpsInput && minSegInput) {
+        generateBtn.addEventListener('click', async () => {
+            if (!selectedLessonId) {
+                setStatus('Select a lesson first', 'error');
+                return;
+            }
+            try {
+                requireAuth();
+            } catch (error) {
+                setStatus('Authentication required', 'error');
+                return;
+            }
+
+            const fpsVal = parseFloat(fpsInput.value);
+            const minSegVal = parseFloat(minSegInput.value);
+            const fps = Number.isFinite(fpsVal) && fpsVal > 0 ? fpsVal : 10;
+            const minSegmentSeconds = Number.isFinite(minSegVal) && minSegVal > 0 ? minSegVal : 0.05;
+
+            try {
+                setButtonLoading(generateBtn, true);
+                setStatus(`Generating timeline at ${fps} fps (min segment ${minSegmentSeconds}s)…`, 'scanning');
+
+                const videoPath = await getVideoPathForLesson(selectedLessonId);
+                if (!videoPath) {
+                    setStatus('No video path for this lesson', 'error');
+                    return;
+                }
+
+                const fn = functions.httpsCallable('generateSrcArrayWithYellowOptions');
+                const result = await fn({
+                    lessonId: selectedLessonId,
+                    videoPath,
+                    fps,
+                    minSegmentSeconds
+                });
+
+                const data = result.data || {};
+                const segs = typeof data.segments === 'number' ? data.segments : 'updated';
+                const ranges = typeof data.yellowRanges === 'number' ? data.yellowRanges : '?';
+                setStatus(`Generated ${segs} segments from ${ranges} yellow ranges`, 'success');
+
+                await refreshSrcArrayEditor();
+            } catch (e) {
+                console.error('generateSrcArrayWithYellowOptions failed:', e);
+                setStatus('Error generating timeline: ' + e.message, 'error');
+            } finally {
+                setButtonLoading(generateBtn, false);
             }
         });
     }
