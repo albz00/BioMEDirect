@@ -930,13 +930,9 @@ function detectYellowFrames(video, options = {}) {
     // Yellow target in LAB color space
     const yellowLAB = { L: 97, A: -21, B: 94 };
     // Tuned defaults; caller may override via options.
-    // More aggressive so we reliably swallow full-screen yellow cards:
-    // - slightly higher ΔE tolerance
-    // - denser sampling
-    // - lower pixel ratio threshold
-    const deltaEThreshold = options.deltaEThreshold != null ? options.deltaEThreshold : 65;
-    const sampleStep = options.sampleStep != null ? options.sampleStep : 16;
-    const yellowPixelThreshold = options.yellowPixelThreshold != null ? options.yellowPixelThreshold : 0.3;
+    const deltaEThreshold = options.deltaEThreshold != null ? options.deltaEThreshold : 55;
+    const sampleStep = options.sampleStep != null ? options.sampleStep : 24;
+    const yellowPixelThreshold = options.yellowPixelThreshold != null ? options.yellowPixelThreshold : 0.4;
 
     // First, get video dimensions from FFmpeg
     getVideoDimensions(video).then(({ width, height }) => {
