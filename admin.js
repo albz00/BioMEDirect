@@ -389,7 +389,10 @@ function setupEventListeners() {
                 const storageRef = storage.ref().child('videos');
                 for (const file of files) {
                     const fileRef = storageRef.child(file.name);
-                    await fileRef.put(file);
+                    const metadata = (files.length === 1 && selectedLessonId)
+                        ? { customMetadata: { lessonId: selectedLessonId } }
+                        : undefined;
+                    await fileRef.put(file, metadata);
                 }
 
                 setStatus('Upload complete. Refreshing dashboard (timeline will update when Cloud Function runs)...', 'success');

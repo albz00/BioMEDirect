@@ -16,6 +16,20 @@ admin.initializeApp();
 const storage = new Storage();
 const db = admin.firestore();
 
+async function resolveLessonIdForUploadedVideo({ filePath, objectMetadata }) {
+  const explicitLessonId = objectMetadata && objectMetadata.lessonId ? String(objectMetadata.lessonId).trim() : "";
+  if (explicitLessonId) return explicitLessonId;
+
+  const byPathSnap = await db.collection("videoPaths")
+    .where("videoPath", "==", filePath)
+    .limit(1)
+    .get();
+  if (!byPathSnap.empty) {
+    return byPathSnap.docs[0].id;
+  }
+  return null;
+}
+
 exports.generateSrcArray = onObjectFinalized(
   {
     memory: "2GiB",
@@ -31,8 +45,7 @@ exports.generateSrcArray = onObjectFinalized(
       return;
     }
 
-    // Convention: videos/<lessonId>.mp4 so this lesson's timeline is stored at lessons.doc(lessonId)
-    const lessonId = path.basename(filePath, ".mp4");
+    const uploadedVideoId = path.basename(filePath, ".mp4");
     const bucket = storage.bucket(bucketName);
     const tmpFile = path.join(os.tmpdir(), `upload_${Date.now()}_${path.basename(filePath)}`);
 
@@ -40,37 +53,88 @@ exports.generateSrcArray = onObjectFinalized(
       console.log("Downloading uploaded lesson video:", filePath);
       await bucket.file(filePath).download({ destination: tmpFile });
 
-      const chapterTitles = await loadOrderedChapterTitles(lessonId);
+      const lessonId = await resolveLessonIdForUploadedVideo({
+        filePath,
+        objectMetadata: object.metadata || {},
+      });
+      const chapterTitles = lessonId ? await loadOrderedChapterTitles(lessonId) : [];
       const pipeline = await runDeterministicYellowPipeline({
-        lessonId,
+        lessonId: lessonId || uploadedVideoId,
         localVideoPath: tmpFile,
         chapterTitles,
         sourceLabel: "upload-trigger",
       });
 
-      await db.collection("lessons").doc(lessonId).set(
-        {
-          srcArray: pipeline.srcArray,
-          originalSrcArray: pipeline.srcArray,
-          yellowScreenRanges: pipeline.yellowRanges,
-          yellowScreenEvents: pipeline.yellowEvents,
-          chapterTimeline: pipeline.chapterTimeline,
-          timelineReview: pipeline.review,
-          timelinePipeline: {
-            version: "deterministic-first-pass-v1",
-            source: "upload-trigger",
+      if (lessonId) {
+        await db.collection("lessons").doc(lessonId).set(
+          {
+            srcArray: pipeline.srcArray,
+            originalSrcArray: pipeline.srcArray,
+            yellowScreenRanges: pipeline.yellowRanges,
+            yellowScreenEvents: pipeline.yellowEvents,
+            chapterTimeline: pipeline.chapterTimeline,
+            timelineReview: pipeline.review,
+            timelinePipeline: {
+              version: "deterministic-first-pass-v1",
+              source: "upload-trigger",
+              status: "ok",
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+          },
+          { merge: true }
+        );
+      } else {
+        // Keep deterministic analysis available even before a lesson assignment exists.
+        await db.collection("videoAnalyses").doc(uploadedVideoId).set(
+          {
+            videoPath: filePath,
+            srcArrayProposal: pipeline.srcArray,
+            yellowScreenRanges: pipeline.yellowRanges,
+            yellowScreenEvents: pipeline.yellowEvents,
+            chapterTimeline: pipeline.chapterTimeline,
+            timelineReview: {
+              ...pipeline.review,
+              states: [...new Set([...(pipeline.review.states || []), "unassignedVideo"])],
+              needsManualReview: true,
+            },
+            status: "unassigned",
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
-        },
-        { merge: true }
-      );
+          { merge: true }
+        );
+      }
 
       console.log("Deterministic pipeline complete:", {
-        lessonId,
+        lessonId: lessonId || "(unassigned)",
+        uploadedVideoId,
         chapters: chapterTitles.length,
         events: pipeline.yellowEvents.length,
         states: pipeline.review.states,
       });
+    } catch (error) {
+      console.error("generateSrcArray pipeline failed:", error);
+      await db.collection("videoAnalyses").doc(uploadedVideoId).set(
+        {
+          timelineReview: {
+            states: ["processingFailed", "needsManualReview"],
+            needsManualReview: true,
+            error: error.message || String(error),
+            source: "upload-trigger",
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          timelinePipeline: {
+            version: "deterministic-first-pass-v1",
+            source: "upload-trigger",
+            status: "failed",
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          status: "failed",
+          videoPath: filePath,
+        },
+        { merge: true }
+      );
+      throw error;
     } finally {
       if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
     }
@@ -185,41 +249,54 @@ async function prepareVideoForAnalysis(localVideoPath) {
   }
 
   const normalizedPath = path.join(os.tmpdir(), `normalized_${Date.now()}.mp4`);
-  await new Promise((resolve, reject) => {
-    const proc = spawn(ffmpegPath, [
-      "-y",
-      "-i", localVideoPath,
-      "-c:v", "libx264",
-      "-preset", "veryfast",
-      "-crf", "23",
-      "-r", "30",
-      "-vsync", "cfr",
-      "-an",
-      normalizedPath,
-    ]);
-    proc.on("close", (code) => {
-      if (code === 0 || code === 1) resolve();
-      else reject(new Error(`Normalization failed with code ${code}`));
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn(ffmpegPath, [
+        "-y",
+        "-i", localVideoPath,
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "23",
+        "-r", "30",
+        "-vsync", "cfr",
+        "-an",
+        normalizedPath,
+      ]);
+      proc.on("close", (code) => {
+        if (code === 0 || code === 1) resolve();
+        else reject(new Error(`Normalization failed with code ${code}`));
+      });
+      proc.on("error", reject);
     });
-    proc.on("error", reject);
-  });
 
-  const normalizedInfo = await getVideoStreamInfo(normalizedPath);
-  return {
-    preparedPath: normalizedPath,
-    cleanupPrepared: true,
-    info: {
-      ...normalizedInfo,
-      frameRate: normalizedInfo.frameRate || 30,
-    },
-  };
+    const normalizedInfo = await getVideoStreamInfo(normalizedPath);
+    return {
+      preparedPath: normalizedPath,
+      cleanupPrepared: true,
+      info: {
+        ...normalizedInfo,
+        frameRate: normalizedInfo.frameRate || 30,
+      },
+    };
+  } catch (e) {
+    // If normalization fails in cloud runtime, continue with original input.
+    if (fs.existsSync(normalizedPath)) fs.unlinkSync(normalizedPath);
+    return {
+      preparedPath: localVideoPath,
+      cleanupPrepared: false,
+      info: {
+        ...info,
+        frameRate: info.frameRate || 30,
+      },
+    };
+  }
 }
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
 }
 
-function estimateYellowDominance(frameData, width, height, sampleStep = 6) {
+function estimateYellowDominance(frameData, width, height, sampleStep = 4) {
   let yellowCount = 0;
   let brightCount = 0;
   let samples = 0;
@@ -237,12 +314,13 @@ function estimateYellowDominance(frameData, width, height, sampleStep = 6) {
 
       // Wide yellow rule (not exact RGB): high R+G, low B, and warm dominance.
       if (
-        r > 135 &&
-        g > 120 &&
-        b < 145 &&
-        r - b > 20 &&
-        g - b > 20 &&
-        Math.abs(r - g) < 95
+        r > 120 &&
+        g > 105 &&
+        b < 205 &&
+        (r + g) / 2 - b > 10 &&
+        r - b > 8 &&
+        g - b > 8 &&
+        Math.abs(r - g) < 120
       ) {
         yellowCount++;
       }
@@ -258,13 +336,45 @@ function estimateYellowDominance(frameData, width, height, sampleStep = 6) {
   };
 }
 
-function buildYellowEventsFromFrames(frameDetections, frameRate, minDurationSeconds = 0.2) {
+function estimateYellowDominanceCenter(frameData, width, height, sampleStep = 4) {
+  const x0 = Math.floor(width * 0.2);
+  const x1 = Math.floor(width * 0.8);
+  const y0 = Math.floor(height * 0.2);
+  const y1 = Math.floor(height * 0.8);
+  let yellowCount = 0;
+  let samples = 0;
+
+  for (let y = y0; y < y1; y += sampleStep) {
+    for (let x = x0; x < x1; x += sampleStep) {
+      const offset = (y * width + x) * 3;
+      const r = frameData[offset];
+      const g = frameData[offset + 1];
+      const b = frameData[offset + 2];
+      if (r == null || g == null || b == null) continue;
+      if (
+        r > 120 &&
+        g > 105 &&
+        b < 205 &&
+        (r + g) / 2 - b > 10 &&
+        r - b > 8 &&
+        g - b > 8 &&
+        Math.abs(r - g) < 120
+      ) {
+        yellowCount++;
+      }
+      samples++;
+    }
+  }
+  return samples > 0 ? yellowCount / samples : 0;
+}
+
+function buildYellowEventsFromFrames(frameDetections, frameRate, minDurationSeconds = 0.06) {
   if (!frameDetections.length) return [];
   const frameInterval = frameRate > 0 ? 1 / frameRate : 1 / 30;
   const minFrames = Math.max(1, Math.ceil(minDurationSeconds / frameInterval));
-  const enterThreshold = 0.4;
-  const exitThreshold = 0.28;
-  const exitDebounceFrames = 2;
+  const enterThreshold = 0.14;
+  const exitThreshold = 0.09;
+  const exitDebounceFrames = 1;
 
   let inEvent = false;
   let eventStartIdx = 0;
@@ -279,7 +389,7 @@ function buildYellowEventsFromFrames(frameDetections, frameRate, minDurationSeco
     const frames = endIdx - eventStartIdx + 1;
     if (frames < minFrames) return;
     const avgYellow = metricFrames > 0 ? sumYellow / metricFrames : 0;
-    const confidence = clamp((avgYellow - enterThreshold) / 0.35, 0, 1);
+    const confidence = clamp((avgYellow - exitThreshold) / 0.32, 0, 1);
     const startTime = eventStartIdx * frameInterval;
     const endTime = (endIdx + 1) * frameInterval;
     events.push({
@@ -362,7 +472,14 @@ function detectYellowEventsDense(video, streamInfo) {
       while (buffer.length >= frameSize) {
         const frameData = buffer.slice(0, frameSize);
         buffer = buffer.slice(frameSize);
-        frameDetections.push(estimateYellowDominance(frameData, targetWidth, targetHeight, 6));
+        const full = estimateYellowDominance(frameData, targetWidth, targetHeight, 4);
+        const center = estimateYellowDominanceCenter(frameData, targetWidth, targetHeight, 4);
+        const combined = Math.max(full, center * 0.85 + full * 0.15);
+        frameDetections.push({
+          yellowRatio: combined,
+          fullYellowRatio: full,
+          centerYellowRatio: center,
+        });
       }
     });
     proc.on("close", (code) => {
@@ -370,11 +487,19 @@ function detectYellowEventsDense(video, streamInfo) {
         reject(new Error(`Dense yellow detection failed (ffmpeg code ${code})`));
         return;
       }
-      const yellowEvents = buildYellowEventsFromFrames(frameDetections, frameRate, 0.2);
+      const yellowEvents = buildYellowEventsFromFrames(frameDetections, frameRate, 0.06);
+      const maxYellowRatio = frameDetections.reduce((m, f) => Math.max(m, f.yellowRatio || 0), 0);
+      const avgYellowRatio = frameDetections.length
+        ? frameDetections.reduce((s, f) => s + (f.yellowRatio || 0), 0) / frameDetections.length
+        : 0;
       resolve({
         frameRate,
         frameCount: frameDetections.length,
         yellowEvents,
+        detectionSummary: {
+          maxYellowRatio: Math.round(maxYellowRatio * 1000) / 1000,
+          avgYellowRatio: Math.round(avgYellowRatio * 1000) / 1000,
+        },
       });
     });
     proc.on("error", reject);
@@ -540,6 +665,7 @@ async function runDeterministicYellowPipeline({ lessonId, localVideoPath, chapte
       duration: analysisDuration,
       frameRate: detection.frameRate,
       frameCount: detection.frameCount,
+      detectionSummary: detection.detectionSummary || null,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       // Stage 6 hook: reserved shape for future GPT frame refinement.
       refinementHook: {
@@ -557,6 +683,7 @@ async function runDeterministicYellowPipeline({ lessonId, localVideoPath, chapte
       review,
       duration: analysisDuration,
       extraEvents: mapping.extraEvents,
+      detectionSummary: detection.detectionSummary || null,
     };
   } finally {
     if (prepared.cleanupPrepared && fs.existsSync(prepared.preparedPath)) {
