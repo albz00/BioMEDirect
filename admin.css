@@ -711,6 +711,40 @@ html {
     color: #94a3b8;
 }
 
+.srcarray-editor-generate {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0.6rem;
+    border-radius: 6px;
+    background: rgba(15, 23, 42, 0.9);
+    border: 1px solid rgba(148, 163, 184, 0.4);
+}
+
+.srcarray-editor-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.8rem;
+    color: #cbd5e1;
+}
+
+.srcarray-editor-label input[type="number"] {
+    width: 3.5rem;
+    padding: 0.25rem 0.4rem;
+    border-radius: 4px;
+    border: 1px solid rgba(148, 163, 184, 0.7);
+    background: rgba(15, 23, 42, 0.95);
+    color: #e2e8f0;
+    font-size: 0.8rem;
+    text-align: center;
+}
+
+.srcarray-editor-label input[type="number"]:focus {
+    outline: none;
+    border-color: #3b82f6;
+}
+
 .srcarray-editor-table-wrap {
     overflow-x: auto;
     max-height: 360px;
