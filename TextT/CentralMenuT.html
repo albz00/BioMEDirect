@@ -12,32 +12,6 @@
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
     <style>
-        .adminPanelBtn {
-            font-family: Arial Rounded MT, sans-serif;
-            color: #02E8E5;
-            background: transparent;
-            border: 2px solid #02E8E5;
-            font-weight: bold;
-            font-size: 2vw;
-            font-size: 2vh;
-            padding: 0.5vmin 1.5vmin;
-            cursor: pointer;
-            border-radius: 5px;
-            margin-left: 2vmin;
-            transition: all 0.3s;
-        }
-        .adminPanelBtn:hover {
-            color: #9DFFFF;
-            border-color: #9BFFFF;
-            background: rgba(2, 232, 229, 0.1);
-            transform: scale(1.1);
-        }
-        .adminPanelBtn:active {
-            transform: scale(0.98);
-        }
-        .adminPanelBtn.hidden {
-            display: none;
-        }
         .footer-login-link {
             opacity: 0.5;
             font-size: 0.9em;
@@ -57,7 +31,6 @@
 
         <div class="btnTogText">                              <!-- Above Menu -->
                 <img class="btnToCentralMenuX" id="btnToCentralMenuX" src="../CommonFiles/Buttons/BTN_TogLessonMenuX.jpg" onclick="self.location.href='../TextX/CentralMenuX.html'"><span class="sr-only">Show Explanatory Text</span>
-                <button id="adminPanelBtn" class="adminPanelBtn hidden" onclick="window.location.href='../admin.html'">Admin Panel</button>
         </div>
 
         <div class="centralMenu"> <!-- grid container-->
@@ -165,24 +138,16 @@
     firebase.initializeApp(firebaseConfig);
     const auth = firebase.auth();
 
-    // Check if user is logged in and show/hide admin panel button and login link
+    // Check if user is logged in and show a subtle Admin Panel link in the footer
     auth.onAuthStateChanged((user) => {
-        const adminPanelBtn = document.getElementById('adminPanelBtn');
         const footerLoginLink = document.getElementById('footerLoginLink');
-        
-        if (adminPanelBtn) {
-            if (user) {
-                adminPanelBtn.classList.remove('hidden');
-            } else {
-                adminPanelBtn.classList.add('hidden');
-            }
-        }
         
         if (footerLoginLink) {
             if (user) {
-                footerLoginLink.classList.add('hidden');
-            } else {
+                footerLoginLink.textContent = 'Admin Panel';
                 footerLoginLink.classList.remove('hidden');
+            } else {
+                footerLoginLink.classList.add('hidden');
             }
         }
     });
