@@ -1381,7 +1381,9 @@ function setupSrcArrayEditorListeners() {
                     return;
                 }
 
-                const fn = functions.httpsCallable('generateSrcArrayWithYellowOptions');
+                const fn = functions.httpsCallable('generateSrcArrayWithYellowOptions', {
+                    timeout: 540000,
+                });
                 const result = await fn({
                     lessonId: selectedLessonId,
                     videoPath,
@@ -1847,7 +1849,9 @@ async function regenerateSrcArrayFromYellow(lessonId, btn) {
         // Resolve video path and filename
         const videoPath = await getVideoPathForLesson(lessonId);
         if (!videoPath) throw new Error('No video path for this lesson');
-        const detectYellow = functions.httpsCallable('detectYellowScreen');
+        const detectYellow = functions.httpsCallable('detectYellowScreen', {
+            timeout: 300000,
+        });
         const result = await detectYellow({ videoPath, lessonId });
 
         if (!result.data || !result.data.success) {
@@ -2151,7 +2155,9 @@ async function detectVideoTitlesForLesson(lessonId) {
         }
         const menuLinks = await extractMenuLinksFromHTML(lesson.path);
         const segmentLinks = menuLinks.map(link => ({ label: link.label }));
-        const detectVideoTitlesFunction = functions.httpsCallable('detectVideoTitles');
+        const detectVideoTitlesFunction = functions.httpsCallable('detectVideoTitles', {
+            timeout: 540000,
+        });
         const result = await detectVideoTitlesFunction({
             videoPath,
             lessonId,
@@ -2210,7 +2216,9 @@ async function generateSrcArrayFromYellowScreensForLesson(lessonId) {
         }
         const chapters = menuLinks.map(link => link.label);
         setStatus('Generating timeline from yellow screens...', 'scanning');
-        const generateFn = functions.httpsCallable('generateSrcArrayFromYellowScreens');
+        const generateFn = functions.httpsCallable('generateSrcArrayFromYellowScreens', {
+            timeout: 300000,
+        });
         const result = await generateFn({
             videoPath,
             lessonId,
