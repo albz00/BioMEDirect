@@ -706,6 +706,14 @@ html {
     margin: 1rem 0 0.75rem;
 }
 
+.srcarray-editor-hint {
+    margin: 0.35rem 0 0;
+    font-size: 0.78rem;
+    color: #64748b;
+    max-width: 42rem;
+    line-height: 1.35;
+}
+
 .srcarray-editor-status {
     font-size: 0.85rem;
     color: #94a3b8;
@@ -772,6 +780,43 @@ html {
     top: 0;
     background: #1e293b;
     z-index: 1;
+}
+
+.srcarray-editor-table .th-sub {
+    display: block;
+    font-weight: 400;
+    font-size: 0.72rem;
+    color: #64748b;
+    margin-top: 0.15rem;
+}
+
+.srcarray-editor-table .srcarray-chapter-name {
+    color: #cbd5e1;
+    font-size: 0.82rem;
+    max-width: 12rem;
+}
+
+.srcarray-editor-table details.srcarray-details {
+    font-size: 0.78rem;
+    color: #94a3b8;
+    max-width: 14rem;
+}
+
+.srcarray-editor-table details.srcarray-details summary {
+    cursor: pointer;
+    color: #64748b;
+    user-select: none;
+}
+
+.srcarray-editor-table .srcarray-details-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.2rem 0.5rem;
+    margin-top: 0.35rem;
+}
+
+.srcarray-editor-table .srcarray-details-grid span {
+    word-break: break-all;
 }
 
 .srcarray-editor-table td {

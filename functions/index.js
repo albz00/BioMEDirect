@@ -59,17 +59,21 @@ exports.generateSrcArray = onObjectFinalized(
         objectMetadata: object.metadata || {},
       });
 
-      // Simple, fully timestamped path:
-      // 1) Measure duration
-      // 2) Detect yellow cards at low FPS
-      // 3) Build srcArray from the non‑yellow intervals
-      const duration = await getDuration(tmpFile);
-      console.log("Video duration (s):", duration);
+      const chapterTitles = lessonId ? await loadOrderedChapterTitles(lessonId) : [];
 
-      const yellowRanges = await detectYellowFrames(tmpFile);
-      console.log("Yellow ranges for srcArray:", yellowRanges);
+      const pipeline = await runDeterministicYellowPipeline({
+        lessonId: lessonId || null,
+        localVideoPath: tmpFile,
+        chapterTitles,
+        sourceLabel: "upload-trigger",
+      });
 
-      const srcArray = buildSrcArrayFromYellow(yellowRanges, duration);
+      let srcArray = pipeline.srcArray;
+      if (lessonId) {
+        const existingDoc = await db.collection("lessons").doc(lessonId).get();
+        const existing = existingDoc.exists ? (existingDoc.data().srcArray || []) : [];
+        srcArray = mergeManualTimelineOverrides(pipeline.srcArray, existing);
+      }
       console.log("Built srcArray segments:", srcArray.length);
 
       // If we know the lesson, write directly to its timeline document.
@@ -79,15 +83,12 @@ exports.generateSrcArray = onObjectFinalized(
           {
             srcArray,
             originalSrcArray: srcArray,
-            yellowScreenRanges: yellowRanges,
-            yellowScreenEvents: yellowRanges.map((r, i) => ({
-              index: i,
-              startTime: r.start,
-              endTime: r.end,
-              duration: r.end - r.start,
-            })),
+            yellowScreenRanges: pipeline.yellowRanges,
+            yellowScreenEvents: pipeline.yellowEvents,
+            chapterTimeline: pipeline.chapterTimeline,
+            timelineReview: pipeline.review,
             timelinePipeline: {
-              version: "yellow-ranges-v1",
+              version: "yellow-content-v2",
               source: "upload-trigger",
               status: "ok",
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -100,11 +101,12 @@ exports.generateSrcArray = onObjectFinalized(
           {
             videoPath: filePath,
             srcArrayProposal: srcArray,
-            yellowScreenRanges: yellowRanges,
+            yellowScreenRanges: pipeline.yellowRanges,
+            yellowScreenEvents: pipeline.yellowEvents,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             timelinePipeline: {
-              version: "yellow-ranges-v1",
+              version: "yellow-content-v2",
               source: "upload-trigger",
               status: "unassigned",
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -120,7 +122,7 @@ exports.generateSrcArray = onObjectFinalized(
         {
           videoPath: filePath,
           timelinePipeline: {
-            version: "yellow-ranges-v1",
+            version: "yellow-content-v2",
             source: "upload-trigger",
             status: "failed",
             error: error.message || String(error),
@@ -439,6 +441,92 @@ function buildYellowEventsFromFrames(frameDetections, frameRate, minDurationSeco
   return events;
 }
 
+/**
+ * After a yellow block ends, find the first timecode where the frame is clearly not yellow
+ * (so playback can seek to real content, not the tail of a transition).
+ */
+function attachContentStartsToEvents(frameDetections, frameRate, events) {
+  if (!frameDetections.length || !events.length) return events;
+  const frameInterval = frameRate > 0 ? 1 / frameRate : 1 / 30;
+  const strictNonYellow = 0.072;
+  const consecFrames = 2;
+
+  return events.map((ev) => {
+    const yellowStart = Math.round(ev.startTime * 1000) / 1000;
+    const yellowEnd = Math.round(ev.endTime * 1000) / 1000;
+
+    let idx = ev.endFrame + 1;
+    let streak = 0;
+    let firstContentFrame = null;
+    while (idx < frameDetections.length) {
+      const ratio = frameDetections[idx].yellowRatio || 0;
+      if (ratio < strictNonYellow) {
+        streak++;
+        if (streak >= consecFrames) {
+          firstContentFrame = idx - consecFrames + 1;
+          break;
+        }
+      } else {
+        streak = 0;
+      }
+      idx++;
+    }
+
+    if (firstContentFrame == null) {
+      firstContentFrame = Math.min(ev.endFrame + 1, Math.max(0, frameDetections.length - 1));
+    }
+
+    let contentStart = Math.round(firstContentFrame * frameInterval * 1000) / 1000;
+    contentStart = Math.max(contentStart, yellowEnd);
+
+    return {
+      ...ev,
+      yellowStart,
+      yellowEnd,
+      contentStart,
+      contentStartFrame: firstContentFrame,
+    };
+  });
+}
+
+/**
+ * When regenerating a timeline, keep timing rows the editor explicitly locked.
+ */
+function mergeManualTimelineOverrides(newSegments, existing) {
+  if (!Array.isArray(newSegments) || newSegments.length === 0) return newSegments;
+  if (!Array.isArray(existing) || existing.length === 0) return newSegments;
+
+  const byChapter = new Map();
+  for (const seg of existing) {
+    if (seg && seg.manualOverride === true && seg.chapterIndex != null) {
+      byChapter.set(seg.chapterIndex, seg);
+    }
+  }
+  if (byChapter.size === 0) return newSegments;
+
+  return newSegments.map((neu) => {
+    if (!neu || neu.chapterIndex == null || !byChapter.has(neu.chapterIndex)) return neu;
+    const old = byChapter.get(neu.chapterIndex);
+    return {
+      ...neu,
+      src_start: old.src_start,
+      src_end: old.src_end,
+      contentStart: old.contentStart != null ? old.contentStart : old.src_start,
+      contentEnd: old.contentEnd != null ? old.contentEnd : old.src_end,
+      yellowStart: old.yellowStart != null ? old.yellowStart : neu.yellowStart,
+      yellowEnd: old.yellowEnd != null ? old.yellowEnd : neu.yellowEnd,
+      manualOverride: true,
+      menuLink: old.menuLink != null && String(old.menuLink).trim() !== ""
+        ? old.menuLink
+        : neu.menuLink,
+      title: old.title != null && String(old.title).trim() !== ""
+        ? old.title
+        : neu.title,
+      flagged: old.flagged != null ? old.flagged : neu.flagged,
+    };
+  });
+}
+
 function detectYellowEventsDense(video, streamInfo) {
   return new Promise((resolve, reject) => {
     const sourceWidth = Number.isFinite(streamInfo.width) ? streamInfo.width : 1280;
@@ -481,7 +569,8 @@ function detectYellowEventsDense(video, streamInfo) {
         reject(new Error(`Dense yellow detection failed (ffmpeg code ${code})`));
         return;
       }
-      const yellowEvents = buildYellowEventsFromFrames(frameDetections, frameRate, 0.06);
+      const rawEvents = buildYellowEventsFromFrames(frameDetections, frameRate, 0.06);
+      const yellowEvents = attachContentStartsToEvents(frameDetections, frameRate, rawEvents);
       const maxYellowRatio = frameDetections.reduce((m, f) => Math.max(m, f.yellowRatio || 0), 0);
       const avgYellowRatio = frameDetections.length
         ? frameDetections.reduce((s, f) => s + (f.yellowRatio || 0), 0) / frameDetections.length
@@ -502,8 +591,8 @@ function detectYellowEventsDense(video, streamInfo) {
 
 function deriveYellowRangesFromEvents(events) {
   return events.map((e) => ({
-    start: Math.round(e.startTime * 1000) / 1000,
-    end: Math.round(e.endTime * 1000) / 1000,
+    start: Math.round((e.yellowStart != null ? e.yellowStart : e.startTime) * 1000) / 1000,
+    end: Math.round((e.yellowEnd != null ? e.yellowEnd : e.endTime) * 1000) / 1000,
   }));
 }
 
@@ -577,6 +666,10 @@ function generateChapterAwareSrcArray(mappings, duration) {
       index: 0,
       chapterIndex: 1,
       title: "Unmapped Segment",
+      contentStart: 0,
+      contentEnd: Math.round(duration * 1000) / 1000,
+      yellowStart: null,
+      yellowEnd: null,
       start: 0,
       end: Math.round(duration * 1000) / 1000,
       src_start: 0,
@@ -597,29 +690,57 @@ function generateChapterAwareSrcArray(mappings, duration) {
   for (let i = 0; i < mappings.length; i++) {
     const current = mappings[i];
     const next = mappings[i + 1] || null;
-    let start = current.event ? current.event.endTime : null;
-    let end = next && next.event ? next.event.startTime : duration;
+    const ev = current.event;
+
+    let yellowStart = null;
+    let yellowEnd = null;
+    let contentStart = null;
+    let contentEnd = next && next.event
+      ? (next.event.yellowStart != null ? next.event.yellowStart : next.event.startTime)
+      : duration;
+
+    if (ev) {
+      yellowStart = ev.yellowStart != null ? ev.yellowStart : ev.startTime;
+      yellowEnd = ev.yellowEnd != null ? ev.yellowEnd : ev.endTime;
+      contentStart = ev.contentStart != null ? ev.contentStart : ev.endTime;
+      contentStart = Math.max(contentStart, yellowEnd);
+    }
+
     let flagged = !!current.flagged;
     let status = current.status || "ok";
 
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    if (ev == null) {
+      flagged = true;
+      status = status === "ok" ? "missingYellowEvent" : status;
+    }
+
+    if (!Number.isFinite(contentStart) || !Number.isFinite(contentEnd) || contentEnd <= contentStart) {
       flagged = true;
       status = status === "ok" ? "invalidSegmentBounds" : status;
-      start = Number.isFinite(start) ? start : null;
-      end = Number.isFinite(end) && Number.isFinite(start) ? Math.max(end, start + 0.01) : null;
+      if (!Number.isFinite(contentStart)) contentStart = null;
+      if (!Number.isFinite(contentEnd) && Number.isFinite(contentStart)) {
+        contentEnd = Math.min(duration, contentStart + 0.01);
+      }
     }
+
+    const rs = contentStart != null ? Math.round(contentStart * 1000) / 1000 : null;
+    const re = contentEnd != null ? Math.round(contentEnd * 1000) / 1000 : null;
 
     srcArray.push({
       index: i,
       chapterIndex: current.chapterIndex,
       title: current.title,
-      start: start != null ? Math.round(start * 1000) / 1000 : null,
-      end: end != null ? Math.round(end * 1000) / 1000 : null,
-      src_start: start != null ? Math.round(start * 1000) / 1000 : null,
-      src_end: end != null ? Math.round(end * 1000) / 1000 : null,
+      yellowStart: yellowStart != null ? Math.round(yellowStart * 1000) / 1000 : null,
+      yellowEnd: yellowEnd != null ? Math.round(yellowEnd * 1000) / 1000 : null,
+      contentStart: rs,
+      contentEnd: re,
+      start: rs,
+      end: re,
+      src_start: rs,
+      src_end: re,
       menuLink: current.title || "",
       freezeFrame: i,
-      source: "yellow-detection",
+      source: "yellow-pipeline",
       confidence: Math.round((current.confidence || 0) * 1000) / 1000,
       status,
       flagged,
@@ -665,7 +786,8 @@ async function runDeterministicYellowPipeline({ lessonId, localVideoPath, chapte
       refinementHook: {
         ready: true,
         strategy: "gpt-vision-future",
-        notes: "Use candidate frames around event boundaries and mismatches for title verification.",
+        callable: "refineFlaggedTimelineSegment",
+        notes: "Per-segment AI hook; does not run automatically.",
       },
     };
 
@@ -819,20 +941,29 @@ exports.detectYellowScreen = onCall(
         sourceLabel: "manual-yellow-regenerate",
       });
 
+      const existingDoc = await db.collection("lessons").doc(lessonId).get();
+      const existing = existingDoc.exists ? (existingDoc.data().srcArray || []) : [];
+      const srcArray = mergeManualTimelineOverrides(pipeline.srcArray, existing);
+
       await db.collection("lessons").doc(lessonId).set({
-        srcArray: pipeline.srcArray,
-        originalSrcArray: pipeline.srcArray,
+        srcArray,
+        originalSrcArray: srcArray,
         yellowScreenRanges: pipeline.yellowRanges,
         yellowScreenEvents: pipeline.yellowEvents,
         chapterTimeline: pipeline.chapterTimeline,
         timelineReview: pipeline.review,
+        timelinePipeline: {
+          version: "yellow-content-v2",
+          source: "manual-yellow-regenerate",
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
       }, { merge: true });
 
       return {
         success: true,
         yellowRanges: pipeline.yellowRanges,
         yellowEvents: pipeline.yellowEvents.length,
-        adjustedSegments: pipeline.srcArray.length,
+        adjustedSegments: srcArray.length,
         reviewStates: pipeline.review.states,
       };
     } catch (error) {
@@ -866,31 +997,33 @@ exports.generateSrcArrayWithYellowOptions = onCall(
     try {
       await bucket.file(videoPath).download({ destination: tmpFile });
 
-      const duration = await getDuration(tmpFile);
-      const yellowRanges = await detectYellowFrames(tmpFile, { fps: effectiveFps });
-      const srcArray = buildSrcArrayFromYellow(
-        yellowRanges,
-        duration,
-        effectiveMinSeg
-      );
+      const chapterTitles = await loadOrderedChapterTitles(lessonId);
+      const pipeline = await runDeterministicYellowPipeline({
+        lessonId,
+        localVideoPath: tmpFile,
+        chapterTitles,
+        sourceLabel: "manual-editor",
+      });
+
+      const existingDoc = await db.collection("lessons").doc(lessonId).get();
+      const existing = existingDoc.exists ? (existingDoc.data().srcArray || []) : [];
+      const srcArray = mergeManualTimelineOverrides(pipeline.srcArray, existing);
 
       await db.collection("lessons").doc(lessonId).set(
         {
           srcArray,
           originalSrcArray: srcArray,
-          yellowScreenRanges: yellowRanges,
-          yellowScreenEvents: yellowRanges.map((r, i) => ({
-            index: i,
-            startTime: r.start,
-            endTime: r.end,
-            duration: r.end - r.start,
-          })),
+          yellowScreenRanges: pipeline.yellowRanges,
+          yellowScreenEvents: pipeline.yellowEvents,
+          chapterTimeline: pipeline.chapterTimeline,
+          timelineReview: pipeline.review,
           timelinePipeline: {
-            version: "yellow-ranges-manual-v1",
+            version: "yellow-content-v2",
             source: "manual-editor",
             status: "ok",
-            fps: effectiveFps,
-            minSegmentSeconds: effectiveMinSeg,
+            note: "Dense detection; fps/minSegmentSeconds are recorded for reference only",
+            requestedFps: effectiveFps,
+            requestedMinSegmentSeconds: effectiveMinSeg,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
         },
@@ -900,8 +1033,9 @@ exports.generateSrcArrayWithYellowOptions = onCall(
       return {
         success: true,
         segments: srcArray.length,
-        yellowRanges: yellowRanges.length,
-        duration,
+        yellowRanges: pipeline.yellowRanges.length,
+        duration: pipeline.duration,
+        reviewStates: pipeline.review.states || [],
         fps: effectiveFps,
         minSegmentSeconds: effectiveMinSeg,
       };
@@ -1646,10 +1780,14 @@ exports.generateSrcArrayFromYellowScreens = onCall(
         sourceLabel: "manual-generate-from-yellow",
       });
 
+      const existingDoc = await db.collection("lessons").doc(lessonId).get();
+      const existing = existingDoc.exists ? (existingDoc.data().srcArray || []) : [];
+      const mergedSrc = mergeManualTimelineOverrides(pipeline.srcArray, existing);
+
       await db.collection("lessons").doc(lessonId).set(
         {
-          srcArray: pipeline.srcArray,
-          originalSrcArray: pipeline.srcArray,
+          srcArray: mergedSrc,
+          originalSrcArray: mergedSrc,
           yellowScreenRanges: pipeline.yellowRanges,
           yellowScreenEvents: pipeline.yellowEvents,
           chapterTimeline: pipeline.chapterTimeline,
@@ -1673,7 +1811,7 @@ exports.generateSrcArrayFromYellowScreens = onCall(
         chapters: chapters.length,
         detections: pipeline.yellowEvents.length,
         reason: pipeline.review.states.join(", "),
-        segments: pipeline.srcArray.length,
+        segments: mergedSrc.length,
         states: pipeline.review.states,
       };
     } catch (error) {
@@ -1684,5 +1822,48 @@ exports.generateSrcArrayFromYellowScreens = onCall(
         fs.unlinkSync(tmpFile);
       }
     }
+  }
+);
+
+/**
+ * Isolated hook for future per-segment vision/LLM refinement (OpenAI, etc.).
+ * Deterministic pipeline only until frames are extracted and merged here.
+ */
+exports.refineFlaggedTimelineSegment = onCall(
+  {
+    memory: "1GiB",
+    timeoutSeconds: 120,
+  },
+  async (request) => {
+    const data = request.data || {};
+    const { lessonId } = data;
+    const segmentRef = data.segmentId != null ? data.segmentId : data.segmentIndex;
+    if (!lessonId || segmentRef == null) {
+      throw new Error("lessonId and segmentId (or segmentIndex) are required");
+    }
+    const idx = parseInt(String(segmentRef), 10);
+    if (!Number.isFinite(idx) || idx < 0) {
+      throw new Error("segmentIndex must be a non-negative integer");
+    }
+
+    const snap = await db.collection("lessons").doc(lessonId).get();
+    if (!snap.exists) {
+      throw new Error(`Lesson not found: ${lessonId}`);
+    }
+    const srcArray = snap.data().srcArray || [];
+    const seg = srcArray[idx];
+    if (!seg) {
+      throw new Error(`No segment at index ${idx}`);
+    }
+
+    return {
+      ok: false,
+      message: "AI refinement is not implemented yet; timeline architecture is ready for a frame-extract + OpenAI step.",
+      lessonId,
+      segmentId: idx,
+      segmentIndex: idx,
+      flagged: seg.flagged === true,
+      hasYellowBounds: seg.yellowStart != null && seg.yellowEnd != null,
+    };
   }
 );

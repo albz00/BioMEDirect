@@ -29,6 +29,8 @@ let collapsedSections = new Set();
 /** Current srcArray and lesson id for the Timeline editor (Save All writes to lessons.doc(currentSrcArrayLessonId)) */
 let currentSrcArrayForEditor = [];
 let currentSrcArrayLessonId = null;
+/** Ordered display titles from lessonMetadata.chapterOrder (same order as backend chapter mapping). */
+let currentChapterTitlesForEditor = [];
 
 /** Show loading state on a button (spinner, disabled). Pass the button element and true/false. */
 function setButtonLoading(btn, loading) {
@@ -1227,6 +1229,29 @@ async function getVideoPathForLesson(lessonId) {
         : `videos/${lessonId}.mp4`;
 }
 
+/** Same ordering as Cloud Function loadOrderedChapterTitles (chapter editor is source of truth for names). */
+async function getOrderedChapterTitlesForLesson(lessonId) {
+    const metaDoc = await db.collection('lessonMetadata').doc(lessonId).get();
+    if (!metaDoc.exists) return [];
+    const meta = metaDoc.data() || {};
+
+    if (Array.isArray(meta.chapterOrder) && meta.chapterOrder.length > 0) {
+        const displayMap = meta.chapterDisplayNames || {};
+        return meta.chapterOrder
+            .map((key) => (displayMap[key] != null ? String(displayMap[key]).trim() : String(key).trim()))
+            .filter(Boolean);
+    }
+
+    const displayNames = meta.chapterDisplayNames || {};
+    const orderedKeys = Object.keys(displayNames).sort((a, b) => {
+        const na = parseInt(String(a).replace(/\D+/g, ''), 10);
+        const nb = parseInt(String(b).replace(/\D+/g, ''), 10);
+        if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
+        return String(a).localeCompare(String(b));
+    });
+    return orderedKeys.map((k) => String(displayNames[k] || '').trim()).filter(Boolean);
+}
+
 /** Load srcArray from Firestore for the Timeline editor (timeline keyed by lessonId). */
 async function loadSrcArrayForEditor(lessonId) {
     const lessonDoc = await db.collection('lessons').doc(lessonId).get();
@@ -1234,7 +1259,7 @@ async function loadSrcArrayForEditor(lessonId) {
     return { lessonId, srcArray };
 }
 
-function renderSrcArrayTable(srcArray, lessonId) {
+function renderSrcArrayTable(srcArray, lessonId, chapterTitles) {
     const tbody = document.getElementById('srcArrayEditorTbody');
     const tableWrap = document.querySelector('.srcarray-editor-table-wrap');
     const emptyEl = document.getElementById('srcArrayEditorEmpty');
@@ -1242,6 +1267,7 @@ function renderSrcArrayTable(srcArray, lessonId) {
 
     currentSrcArrayForEditor = Array.isArray(srcArray) ? srcArray.map(s => ({ ...s })) : [];
     currentSrcArrayLessonId = lessonId;
+    currentChapterTitlesForEditor = Array.isArray(chapterTitles) ? chapterTitles : [];
 
     if (currentSrcArrayForEditor.length === 0) {
         tbody.innerHTML = '';
@@ -1253,20 +1279,46 @@ function renderSrcArrayTable(srcArray, lessonId) {
     tableWrap.style.display = 'block';
     emptyEl.style.display = 'none';
 
+    const esc = (v) => String(v == null ? '' : v)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/"/g, '&quot;');
+
     const rows = currentSrcArrayForEditor.map((seg, index) => {
         const start = seg.src_start != null ? Number(seg.src_start) : '';
         const end = seg.src_end != null ? Number(seg.src_end) : '';
-        const menuLink = (seg.menuLink != null ? String(seg.menuLink) : '').replace(/"/g, '&quot;');
-        const title = (seg.title != null ? String(seg.title) : '').replace(/"/g, '&quot;');
-        const confidence = (seg.confidence != null ? String(seg.confidence) : '').replace(/"/g, '&quot;');
+        const menuLink = seg.menuLink != null ? String(seg.menuLink) : '';
+        const chNum = seg.chapterIndex != null ? Number(seg.chapterIndex) : '';
+        const fromEditor = (Number.isFinite(chNum) && chNum > 0 && currentChapterTitlesForEditor[chNum - 1])
+            ? currentChapterTitlesForEditor[chNum - 1]
+            : '';
+        const yellowStart = seg.yellowStart != null ? Number(seg.yellowStart) : '';
+        const yellowEnd = seg.yellowEnd != null ? Number(seg.yellowEnd) : '';
+        const source = seg.source != null ? String(seg.source) : '';
+        const conf = seg.confidence != null ? String(seg.confidence) : '';
+        const flagged = seg.flagged === true;
+        const manualOverride = seg.manualOverride === true;
         return `<tr data-index="${index}">
             <td class="srcarray-col-index">${index}</td>
             <td><input type="number" step="0.01" class="srcarray-input-start" value="${start}" data-index="${index}"></td>
             <td><input type="number" step="0.01" class="srcarray-input-end" value="${end}" data-index="${index}"></td>
-            <td><input type="text" class="srcarray-input-menuLink" value="${menuLink}" data-index="${index}" placeholder="chapter / menu"></td>
-            <td><input type="text" class="srcarray-input-title" value="${title}" data-index="${index}" placeholder="source label"></td>
-            <td><input type="text" class="srcarray-input-confidence" value="${confidence}" data-index="${index}" placeholder="—"></td>
-            <td class="srcarray-col-actions"></td>
+            <td><input type="number" step="1" min="0" class="srcarray-input-chapterIndex" value="${chNum === '' ? '' : chNum}" data-index="${index}" placeholder="—"></td>
+            <td class="srcarray-chapter-name" title="From lesson chapter editor (ordered list)">${esc(fromEditor || '—')}</td>
+            <td><input type="text" class="srcarray-input-menuLink" value="${esc(menuLink)}" data-index="${index}" placeholder="menu link"></td>
+            <td><input type="checkbox" class="srcarray-input-flagged" data-index="${index}" ${flagged ? 'checked' : ''}></td>
+            <td><input type="checkbox" class="srcarray-input-manualOverride" data-index="${index}" ${manualOverride ? 'checked' : ''} title="Preserve on regenerate"></td>
+            <td>
+                <details class="srcarray-details">
+                    <summary>debug</summary>
+                    <div class="srcarray-details-grid">
+                        <span>yellowStart</span><span>${esc(yellowStart === '' ? '—' : yellowStart)}</span>
+                        <span>yellowEnd</span><span>${esc(yellowEnd === '' ? '—' : yellowEnd)}</span>
+                        <span>title</span><span>${esc(seg.title != null ? seg.title : '—')}</span>
+                        <span>source</span><span>${esc(source || '—')}</span>
+                        <span>confidence</span><span>${esc(conf || '—')}</span>
+                    </div>
+                </details>
+            </td>
         </tr>`;
     }).join('');
     tbody.innerHTML = rows;
@@ -1277,18 +1329,20 @@ async function refreshSrcArrayEditor() {
     if (!selectedLessonId) {
         currentSrcArrayForEditor = [];
         currentSrcArrayLessonId = null;
-        renderSrcArrayTable([], null);
+        currentChapterTitlesForEditor = [];
+        renderSrcArrayTable([], null, []);
         if (statusEl) statusEl.textContent = '';
         return;
     }
     if (statusEl) statusEl.textContent = 'Loading…';
     try {
         const { lessonId, srcArray } = await loadSrcArrayForEditor(selectedLessonId);
-        renderSrcArrayTable(srcArray, selectedLessonId);
+        const chapterTitles = await getOrderedChapterTitlesForLesson(selectedLessonId);
+        renderSrcArrayTable(srcArray, selectedLessonId, chapterTitles);
         if (statusEl) statusEl.textContent = selectedLessonId ? `${srcArray.length} segments` : 'No lesson selected';
     } catch (e) {
         console.error('refreshSrcArrayEditor:', e);
-        renderSrcArrayTable([], null);
+        renderSrcArrayTable([], null, []);
         if (statusEl) statusEl.textContent = 'Error loading';
     }
 }
@@ -1329,13 +1383,30 @@ function setupSrcArrayEditorListeners() {
                 const startInput = row.querySelector('.srcarray-input-start');
                 const endInput = row.querySelector('.srcarray-input-end');
                 const menuLinkInput = row.querySelector('.srcarray-input-menuLink');
-                const titleInput = row.querySelector('.srcarray-input-title');
-                const confidenceInput = row.querySelector('.srcarray-input-confidence');
+                const chapterIdxInput = row.querySelector('.srcarray-input-chapterIndex');
+                const flaggedInput = row.querySelector('.srcarray-input-flagged');
+                const overrideInput = row.querySelector('.srcarray-input-manualOverride');
                 if (startInput) seg.src_start = startInput.value === '' ? null : parseFloat(startInput.value);
                 if (endInput) seg.src_end = endInput.value === '' ? null : parseFloat(endInput.value);
                 if (menuLinkInput) seg.menuLink = menuLinkInput.value.trim() || '';
-                if (titleInput) seg.title = titleInput.value.trim() || '';
-                if (confidenceInput) seg.confidence = confidenceInput.value.trim() || '';
+                if (chapterIdxInput) {
+                    const raw = chapterIdxInput.value.trim();
+                    seg.chapterIndex = raw === '' ? null : parseInt(raw, 10);
+                }
+                if (flaggedInput) seg.flagged = flaggedInput.checked;
+                if (overrideInput) seg.manualOverride = overrideInput.checked;
+                const ch = seg.chapterIndex;
+                if (Number.isFinite(ch) && ch > 0 && currentChapterTitlesForEditor[ch - 1]) {
+                    seg.title = currentChapterTitlesForEditor[ch - 1];
+                }
+                if (seg.src_start != null) {
+                    seg.contentStart = seg.src_start;
+                    seg.start = seg.src_start;
+                }
+                if (seg.src_end != null) {
+                    seg.contentEnd = seg.src_end;
+                    seg.end = seg.src_end;
+                }
                 updated.push(seg);
             }
             setButtonLoading(saveBtn, true);
@@ -1373,7 +1444,7 @@ function setupSrcArrayEditorListeners() {
 
             try {
                 setButtonLoading(generateBtn, true);
-                setStatus(`Generating timeline at ${fps} fps (min segment ${minSegmentSeconds}s)…`, 'scanning');
+                setStatus('Generating timeline (dense yellow + chapter mapping; FPS/min segment stored for reference only)…', 'scanning');
 
                 const videoPath = await getVideoPathForLesson(selectedLessonId);
                 if (!videoPath) {
@@ -1394,7 +1465,10 @@ function setupSrcArrayEditorListeners() {
                 const data = result.data || {};
                 const segs = typeof data.segments === 'number' ? data.segments : 'updated';
                 const ranges = typeof data.yellowRanges === 'number' ? data.yellowRanges : '?';
-                setStatus(`Generated ${segs} segments from ${ranges} yellow ranges`, 'success');
+                const states = Array.isArray(data.reviewStates) && data.reviewStates.length
+                    ? ` Review: ${data.reviewStates.join(', ')}.`
+                    : '';
+                setStatus(`Generated ${segs} segments, ${ranges} yellow events.${states}`, 'success');
 
                 await refreshSrcArrayEditor();
             } catch (e) {

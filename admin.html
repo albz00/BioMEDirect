@@ -229,18 +229,21 @@
                                     </button>
                                 </div>
                                 <span id="srcArrayEditorStatus" class="srcarray-editor-status"></span>
+                                <p class="srcarray-editor-hint">Playback uses start/end below (content after yellow). Chapter names come from the chapter editor; yellow/source/confidence are debug-only.</p>
                             </div>
                             <div class="srcarray-editor-table-wrap">
                                 <table class="srcarray-editor-table" id="srcArrayEditorTable">
                                     <thead>
                                         <tr>
                                             <th>index</th>
-                                            <th>start</th>
-                                            <th>end</th>
-                                            <th>title / chapter</th>
-                                            <th>source label</th>
-                                            <th>confidence</th>
-                                            <th>actions</th>
+                                            <th>start<br><span class="th-sub">playback</span></th>
+                                            <th>end<br><span class="th-sub">playback</span></th>
+                                            <th>ch#</th>
+                                            <th>chapter name<br><span class="th-sub">from editor</span></th>
+                                            <th>menu link</th>
+                                            <th>flag</th>
+                                            <th>lock</th>
+                                            <th>yellow / debug</th>
                                         </tr>
                                     </thead>
                                     <tbody id="srcArrayEditorTbody"></tbody>
