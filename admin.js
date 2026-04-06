@@ -1269,6 +1269,22 @@ async function getOrderedChapterTitlesForLesson(lessonId) {
         .filter(Boolean);
 }
 
+/** Opening row + rows with finite src_start/src_end and src_start < src_end (matches Cloud Functions). */
+function rowIncludedInPlayableTimeline(seg) {
+    if (!seg) return false;
+    if (seg.menuLink === 'Opening' || seg.role === 'opening') return true;
+    const a = Number(seg.src_start);
+    const b = Number(seg.src_end);
+    return Number.isFinite(a) && Number.isFinite(b) && b > a;
+}
+
+function splitSrcArrayForEditor(srcArray) {
+    const full = Array.isArray(srcArray) ? srcArray : [];
+    const display = full.filter((seg) => rowIncludedInPlayableTimeline(seg));
+    const legacyInvalid = full.filter((seg) => !rowIncludedInPlayableTimeline(seg));
+    return { display, legacyInvalid };
+}
+
 /** Load srcArray from Firestore for the Timeline editor (timeline keyed by lessonId). */
 async function loadSrcArrayForEditor(lessonId) {
     const lessonDoc = await db.collection('lessons').doc(lessonId).get();
@@ -1278,7 +1294,22 @@ async function loadSrcArrayForEditor(lessonId) {
     const timelineReview = data.timelineReview || null;
     const yellowDetection = data.yellowDetection || null;
     const yellowScreenEvents = data.yellowScreenEvents || null;
-    return { lessonId, srcArray, timelinePipeline, timelineReview, yellowDetection, yellowScreenEvents };
+    const unmappedChapters = (yellowDetection && Array.isArray(yellowDetection.unmappedChapters))
+        ? yellowDetection.unmappedChapters
+        : [];
+    const timelineGenerationSummary = yellowDetection && yellowDetection.timelineGenerationSummary
+        ? yellowDetection.timelineGenerationSummary
+        : null;
+    return {
+        lessonId,
+        srcArray,
+        timelinePipeline,
+        timelineReview,
+        yellowDetection,
+        yellowScreenEvents,
+        unmappedChapters,
+        timelineGenerationSummary,
+    };
 }
 
 function renderYellowEventsDebugPanel(yellowDetection, yellowScreenEvents) {
@@ -1315,13 +1346,55 @@ function renderYellowEventsDebugPanel(yellowDetection, yellowScreenEvents) {
     }
 }
 
-function renderSrcArrayTable(srcArray, lessonId, chapterTitles) {
+function renderUnmappedAndLegacyPanels(unmappedChapters, timelineGenerationSummary, legacyInvalid) {
+    const uWrap = document.getElementById('unmappedChaptersWrap');
+    const uPre = document.getElementById('unmappedChaptersPre');
+    const lWrap = document.getElementById('legacyInvalidRowsWrap');
+    const lPre = document.getElementById('legacyInvalidRowsPre');
+    if (uWrap && uPre) {
+        const hasU = Array.isArray(unmappedChapters) && unmappedChapters.length > 0;
+        const hasS = timelineGenerationSummary && typeof timelineGenerationSummary === 'object';
+        if (hasU || hasS) {
+            uWrap.hidden = false;
+            uPre.textContent = JSON.stringify({
+                timelineGenerationSummary: hasS ? timelineGenerationSummary : null,
+                unmappedChapters: hasU ? unmappedChapters : [],
+            }, null, 2);
+        } else {
+            uWrap.hidden = true;
+            uPre.textContent = '';
+        }
+    }
+    if (lWrap && lPre) {
+        if (Array.isArray(legacyInvalid) && legacyInvalid.length > 0) {
+            lWrap.hidden = false;
+            lPre.textContent = JSON.stringify(legacyInvalid.map((seg, i) => ({
+                legacyIndex: i,
+                chapterIndex: seg.chapterIndex,
+                menuLink: seg.menuLink,
+                src_start: seg.src_start,
+                src_end: seg.src_end,
+                status: seg.status,
+            })), null, 2);
+        } else {
+            lWrap.hidden = true;
+            lPre.textContent = '';
+        }
+    }
+}
+
+function renderSrcArrayTable(srcArray, lessonId, chapterTitles, panelExtras) {
     const tbody = document.getElementById('srcArrayEditorTbody');
     const tableWrap = document.querySelector('.srcarray-editor-table-wrap');
     const emptyEl = document.getElementById('srcArrayEditorEmpty');
     if (!tbody || !tableWrap || !emptyEl) return;
 
-    currentSrcArrayForEditor = Array.isArray(srcArray) ? srcArray.map(s => ({ ...s })) : [];
+    const { display, legacyInvalid } = splitSrcArrayForEditor(srcArray);
+    const unmappedChapters = panelExtras && panelExtras.unmappedChapters;
+    const timelineGenerationSummary = panelExtras && panelExtras.timelineGenerationSummary;
+    renderUnmappedAndLegacyPanels(unmappedChapters, timelineGenerationSummary, legacyInvalid);
+
+    currentSrcArrayForEditor = display.map(s => ({ ...s }));
     currentSrcArrayLessonId = lessonId;
     currentChapterTitlesForEditor = Array.isArray(chapterTitles) ? chapterTitles : [];
 
@@ -1386,7 +1459,7 @@ async function refreshSrcArrayEditor() {
         currentSrcArrayForEditor = [];
         currentSrcArrayLessonId = null;
         currentChapterTitlesForEditor = [];
-        renderSrcArrayTable([], null, []);
+        renderSrcArrayTable([], null, [], {});
         renderYellowEventsDebugPanel(null, null);
         if (statusEl) statusEl.textContent = '';
         return;
@@ -1400,12 +1473,23 @@ async function refreshSrcArrayEditor() {
             timelineReview,
             yellowDetection,
             yellowScreenEvents,
+            unmappedChapters,
+            timelineGenerationSummary,
         } = await loadSrcArrayForEditor(selectedLessonId);
         const chapterTitles = await getOrderedChapterTitlesForLesson(selectedLessonId);
-        renderSrcArrayTable(srcArray, selectedLessonId, chapterTitles);
+        renderSrcArrayTable(srcArray, selectedLessonId, chapterTitles, {
+            unmappedChapters,
+            timelineGenerationSummary,
+        });
         renderYellowEventsDebugPanel(yellowDetection, yellowScreenEvents);
         if (statusEl) {
-            let line = selectedLessonId ? `${srcArray.length} segments` : 'No lesson selected';
+            const { display: playableRows, legacyInvalid } = splitSrcArrayForEditor(srcArray);
+            let line = selectedLessonId
+                ? `${playableRows.length} playable row(s)`
+                : 'No lesson selected';
+            if (selectedLessonId && legacyInvalid.length > 0) {
+                line += ` · ${legacyInvalid.length} legacy invalid row(s) not shown`;
+            }
             const genOk = timelinePipeline && timelinePipeline.status === 'ok';
             const genFailed = timelineReview && timelineReview.generationFailed === true;
             if (genOk && !genFailed) {
@@ -1419,7 +1503,7 @@ async function refreshSrcArrayEditor() {
         }
     } catch (e) {
         console.error('refreshSrcArrayEditor:', e);
-        renderSrcArrayTable([], null, []);
+        renderSrcArrayTable([], null, [], {});
         renderYellowEventsDebugPanel(null, null);
         if (statusEl) statusEl.textContent = 'Error loading';
     }
@@ -1486,14 +1570,17 @@ function setupSrcArrayEditorListeners() {
                 }
                 updated.push(seg);
             }
+            const playableOnly = updated.filter((seg) => rowIncludedInPlayableTimeline(seg));
+            const dropped = updated.length - playableOnly.length;
             setButtonLoading(saveBtn, true);
             setStatus('Saving timeline…', 'scanning');
             try {
-                await db.collection('lessons').doc(currentSrcArrayLessonId).set({ srcArray: updated }, { merge: true });
-                currentSrcArrayForEditor = updated;
-                setStatus('Timeline saved', 'success');
+                await db.collection('lessons').doc(currentSrcArrayLessonId).set({ srcArray: playableOnly }, { merge: true });
+                currentSrcArrayForEditor = playableOnly;
+                const saveNote = dropped > 0 ? ` (${dropped} invalid row(s) omitted)` : '';
+                setStatus(`Timeline saved${saveNote}`, 'success');
                 const statusEl = document.getElementById('srcArrayEditorStatus');
-                if (statusEl) statusEl.textContent = `${updated.length} segments saved`;
+                if (statusEl) statusEl.textContent = `${playableOnly.length} segment(s) saved`;
             } catch (e) {
                 setStatus('Save failed: ' + e.message, 'error');
             } finally {
@@ -1560,7 +1647,11 @@ function setupSrcArrayEditorListeners() {
                     ? ` Chapters loaded: ${data.chapterTitlesLoaded}.`
                     : '';
                 const yLine = yEv != null ? ` Yellow events detected: ${yEv}.` : ` Yellow ranges: ${ranges}.`;
-                setStatus(`Generated ${segs} timeline row(s).${yLine}${chLine}${sum}${states}`, 'success');
+                const tg = data.timelineGenerationSummary;
+                const tgLine = tg && typeof tg.validPlayableSegmentCount === 'number'
+                    ? ` Playable segments: ${tg.validPlayableSegmentCount}. Unmapped chapters: ${tg.unmappedChapterCount != null ? tg.unmappedChapterCount : '—'}.`
+                    : '';
+                setStatus(`Generated ${segs} timeline row(s).${yLine}${chLine}${tgLine}${sum}${states}`, 'success');
 
                 await refreshSrcArrayEditor();
             } catch (e) {

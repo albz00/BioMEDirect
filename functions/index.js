@@ -121,6 +121,14 @@ exports.generateSrcArray = onObjectFinalized(
         const existingDoc = await db.collection("lessons").doc(lessonId).get();
         const existing = existingDoc.exists ? (existingDoc.data().srcArray || []) : [];
         srcArray = mergeManualTimelineOverrides(pipeline.srcArray, existing);
+        srcArray = finalizePlayableSrcArrayAfterMerge(srcArray, "upload-trigger");
+        if (pipeline.yellowDetection && pipeline.yellowDetection.timelineGenerationSummary) {
+          pipeline.yellowDetection.timelineGenerationSummary = {
+            ...pipeline.yellowDetection.timelineGenerationSummary,
+            validPlayableSegmentCount: srcArray.filter((s) => isPlayableContentTiming(s)).length,
+            srcArrayLengthPersisted: srcArray.length,
+          };
+        }
       }
       console.log("Built srcArray segments:", srcArray.length);
 
@@ -1042,20 +1050,28 @@ function buildSegmentBuildExplanation({
   extraEvents,
   srcArray,
   review,
+  unmappedChapters,
+  validationExcluded,
 }) {
   const chapters = effectiveChapterTitles || [];
   const evs = yellowEvents || [];
-  const openingRows = srcArray.filter((s) => s.src_start == null).length;
-  const timedRows = srcArray.filter((s) => s.src_start != null).length;
+  const openingRows = (srcArray || []).filter((s) => isOpeningTimelineRow(s)).length;
+  const validPlayable = (srcArray || []).filter((s) => isPlayableContentTiming(s)).length;
 
-  const chaptersWithoutYellow = (mappings || [])
-    .filter((m) => m.event == null)
-    .map((m) => ({
-      chapterIndex: m.chapterIndex,
-      title: m.title,
-      status: m.status,
-      reason: "no_yellow_detection_for_this_chapter_slot",
-    }));
+  const chaptersWithoutYellow = (unmappedChapters || []).length > 0
+    ? (unmappedChapters || []).map((u) => ({
+      chapterIndex: u.chapterIndex,
+      title: u.title,
+      reason: u.reason || "unmapped",
+    }))
+    : (mappings || [])
+      .filter((m) => m.event == null)
+      .map((m) => ({
+        chapterIndex: m.chapterIndex,
+        title: m.title,
+        status: m.status,
+        reason: "no_yellow_detection_for_this_chapter_slot",
+      }));
 
   const extraYellowDetail = (extraEvents || []).map((ev, i) => ({
     detectionOrder: chapters.length + i + 1,
@@ -1065,27 +1081,33 @@ function buildSegmentBuildExplanation({
     reason: "more_detections_than_chapter_titles_not_assigned_timeline_row",
   }));
 
+  const filteredOut = validationExcluded && validationExcluded.length
+    ? `${validationExcluded.length} row(s) removed by final playable validation (see timelineGenerationSummary.excludedRowsDetail)`
+    : null;
+
   return {
     chapterTitlesLoaded: chapters.length,
     chapterTitlesOrder: chapters.slice(),
     yellowEventsDetected: evs.length,
-    timelineRowsTotal: srcArray.length,
+    timelineRowsTotal: (srcArray || []).length,
     openingRowCount: openingRows,
-    timedChapterRows: timedRows,
+    validPlayableSegmentCount: validPlayable,
     mappedChapterEventPairs: review.mappedCount,
     chaptersWithoutMatchingYellow: chaptersWithoutYellow,
     extraYellowEventsNotMappedToRows: extraYellowDetail,
     reviewStates: review.states || [],
+    validationExcludedRows: validationExcluded || [],
     summaryLines: [
       `${chapters.length} chapter title(s) loaded (ordered)`,
       `${evs.length} yellow event(s) detected`,
-      `${srcArray.length} srcArray row(s) (${openingRows} opening + ${timedRows} timed)`,
+      `${openingRows} opening row(s), ${validPlayable} playable timed segment(s) (player-facing)`,
       evs.length > chapters.length
         ? `${evs.length - chapters.length} extra detection(s) beyond chapter list (unmapped)`
         : null,
-      chapters.length > evs.length
-        ? `${chapters.length - evs.length} chapter(s) without a detection`
+      chaptersWithoutYellow.length
+        ? `${chaptersWithoutYellow.length} chapter(s) pending / unmapped (no playable row emitted)`
         : null,
+      filteredOut,
     ].filter(Boolean),
   };
 }
@@ -1101,8 +1123,92 @@ function timelineReviewForSuccessfulGeneration(review) {
   };
 }
 
+/** Opening/menu row: not a timed content segment. */
+function isOpeningTimelineRow(seg) {
+  if (!seg) return false;
+  if (seg.menuLink === "Opening") return true;
+  if (seg.role === "opening") return true;
+  return seg.freezeFrame === null && seg.src_start == null && seg.src_end == null;
+}
+
+/** Player-facing playable content: finite bounds, strictly increasing. */
+function isPlayableContentTiming(seg) {
+  if (!seg) return false;
+  const a = seg.src_start;
+  const b = seg.src_end;
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+  return b > a;
+}
+
+/**
+ * Final gate before persisting: drop any non-opening row that fails timing contract.
+ * Re-assigns freezeFrame for content rows in order.
+ */
+function validatePlayableSrcArrayForWrite(srcArray, logLabel) {
+  const excluded = [];
+  const kept = [];
+  if (!Array.isArray(srcArray)) {
+    return { srcArray: [], excluded, invalidRowCountFilteredOut: 0 };
+  }
+
+  for (let i = 0; i < srcArray.length; i++) {
+    const row = srcArray[i];
+    if (!row) {
+      excluded.push({ arrayIndex: i, reason: "null_row" });
+      continue;
+    }
+    if (isOpeningTimelineRow(row)) {
+      kept.push({ ...row, role: row.role || "opening" });
+      continue;
+    }
+    if (isPlayableContentTiming(row)) {
+      kept.push(row);
+      continue;
+    }
+    excluded.push({
+      arrayIndex: i,
+      chapterIndex: row.chapterIndex != null ? row.chapterIndex : null,
+      menuLink: row.menuLink != null ? String(row.menuLink) : "",
+      reason: "not_playable_timing",
+      src_start: row.src_start,
+      src_end: row.src_end,
+    });
+  }
+
+  let fz = 0;
+  for (const row of kept) {
+    if (!isOpeningTimelineRow(row)) {
+      row.freezeFrame = fz;
+      fz += 1;
+    }
+  }
+
+  if (excluded.length > 0) {
+    console.warn(`[validatePlayableSrcArrayForWrite${logLabel ? `:${logLabel}` : ""}] excluded ${excluded.length} row(s)`, JSON.stringify(excluded));
+  }
+
+  return {
+    srcArray: kept,
+    excluded,
+    invalidRowCountFilteredOut: excluded.length,
+  };
+}
+
+/** After merge: re-validate so manual edits cannot persist invalid playable rows. */
+function finalizePlayableSrcArrayAfterMerge(srcArray, logLabel) {
+  const v = validatePlayableSrcArrayForWrite(srcArray, logLabel);
+  return v.srcArray;
+}
+
+/**
+ * Only emits opening + rows with real content timing. Chapters without a yellow event
+ * (or with unusable bounds) go to unmappedChapters — not into player srcArray.
+ */
 function generateChapterAwareSrcArray(mappings, duration) {
+  const unmappedChapters = [];
+
   const srcArray = [{
+    role: "opening",
     src_start: null,
     src_end: null,
     freezeFrame: null,
@@ -1112,18 +1218,19 @@ function generateChapterAwareSrcArray(mappings, duration) {
   }];
 
   if (!mappings.length) {
+    const end = Math.round(duration * 1000) / 1000;
     srcArray.push({
       index: 0,
       chapterIndex: 1,
       title: "Unmapped Segment",
       contentStart: 0,
-      contentEnd: Math.round(duration * 1000) / 1000,
+      contentEnd: end,
       yellowStart: null,
       yellowEnd: null,
       start: 0,
-      end: Math.round(duration * 1000) / 1000,
+      end: end,
       src_start: 0,
-      src_end: Math.round(duration * 1000) / 1000,
+      src_end: end,
       menuLink: "",
       freezeFrame: 0,
       source: "yellow-detection",
@@ -1133,14 +1240,26 @@ function generateChapterAwareSrcArray(mappings, duration) {
       manualOverride: false,
       side: false,
       loop: false,
+      playable: true,
     });
-    return srcArray;
+    return { srcArray, unmappedChapters };
   }
+
+  let contentIdx = 0;
 
   for (let i = 0; i < mappings.length; i++) {
     const current = mappings[i];
     const next = mappings[i + 1] || null;
     const ev = current.event;
+
+    if (ev == null) {
+      unmappedChapters.push({
+        chapterIndex: current.chapterIndex,
+        title: current.title || "",
+        reason: "missing_yellow_detection_for_chapter_slot",
+      });
+      continue;
+    }
 
     let yellowStart = null;
     let yellowEnd = null;
@@ -1149,35 +1268,41 @@ function generateChapterAwareSrcArray(mappings, duration) {
       ? (next.event.yellowStart != null ? next.event.yellowStart : next.event.startTime)
       : duration;
 
-    if (ev) {
-      yellowStart = ev.yellowStart != null ? ev.yellowStart : ev.startTime;
-      yellowEnd = ev.yellowEnd != null ? ev.yellowEnd : ev.endTime;
-      contentStart = ev.contentStart != null ? ev.contentStart : ev.endTime;
-      contentStart = Math.max(contentStart, yellowEnd);
-    }
+    yellowStart = ev.yellowStart != null ? ev.yellowStart : ev.startTime;
+    yellowEnd = ev.yellowEnd != null ? ev.yellowEnd : ev.endTime;
+    contentStart = ev.contentStart != null ? ev.contentStart : ev.endTime;
+    contentStart = Math.max(contentStart, yellowEnd);
 
     let flagged = !!current.flagged;
     let status = current.status || "ok";
 
-    if (ev == null) {
-      flagged = true;
-      status = status === "ok" ? "missingYellowEvent" : status;
-    }
-
     if (!Number.isFinite(contentStart) || !Number.isFinite(contentEnd) || contentEnd <= contentStart) {
       flagged = true;
       status = status === "ok" ? "invalidSegmentBounds" : status;
-      if (!Number.isFinite(contentStart)) contentStart = null;
-      if (!Number.isFinite(contentEnd) && Number.isFinite(contentStart)) {
-        contentEnd = Math.min(duration, contentStart + 0.01);
-      }
+      unmappedChapters.push({
+        chapterIndex: current.chapterIndex,
+        title: current.title || "",
+        reason: "invalid_content_bounds_after_mapping",
+        detail: { contentStart, contentEnd, yellowStart, yellowEnd },
+      });
+      continue;
     }
 
-    const rs = contentStart != null ? Math.round(contentStart * 1000) / 1000 : null;
-    const re = contentEnd != null ? Math.round(contentEnd * 1000) / 1000 : null;
+    const rs = Math.round(contentStart * 1000) / 1000;
+    const re = Math.round(contentEnd * 1000) / 1000;
+
+    if (!isPlayableContentTiming({ src_start: rs, src_end: re })) {
+      unmappedChapters.push({
+        chapterIndex: current.chapterIndex,
+        title: current.title || "",
+        reason: "non_playable_bounds",
+        detail: { rs, re },
+      });
+      continue;
+    }
 
     srcArray.push({
-      index: i,
+      index: contentIdx,
       chapterIndex: current.chapterIndex,
       title: current.title,
       yellowStart: yellowStart != null ? Math.round(yellowStart * 1000) / 1000 : null,
@@ -1189,7 +1314,7 @@ function generateChapterAwareSrcArray(mappings, duration) {
       src_start: rs,
       src_end: re,
       menuLink: current.title || "",
-      freezeFrame: i,
+      freezeFrame: contentIdx,
       source: "yellow-pipeline",
       confidence: Math.round((current.confidence || 0) * 1000) / 1000,
       status,
@@ -1197,10 +1322,12 @@ function generateChapterAwareSrcArray(mappings, duration) {
       manualOverride: false,
       side: false,
       loop: false,
+      playable: true,
     });
+    contentIdx += 1;
   }
 
-  return srcArray;
+  return { srcArray, unmappedChapters };
 }
 
 async function runDeterministicYellowPipeline({
@@ -1279,8 +1406,24 @@ async function runDeterministicYellowPipeline({
       : yellowEvents.map((_, i) => `Chapter ${i + 1}`);
     const mapping = mapYellowEventsToChapters(effectiveChapterTitles, yellowEvents);
 
-    // Stage 4: chapter-aware srcArray proposal generation.
-    const srcArray = generateChapterAwareSrcArray(mapping.mappings, analysisDuration);
+    // Stage 4: chapter-aware playable srcArray (opening + valid timed rows only).
+    const built = generateChapterAwareSrcArray(mapping.mappings, analysisDuration);
+    let srcArray = built.srcArray;
+    const validation = validatePlayableSrcArrayForWrite(srcArray, sourceLabel || "pipeline");
+    srcArray = validation.srcArray;
+
+    const timelineGenerationSummary = {
+      chapterCount: effectiveChapterTitles.length,
+      yellowEventCount: yellowEvents.length,
+      validPlayableSegmentCount: srcArray.filter((s) => isPlayableContentTiming(s)).length,
+      unmappedChapterCount: built.unmappedChapters.length,
+      invalidRowCountFilteredOut: validation.invalidRowCountFilteredOut,
+      unmappedChapterIndexes: built.unmappedChapters.map((u) => u.chapterIndex).filter((x) => x != null),
+      excludedRowsDetail: validation.excluded,
+    };
+
+    yellowDetection.unmappedChapters = built.unmappedChapters;
+    yellowDetection.timelineGenerationSummary = timelineGenerationSummary;
 
     const segmentBuildExplanation = buildSegmentBuildExplanation({
       effectiveChapterTitles,
@@ -1289,6 +1432,8 @@ async function runDeterministicYellowPipeline({
       extraEvents: mapping.extraEvents,
       srcArray,
       review: mapping.review,
+      unmappedChapters: built.unmappedChapters,
+      validationExcluded: validation.excluded,
     });
 
     yellowDetection.segmentBuildExplanation = segmentBuildExplanation;
@@ -1299,6 +1444,8 @@ async function runDeterministicYellowPipeline({
       chapterTitlesOrder: effectiveChapterTitles,
       yellowEventsDetected: yellowEvents.length,
       srcArrayRows: srcArray.length,
+      validPlayableSegmentCount: timelineGenerationSummary.validPlayableSegmentCount,
+      unmappedChapterCount: timelineGenerationSummary.unmappedChapterCount,
       mappedPairs: mapping.review.mappedCount,
       reviewStates: mapping.review.states,
     }));
@@ -1314,6 +1461,7 @@ async function runDeterministicYellowPipeline({
       chapterTitlesCount: effectiveChapterTitles.length,
       chapterTitlesOrder: effectiveChapterTitles.slice(),
       detectedEventCount: yellowEvents.length,
+      timelineGenerationSummary,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       refinementHook: {
         ready: true,
@@ -1526,7 +1674,15 @@ exports.detectYellowScreen = onCall(
 
       const existingDoc = await db.collection("lessons").doc(lessonId).get();
       const existing = existingDoc.exists ? (existingDoc.data().srcArray || []) : [];
-      const srcArray = mergeManualTimelineOverrides(pipeline.srcArray, existing);
+      let srcArray = mergeManualTimelineOverrides(pipeline.srcArray, existing);
+      srcArray = finalizePlayableSrcArrayAfterMerge(srcArray, "manual-yellow-regenerate");
+      if (pipeline.yellowDetection && pipeline.yellowDetection.timelineGenerationSummary) {
+        pipeline.yellowDetection.timelineGenerationSummary = {
+          ...pipeline.yellowDetection.timelineGenerationSummary,
+          validPlayableSegmentCount: srcArray.filter((s) => isPlayableContentTiming(s)).length,
+          srcArrayLengthPersisted: srcArray.length,
+        };
+      }
 
       await db.collection("lessons").doc(lessonId).set({
         srcArray,
@@ -1550,6 +1706,7 @@ exports.detectYellowScreen = onCall(
         yellowEvents: pipeline.yellowEvents.length,
         adjustedSegments: srcArray.length,
         reviewStates: pipeline.review.states,
+        timelineGenerationSummary: pipeline.yellowDetection?.timelineGenerationSummary || null,
       };
     } catch (error) {
       console.error("Error detecting yellow screen:", error);
@@ -1615,7 +1772,15 @@ exports.generateSrcArrayWithYellowOptions = onCall(
 
       const existingDoc = await db.collection("lessons").doc(lessonId).get();
       const existing = existingDoc.exists ? (existingDoc.data().srcArray || []) : [];
-      const srcArray = mergeManualTimelineOverrides(pipeline.srcArray, existing);
+      let srcArray = mergeManualTimelineOverrides(pipeline.srcArray, existing);
+      srcArray = finalizePlayableSrcArrayAfterMerge(srcArray, "manual-editor");
+      if (pipeline.yellowDetection && pipeline.yellowDetection.timelineGenerationSummary) {
+        pipeline.yellowDetection.timelineGenerationSummary = {
+          ...pipeline.yellowDetection.timelineGenerationSummary,
+          validPlayableSegmentCount: srcArray.filter((s) => isPlayableContentTiming(s)).length,
+          srcArrayLengthPersisted: srcArray.length,
+        };
+      }
 
       await db.collection("lessons").doc(lessonId).set(
         {
@@ -1637,6 +1802,7 @@ exports.generateSrcArrayWithYellowOptions = onCall(
         { merge: true }
       );
 
+      const tgs = pipeline.yellowDetection?.timelineGenerationSummary || null;
       return {
         success: true,
         segments: srcArray.length,
@@ -1649,6 +1815,13 @@ exports.generateSrcArrayWithYellowOptions = onCall(
         chapterTitlesLoaded: pipeline.review?.chapterTitlesCount,
         chapterTitlesOrder: pipeline.review?.chapterTitlesOrder,
         yellowEventsDetected: pipeline.yellowEvents?.length,
+        chapterCount: tgs?.chapterCount,
+        yellowEventCount: tgs?.yellowEventCount,
+        validPlayableSegmentCount: tgs?.validPlayableSegmentCount,
+        unmappedChapterCount: tgs?.unmappedChapterCount,
+        invalidRowCountFilteredOut: tgs?.invalidRowCountFilteredOut,
+        unmappedChapterIndexes: tgs?.unmappedChapterIndexes,
+        timelineGenerationSummary: tgs,
       };
     } catch (error) {
       console.error("generateSrcArrayWithYellowOptions failed:", error);
@@ -2406,7 +2579,15 @@ exports.generateSrcArrayFromYellowScreens = onCall(
 
       const existingDoc = await db.collection("lessons").doc(lessonId).get();
       const existing = existingDoc.exists ? (existingDoc.data().srcArray || []) : [];
-      const mergedSrc = mergeManualTimelineOverrides(pipeline.srcArray, existing);
+      let mergedSrc = mergeManualTimelineOverrides(pipeline.srcArray, existing);
+      mergedSrc = finalizePlayableSrcArrayAfterMerge(mergedSrc, "manual-generate-from-yellow");
+      if (pipeline.yellowDetection && pipeline.yellowDetection.timelineGenerationSummary) {
+        pipeline.yellowDetection.timelineGenerationSummary = {
+          ...pipeline.yellowDetection.timelineGenerationSummary,
+          validPlayableSegmentCount: mergedSrc.filter((s) => isPlayableContentTiming(s)).length,
+          srcArrayLengthPersisted: mergedSrc.length,
+        };
+      }
 
       await db.collection("lessons").doc(lessonId).set(
         {
@@ -2436,6 +2617,7 @@ exports.generateSrcArrayFromYellowScreens = onCall(
         { merge: true }
       );
 
+      const tgs = pipeline.yellowDetection?.timelineGenerationSummary || null;
       return {
         success: true,
         status: pipeline.review.needsManualReview ? "needs_review" : "ok",
@@ -2444,6 +2626,13 @@ exports.generateSrcArrayFromYellowScreens = onCall(
         reason: pipeline.review.states.join(", "),
         segments: mergedSrc.length,
         states: pipeline.review.states,
+        chapterCount: tgs?.chapterCount,
+        yellowEventCount: tgs?.yellowEventCount,
+        validPlayableSegmentCount: tgs?.validPlayableSegmentCount,
+        unmappedChapterCount: tgs?.unmappedChapterCount,
+        invalidRowCountFilteredOut: tgs?.invalidRowCountFilteredOut,
+        unmappedChapterIndexes: tgs?.unmappedChapterIndexes,
+        timelineGenerationSummary: tgs,
       };
     } catch (error) {
       console.error("Error generating srcArray from yellow screens:", error);

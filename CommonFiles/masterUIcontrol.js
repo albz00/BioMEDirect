@@ -3,14 +3,37 @@ var clickedLink = false; // added to allow for display difference when link is c
 var lastSlide; // Will be set after srcArray is loaded
 var firstSlide = 0;
 
+/** One-time warnings per slide index for invalid timeline rows (legacy data). */
+var warnedInvalidSlide = {};
+
 // Need to add 1 to lastSlide to account for extra click to return to menu at end
+
+function isOpeningUIRow(seg) {
+    if (!seg) return false;
+    if (seg.menuLink === "Opening") return true;
+    if (seg.role === "opening") return true;
+    return seg.freezeFrame === null && seg.src_start == null && seg.src_end == null;
+}
+
+function isPlayableContentSegment(seg) {
+    if (!seg) return false;
+    var a = Number(seg.src_start);
+    var b = Number(seg.src_end);
+    return isFinite(a) && isFinite(b) && b > a;
+}
+
+function safeSrcSegmentAt(idx) {
+    if (!Array.isArray(srcArray) || idx < 0 || idx >= srcArray.length) return null;
+    return srcArray[idx];
+}
 
 // Initialize function - called after srcArray is loaded
 function initializePlayer(videoUrl, srcArray) {
     // Set as global so other parts of the code can still reference it
     window.srcArray = srcArray;
     window.videoUrl = videoUrl;  // make video globally accessible
-    
+    warnedInvalidSlide = {};
+
     // Set the video source
     document.getElementById("videoId").src = videoUrl;
     
@@ -36,15 +59,20 @@ function initializePlayer(videoUrl, srcArray) {
             }
         }
 
-        if (this.currentTime >= srcArray[currentSlide].src_end) {
+        var cur = safeSrcSegmentAt(currentSlide);
+        if (!cur) return;
+        if (isOpeningUIRow(cur)) return;
+        var endMark = Number(cur.src_end);
+        if (!isFinite(endMark)) return;
+        if (this.currentTime >= endMark) {
             // if next slide is a loop, then autoplay next slide
-            if (currentSlide + 1 < lastSlide &&
-                srcArray[currentSlide + 1].loop) {
+            var nextSeg = safeSrcSegmentAt(currentSlide + 1);
+            if (currentSlide + 1 < lastSlide && nextSeg && nextSeg.loop) {
                 currentSlide++;
                 updateVideoId(true);
             }
             // if current slide is a loop, then loop
-            else if (srcArray[currentSlide].loop) {
+            else if (cur.loop) {
                 updateVideoId(true);
             }
             else {
@@ -98,11 +126,23 @@ function checkSlideNum(){
  *                              i.e. the last frame (src_end) of currentSlide
 */
 function updateVideoId(play=true){ // FindMe3
+    var seg = safeSrcSegmentAt(currentSlide);
+    if (!seg) return;
+
 	if (play) {
-		if (srcArray[currentSlide].src_start != null) {
+        if (currentSlide === 0 || isOpeningUIRow(seg)) {
+            return;
+        }
+        if (!isPlayableContentSegment(seg)) {
+            if (!warnedInvalidSlide[currentSlide]) {
+                console.warn("Timeline: slide " + currentSlide + " has no valid playback timing; skipping seek (regenerate timeline or fix chapter mapping).");
+                warnedInvalidSlide[currentSlide] = true;
+            }
+            return;
+        }
+        var startTime = Number(seg.src_start);
             // If yellowScreenRanges are defined globally (from Firestore), and we are
             // supposed to skip them, move the start just past any yellow block.
-            var startTime = srcArray[currentSlide].src_start;
             if (typeof window.shouldSkipYellow !== 'undefined' && window.shouldSkipYellow && Array.isArray(window.yellowScreenRanges)) {
                 var eps = 0.05;
                 for (var i = 0; i < window.yellowScreenRanges.length; i++) {
@@ -114,15 +154,11 @@ function updateVideoId(play=true){ // FindMe3
                 }
             }
 			videoId.currentTime = startTime;
-		}
-		else {
-			console.error("Invalid srcArray/currentSlide/src_start. currentSlide = " + currentSlide);
-        }
 	}
 	else {
 		//Go to end of last clip
-		if (srcArray[currentSlide].src_end) {
-            var endTime = srcArray[currentSlide].src_end;
+        var endTime = Number(seg.src_end);
+		if (isFinite(endTime)) {
             if (typeof window.shouldSkipYellow !== 'undefined' && window.shouldSkipYellow && Array.isArray(window.yellowScreenRanges)) {
                 var eps2 = 0.05;
                 for (var j = 0; j < window.yellowScreenRanges.length; j++) {
@@ -135,8 +171,9 @@ function updateVideoId(play=true){ // FindMe3
             }
 			videoId.currentTime = endTime;
 		}
-		else {
-			console.error("Invalid srcArray[currentSlide]src_end. currentSlide = " + currentSlide);
+		else if (!isOpeningUIRow(seg) && !warnedInvalidSlide[currentSlide]) {
+            console.warn("Timeline: slide " + currentSlide + " has no valid src_end for pause frame.");
+            warnedInvalidSlide[currentSlide] = true;
         }
 	}
 }
@@ -144,6 +181,8 @@ function updateVideoId(play=true){ // FindMe3
 /* Updates page in relation to menu. */
 function update(playVid){ // FindMe2
 	checkSlideNum();
+
+    if (!Array.isArray(srcArray) || srcArray.length === 0) return;
 
 	// Hide the menu unless on the first animation
 	if(states.menu == true){
@@ -162,12 +201,13 @@ function update(playVid){ // FindMe2
     }
 
 	// Show or hide mid-lesson side button
-	if (!srcArray[currentSlide].side) {
+    var curSeg = safeSrcSegmentAt(currentSlide);
+	if (!curSeg || !curSeg.side) {
 		$('.btnSide').css('display', 'none');
 	}
 	else {
         $('.btnSide').css('display', 'none'); // reset
-		$(srcArray[currentSlide].side).css('display', 'inline-block');
+		$(curSeg.side).css('display', 'inline-block');
     }
 
 	// If starting mid lesson: hide menu, display lesson
@@ -178,7 +218,7 @@ function update(playVid){ // FindMe2
 
 	console.log(currentSlide);
     
-    if (currentSlide > 0) {
+    if (currentSlide > 0 && currentSlide < srcArray.length) {
     	if (playVid) {
             if (clickedLink) { // Added this to go to end of last clip when menu link is clicked
                 updateVideoId(false);
@@ -197,22 +237,34 @@ function update(playVid){ // FindMe2
 //Adds one to currentSlide, i.e. defines currentSlide as the next stop point
 function nextSlide(){ // FindMe1
 	currentSlide++;
+    if (Array.isArray(srcArray) && currentSlide > 0 && currentSlide < srcArray.length) {
+        while (currentSlide < srcArray.length && !isOpeningUIRow(safeSrcSegmentAt(currentSlide)) && !isPlayableContentSegment(safeSrcSegmentAt(currentSlide))) {
+            currentSlide++;
+        }
+    }
 	update(true); // Go to FindMe2
 }
 
 //Go to previous slide
 function backSlide() {
-    if (currentSlide > 1) {
-        if (srcArray[currentSlide].loop) {
-            currentSlide--;
-        }
+    if (!Array.isArray(srcArray) || currentSlide <= 1) return;
+    var curBack = safeSrcSegmentAt(currentSlide);
+    if (curBack && curBack.loop) {
         currentSlide--;
-        if (srcArray[currentSlide].loop) {
-            update(true);
-        }
-        else {
-            update(false);
-        }
+    }
+    currentSlide--;
+    while (currentSlide > 0 && !isOpeningUIRow(safeSrcSegmentAt(currentSlide)) && !isPlayableContentSegment(safeSrcSegmentAt(currentSlide))) {
+        currentSlide--;
+    }
+    if (currentSlide < 1) {
+        currentSlide = 1;
+    }
+    var bs = safeSrcSegmentAt(currentSlide);
+    if (bs && bs.loop) {
+        update(true);
+    }
+    else {
+        update(false);
     }
 }
 

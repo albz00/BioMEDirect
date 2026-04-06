@@ -888,6 +888,44 @@ html {
     word-break: break-word;
 }
 
+.unmapped-chapters-wrap,
+.legacy-invalid-rows-wrap {
+    margin-top: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    background: rgba(0, 0, 0, 0.18);
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.unmapped-chapters-summary,
+.legacy-invalid-summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: #94a3b8;
+}
+
+.unmapped-chapters-hint,
+.legacy-invalid-hint {
+    font-size: 0.78rem;
+    color: #64748b;
+    margin: 0.35rem 0 0.5rem;
+}
+
+.unmapped-chapters-pre,
+.legacy-invalid-pre {
+    font-size: 0.72rem;
+    line-height: 1.35;
+    max-height: 200px;
+    overflow: auto;
+    margin: 0;
+    padding: 0.5rem;
+    background: #0f172a;
+    border-radius: 4px;
+    color: #e2e8f0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 .srcarray-editor-empty {
     margin: 1rem 0;
     color: #94a3b8;

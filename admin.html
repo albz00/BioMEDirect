@@ -252,6 +252,20 @@
                                     <pre id="yellowEventsDebugExplain" class="yellow-events-debug-pre"></pre>
                                 </details>
                             </div>
+                            <div id="unmappedChaptersWrap" class="unmapped-chapters-wrap" hidden>
+                                <details open>
+                                    <summary class="unmapped-chapters-summary">Pending / unmapped chapters (not playable rows)</summary>
+                                    <p class="unmapped-chapters-hint">From persisted <code>yellowDetection.unmappedChapters</code> and <code>timelineGenerationSummary</code>. Regenerate or fix chapter–yellow mapping.</p>
+                                    <pre id="unmappedChaptersPre" class="unmapped-chapters-pre"></pre>
+                                </details>
+                            </div>
+                            <div id="legacyInvalidRowsWrap" class="legacy-invalid-rows-wrap" hidden>
+                                <details>
+                                    <summary class="legacy-invalid-summary">Legacy rows omitted from editor (invalid timing)</summary>
+                                    <p class="legacy-invalid-hint">These were stored in <code>srcArray</code> but do not meet playback bounds; they are not editable here. Save after generate drops them from Firestore.</p>
+                                    <pre id="legacyInvalidRowsPre" class="legacy-invalid-pre"></pre>
+                                </details>
+                            </div>
                             <p id="srcArrayEditorEmpty" class="srcarray-editor-empty">Select a lesson with an assigned video to view or edit the timeline.</p>
                         </div>
                     </div>
