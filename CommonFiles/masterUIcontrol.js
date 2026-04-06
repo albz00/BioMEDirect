@@ -33,6 +33,48 @@ function safeSrcSegmentAt(idx) {
     return srcArray[idx];
 }
 
+/**
+ * Playback should never sit inside a persisted yellow-card interval. After computing a seek time
+ * (prefer contentStart), advance to just past any overlapping yellowScreenRanges (safety net).
+ */
+function ensureSeekPastYellowRanges(t) {
+    var eps = 0.08;
+    var cur = Number(t);
+    if (!isFinite(cur)) return t;
+    var ranges = typeof window !== "undefined" ? window.yellowScreenRanges : null;
+    if (!Array.isArray(ranges) || ranges.length === 0) return cur;
+    var guard = 0;
+    while (guard < 48) {
+        guard++;
+        var moved = false;
+        for (var i = 0; i < ranges.length; i++) {
+            var r = ranges[i];
+            if (!r || typeof r.start !== "number" || typeof r.end !== "number") continue;
+            if (cur >= r.start - 1e-4 && cur < r.end + eps) {
+                cur = r.end + eps;
+                moved = true;
+                break;
+            }
+        }
+        if (!moved) break;
+    }
+    return cur;
+}
+
+function segmentContentSeekTime(seg) {
+    if (!seg) return null;
+    var c = seg.contentStart;
+    if (c != null && c !== "" && Number.isFinite(Number(c))) return Number(c);
+    return seg.src_start != null ? Number(seg.src_start) : null;
+}
+
+function segmentContentEndTime(seg) {
+    if (!seg) return null;
+    var c = seg.contentEnd;
+    if (c != null && c !== "" && Number.isFinite(Number(c))) return Number(c);
+    return seg.src_end != null ? Number(seg.src_end) : null;
+}
+
 // Initialize function - called after timeline array is loaded from Firestore
 function initializePlayer(videoUrl, timelineArray) {
     srcArray = Array.isArray(timelineArray) ? timelineArray : [];
@@ -146,7 +188,8 @@ function updateVideoId(play=true){ // FindMe3
             }
             return;
         }
-        var startTime = Number(seg.src_start);
+        var startTime = segmentContentSeekTime(seg);
+        if (startTime == null || !isFinite(startTime)) startTime = Number(seg.src_start);
             // If yellowScreenRanges are defined globally (from Firestore), and we are
             // supposed to skip them, move the start just past any yellow block.
             if (typeof window.shouldSkipYellow !== 'undefined' && window.shouldSkipYellow && Array.isArray(window.yellowScreenRanges)) {
@@ -159,11 +202,13 @@ function updateVideoId(play=true){ // FindMe3
                     }
                 }
             }
+            startTime = ensureSeekPastYellowRanges(startTime);
 			videoId.currentTime = startTime;
 	}
 	else {
 		//Go to end of last clip
-        var endTime = Number(seg.src_end);
+        var endTime = segmentContentEndTime(seg);
+        if (endTime == null || !isFinite(endTime)) endTime = Number(seg.src_end);
 		if (isFinite(endTime)) {
             if (typeof window.shouldSkipYellow !== 'undefined' && window.shouldSkipYellow && Array.isArray(window.yellowScreenRanges)) {
                 var eps2 = 0.05;

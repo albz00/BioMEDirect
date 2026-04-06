@@ -371,7 +371,7 @@ function clamp(v, min, max) {
  * FFmpeg rawvideo rgb24 byte order: R, G, B (not BGR). Classifier uses RGB only.
  * Broad warm title-card band: yellow / gold / mustard / yellow-orange via HSV + loose RGB.
  */
-const COLOR_PIPELINE_LABEL = "title_card_v2_strict_hsv43-68+structure_gate(lumaStd+edgeMean)+warm_downweighted";
+const COLOR_PIPELINE_LABEL = "title_card_v3_maroon_reject+coverage_gate+tighter_hsv46-64+structure24/19";
 
 function pixelWarmTitleCard(r, g, b) {
   const maxc = Math.max(r, g, b);
@@ -407,17 +407,28 @@ function pixelWarmTitleCard(r, g, b) {
 }
 
 /**
- * Narrow HSV band for saturated “slide yellow” backgrounds — excludes skin, wood, beige lecture halls.
+ * Narrow HSV band for bright saturated yellow TITLE cards (full-frame), not beige/skin.
  */
 function pixelStrictTitleYellow(r, g, b) {
   const maxc = Math.max(r, g, b);
-  if (maxc < 40) return false;
+  if (maxc < 48) return false;
   const hsv = convert.rgb.hsv([r, g, b]);
   const h = hsv[0];
   const s = hsv[1] / 100;
   const v = hsv[2] / 100;
-  if (v < 0.28 || s < 0.36) return false;
-  if (h >= 43 && h <= 68) return true;
+  if (v < 0.32 || s < 0.42) return false;
+  if (h >= 46 && h <= 64) return true;
+  return false;
+}
+
+/** Dark maroon / red content slides (high edge, complex) — must not count as yellow card pixels. */
+function pixelMaroonOrDarkRedContent(r, g, b) {
+  const hsv = convert.rgb.hsv([r, g, b]);
+  const h = hsv[0];
+  const s = hsv[1] / 100;
+  const v = hsv[2] / 100;
+  if ((h <= 18 || h >= 338) && v < 0.58 && s > 0.18 && r > 45 && g < r - 12 && b < r - 12) return true;
+  if (r > 65 && g < r - 28 && b < r - 28 && v < 0.52) return true;
   return false;
 }
 
@@ -428,10 +439,10 @@ function lumaAtOffset(frameData, offset) {
   return 0.299 * r + 0.587 * g + 0.114 * b;
 }
 
-/** Flat backgrounds (title cards) vs busy lecture frames: low luma variance among samples. */
-const TITLE_LUMA_STD_MAX = 30;
-/** Typical title card: low edge energy; talking-head / slides: higher. */
-const TITLE_EDGE_MEAN_MAX = 26;
+/** Flat full-frame yellow cards vs maroon detail slides: stricter flatness. */
+const TITLE_LUMA_STD_MAX = 24;
+/** Title cards: low edge density; maroon science slides have high edge energy. */
+const TITLE_EDGE_MEAN_MAX = 19;
 
 function structureGateFromMetrics(lumaStd, edgeMean) {
   const u = lumaStd <= TITLE_LUMA_STD_MAX
@@ -450,6 +461,7 @@ function structureGateFromMetrics(lumaStd, edgeMean) {
 function scoreTitleCardFrame(frameData, width, height, sampleStep = 4) {
   let warmFull = 0;
   let strictFull = 0;
+  let maroonFull = 0;
   let samples = 0;
   const lumas = [];
 
@@ -461,6 +473,7 @@ function scoreTitleCardFrame(frameData, width, height, sampleStep = 4) {
       const b = frameData[offset + 2];
       if (r == null || g == null || b == null) continue;
       samples++;
+      if (pixelMaroonOrDarkRedContent(r, g, b)) maroonFull++;
       if (pixelWarmTitleCard(r, g, b)) warmFull++;
       if (pixelStrictTitleYellow(r, g, b)) strictFull++;
       lumas.push(lumaAtOffset(frameData, offset));
@@ -469,6 +482,7 @@ function scoreTitleCardFrame(frameData, width, height, sampleStep = 4) {
 
   const warmFullRatio = samples ? warmFull / samples : 0;
   const strictFullRatio = samples ? strictFull / samples : 0;
+  const maroonRatio = samples ? maroonFull / samples : 0;
 
   const x0 = Math.floor(width * 0.2);
   const x1 = Math.floor(width * 0.8);
@@ -476,6 +490,7 @@ function scoreTitleCardFrame(frameData, width, height, sampleStep = 4) {
   const y1 = Math.floor(height * 0.8);
   let warmCt = 0;
   let strictCt = 0;
+  let maroonCt = 0;
   let sampC = 0;
   for (let y = y0; y < y1; y += sampleStep) {
     for (let x = x0; x < x1; x += sampleStep) {
@@ -485,15 +500,18 @@ function scoreTitleCardFrame(frameData, width, height, sampleStep = 4) {
       const b = frameData[offset + 2];
       if (r == null || g == null || b == null) continue;
       sampC++;
+      if (pixelMaroonOrDarkRedContent(r, g, b)) maroonCt++;
       if (pixelWarmTitleCard(r, g, b)) warmCt++;
       if (pixelStrictTitleYellow(r, g, b)) strictCt++;
     }
   }
   const warmCenterRatio = sampC ? warmCt / sampC : 0;
   const strictCenterRatio = sampC ? strictCt / sampC : 0;
+  const maroonCenterRatio = sampC ? maroonCt / sampC : 0;
 
   const warmCombined = Math.max(warmFullRatio, warmCenterRatio * 0.85 + warmFullRatio * 0.15);
   const strictCombined = Math.max(strictFullRatio, strictCenterRatio * 0.85 + strictFullRatio * 0.15);
+  const maroonCombined = Math.max(maroonRatio, maroonCenterRatio * 0.85 + maroonRatio * 0.15);
 
   const meanL = lumas.length ? lumas.reduce((a, b) => a + b, 0) / lumas.length : 0;
   const varL = lumas.length
@@ -518,15 +536,22 @@ function scoreTitleCardFrame(frameData, width, height, sampleStep = 4) {
   const edgeMean = edgeN ? edgeSum / edgeN : 0;
 
   const gate = structureGateFromMetrics(lumaStd, edgeMean);
-  const yellowRatio = Math.max(
+  const coverageOk = strictFullRatio >= 0.36 && strictCenterRatio >= 0.3;
+  const coveragePenalty = coverageOk ? 1 : 0.48;
+  let yellowRatio = Math.max(
     strictCombined * gate,
-    warmCombined * gate * 0.22,
+    warmCombined * gate * 0.14,
   );
+  yellowRatio *= coveragePenalty;
+  if (maroonCombined > 0.08) {
+    yellowRatio *= Math.max(0.08, 1 - maroonCombined * 2.2);
+  }
 
   return {
     yellowRatio,
     warmFullRatio,
     strictFullRatio,
+    maroonFullRatio: Math.round(maroonCombined * 1000) / 1000,
     warmCombined,
     strictCombined,
     warmCenterRatio,
@@ -534,6 +559,7 @@ function scoreTitleCardFrame(frameData, width, height, sampleStep = 4) {
     lumaStd: Math.round(lumaStd * 1000) / 1000,
     edgeMean: Math.round(edgeMean * 1000) / 1000,
     structureGate: Math.round(gate * 1000) / 1000,
+    coveragePenalty: Math.round(coveragePenalty * 1000) / 1000,
     samplePixels: samples,
   };
 }
@@ -711,8 +737,8 @@ function buildYellowEventsFromFrames(frameDetections, frameRate, minDurationSeco
 function attachContentStartsToEvents(frameDetections, frameRate, events) {
   if (!frameDetections.length || !events.length) return events;
   const frameInterval = frameRate > 0 ? 1 / frameRate : 1 / 30;
-  const strictNonYellow = 0.072;
-  const consecFrames = 2;
+  const strictNonYellow = 0.055;
+  const consecFrames = 3;
 
   return events.map((ev) => {
     const yellowStart = Math.round(ev.startTime * 1000) / 1000;
@@ -1131,9 +1157,11 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
           yellowRatio: scored.yellowRatio,
           warmFullRatio: scored.warmFullRatio,
           strictFullRatio: scored.strictFullRatio,
+          maroonFullRatio: scored.maroonFullRatio,
           warmCombined: scored.warmCombined,
           strictCombined: scored.strictCombined,
           structureGate: scored.structureGate,
+          coveragePenalty: scored.coveragePenalty,
           lumaStd: scored.lumaStd,
           edgeMean: scored.edgeMean,
         });
@@ -1332,6 +1360,40 @@ function mapYellowEventsToChapters(chapterTitles, yellowEvents) {
   };
 }
 
+function analyzeExtraYellowEvents(yellowEvents, chapterCount, videoDurationSec) {
+  const evs = yellowEvents || [];
+  if (!evs.length || evs.length <= chapterCount) return [];
+  const extras = evs.slice(chapterCount);
+  return extras.map((ev, i) => {
+    const ys = ev.yellowStart != null ? ev.yellowStart : ev.startTime;
+    const ye = ev.yellowEnd != null ? ev.yellowEnd : ev.endTime;
+    const dur = ye - ys;
+    const nearEnd = videoDurationSec > 0 && ys >= videoDurationSec * 0.86;
+    const veryShort = dur < 1.1;
+    const conf = ev.detectionConfidence != null ? ev.detectionConfidence : null;
+    let likelyReason = "ordered_detection_after_chapter_list_exhausted";
+    let suggestedAction = "kept_unmapped_for_debug; does_not_add_playable_rows";
+    if (nearEnd) {
+      likelyReason = "often_outro_endcard_or_final_transition_near_video_end";
+      suggestedAction = "review_merge_with_last_chapter_if_duplicate_or_real_extra_card";
+    }
+    if (veryShort) {
+      likelyReason += "; very_short_span_possible_flash_or_duplicate_edge";
+      suggestedAction = "often_ignore_or_merge_if_spurious";
+    }
+    return {
+      ordinal: chapterCount + i + 1,
+      eventIndex: ev.eventIndex != null ? ev.eventIndex : chapterCount + i + 1,
+      yellowStart: Math.round(ys * 1000) / 1000,
+      yellowEnd: Math.round(ye * 1000) / 1000,
+      durationSec: Math.round(dur * 1000) / 1000,
+      detectionConfidence: conf,
+      likelyReason,
+      suggestedAction,
+    };
+  });
+}
+
 function buildSegmentBuildExplanation({
   effectiveChapterTitles,
   yellowEvents,
@@ -1341,6 +1403,7 @@ function buildSegmentBuildExplanation({
   review,
   unmappedChapters,
   validationExcluded,
+  videoDurationSec,
 }) {
   const chapters = effectiveChapterTitles || [];
   const evs = yellowEvents || [];
@@ -1362,13 +1425,7 @@ function buildSegmentBuildExplanation({
         reason: "no_yellow_detection_for_this_chapter_slot",
       }));
 
-  const extraYellowDetail = (extraEvents || []).map((ev, i) => ({
-    detectionOrder: chapters.length + i + 1,
-    eventIndex: ev.eventIndex != null ? ev.eventIndex : i + 1,
-    yellowStart: ev.yellowStart != null ? ev.yellowStart : ev.startTime,
-    yellowEnd: ev.yellowEnd != null ? ev.yellowEnd : ev.endTime,
-    reason: "more_detections_than_chapter_titles_not_assigned_timeline_row",
-  }));
+  const extraYellowEventAnalysis = analyzeExtraYellowEvents(evs, chapters.length, videoDurationSec || 0);
 
   const filteredOut = validationExcluded && validationExcluded.length
     ? `${validationExcluded.length} row(s) removed by final playable validation (see timelineGenerationSummary.excludedRowsDetail)`
@@ -1383,7 +1440,8 @@ function buildSegmentBuildExplanation({
     validPlayableSegmentCount: validPlayable,
     mappedChapterEventPairs: review.mappedCount,
     chaptersWithoutMatchingYellow: chaptersWithoutYellow,
-    extraYellowEventsNotMappedToRows: extraYellowDetail,
+    extraYellowEventAnalysis,
+    extraYellowEventsNotMappedToRows: extraYellowEventAnalysis,
     reviewStates: review.states || [],
     validationExcludedRows: validationExcluded || [],
     summaryLines: [
@@ -1391,7 +1449,7 @@ function buildSegmentBuildExplanation({
       `${evs.length} yellow event(s) detected`,
       `${openingRows} opening row(s), ${validPlayable} playable timed segment(s) (player-facing)`,
       evs.length > chapters.length
-        ? `${evs.length - chapters.length} extra detection(s) beyond chapter list (unmapped)`
+        ? `${evs.length - chapters.length} extra detection(s) beyond chapter list — see extraYellowEventAnalysis for time/role hints`
         : null,
       chaptersWithoutYellow.length
         ? `${chaptersWithoutYellow.length} chapter(s) pending / unmapped (no playable row emitted)`
@@ -1723,6 +1781,7 @@ async function runDeterministicYellowPipeline({
       review: mapping.review,
       unmappedChapters: built.unmappedChapters,
       validationExcluded: validation.excluded,
+      videoDurationSec: analysisDuration,
     });
 
     yellowDetection.segmentBuildExplanation = segmentBuildExplanation;
