@@ -21,7 +21,7 @@ const os = require("os");
 const path = require("path");
 const fs = require("fs");
 const ffmpegPath = require("ffmpeg-static");
-const { spawn } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 const convert = require("color-convert");
 const { createWorker } = require("tesseract.js");
 const Fuse = require("fuse.js");
@@ -207,22 +207,39 @@ async function loadOrderedChapterTitles(lessonId) {
   const metaDoc = await db.collection("lessonMetadata").doc(lessonId).get();
   if (!metaDoc.exists) return [];
   const meta = metaDoc.data() || {};
+  const displayMap = meta.chapterDisplayNames || {};
+  const menuLabels = meta.chapterMenuLabels || {};
 
   if (Array.isArray(meta.chapterOrder) && meta.chapterOrder.length > 0) {
-    const displayMap = meta.chapterDisplayNames || {};
     return meta.chapterOrder
-      .map((key) => (displayMap[key] != null ? String(displayMap[key]).trim() : String(key).trim()))
+      .map((menuId) => {
+        const id = String(menuId).trim();
+        if (!id) return null;
+        if (displayMap[id] != null && String(displayMap[id]).trim() !== "") {
+          return String(displayMap[id]).trim();
+        }
+        if (menuLabels[id] != null && String(menuLabels[id]).trim() !== "") {
+          return String(menuLabels[id]).trim();
+        }
+        return id;
+      })
       .filter(Boolean);
   }
 
-  const displayNames = meta.chapterDisplayNames || {};
-  const orderedKeys = Object.keys(displayNames).sort((a, b) => {
+  const orderedKeys = Object.keys(displayMap).sort((a, b) => {
     const na = parseInt(String(a).replace(/\D+/g, ""), 10);
     const nb = parseInt(String(b).replace(/\D+/g, ""), 10);
     if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
     return String(a).localeCompare(String(b));
   });
-  return orderedKeys.map((k) => String(displayNames[k] || "").trim()).filter(Boolean);
+  return orderedKeys
+    .map((k) => {
+      const fromDisplay = displayMap[k] != null ? String(displayMap[k]).trim() : "";
+      if (fromDisplay) return fromDisplay;
+      const fromMenu = menuLabels[k] != null ? String(menuLabels[k]).trim() : "";
+      return fromMenu || String(k).trim();
+    })
+    .filter(Boolean);
 }
 
 function getVideoStreamInfo(video) {
@@ -331,6 +348,45 @@ function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
 }
 
+/**
+ * FFmpeg rawvideo rgb24 byte order: R, G, B (not BGR). Classifier uses RGB only.
+ * Broad warm title-card band: yellow / gold / mustard / yellow-orange via HSV + loose RGB.
+ */
+const COLOR_PIPELINE_LABEL = "ffmpeg_pix_fmt=rgb24_byte_order_RGB→sampled_pixels→color_convert.rgb.hsv→dual_rule";
+
+function pixelWarmTitleCard(r, g, b) {
+  const maxc = Math.max(r, g, b);
+  const minc = Math.min(r, g, b);
+  if (maxc < 28) return false;
+
+  const hsv = convert.rgb.hsv([r, g, b]);
+  const h = hsv[0];
+  const s = hsv[1] / 100;
+  const v = hsv[2] / 100;
+
+  if (
+    v >= 0.22 &&
+    s >= 0.12 &&
+    h >= 12 &&
+    h <= 105
+  ) {
+    return true;
+  }
+
+  const warm = (r + g) / 2;
+  if (
+    warm > b + 18 &&
+    r > 55 &&
+    g > 45 &&
+    b < Math.min(r, g) + 95 &&
+    Math.abs(r - g) < 110
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 function estimateYellowDominance(frameData, width, height, sampleStep = 4) {
   let yellowCount = 0;
   let brightCount = 0;
@@ -344,21 +400,10 @@ function estimateYellowDominance(frameData, width, height, sampleStep = 4) {
       const b = frameData[offset + 2];
       if (r == null || g == null || b == null) continue;
 
-      const bright = (r + g + b) / 3 > 90;
+      const bright = (r + g + b) / 3 > 70;
       if (bright) brightCount++;
 
-      // Wide yellow rule (not exact RGB): high R+G, low B, and warm dominance.
-      if (
-        r > 120 &&
-        g > 105 &&
-        b < 205 &&
-        (r + g) / 2 - b > 10 &&
-        r - b > 8 &&
-        g - b > 8 &&
-        Math.abs(r - g) < 120
-      ) {
-        yellowCount++;
-      }
+      if (pixelWarmTitleCard(r, g, b)) yellowCount++;
       samples++;
     }
   }
@@ -386,17 +431,7 @@ function estimateYellowDominanceCenter(frameData, width, height, sampleStep = 4)
       const g = frameData[offset + 1];
       const b = frameData[offset + 2];
       if (r == null || g == null || b == null) continue;
-      if (
-        r > 120 &&
-        g > 105 &&
-        b < 205 &&
-        (r + g) / 2 - b > 10 &&
-        r - b > 8 &&
-        g - b > 8 &&
-        Math.abs(r - g) < 120
-      ) {
-        yellowCount++;
-      }
+      if (pixelWarmTitleCard(r, g, b)) yellowCount++;
       samples++;
     }
   }
@@ -405,6 +440,8 @@ function estimateYellowDominanceCenter(frameData, width, height, sampleStep = 4)
 
 const YELLOW_ENTER_THRESHOLD = 0.14;
 const YELLOW_EXIT_THRESHOLD = 0.09;
+/** Temporary comparison: how many frames exceed this loose ratio (logged with calibration). */
+const YELLOW_DEBUG_LOOSE_ENTER = 0.04;
 
 function buildYellowEventsFromFrames(frameDetections, frameRate, minDurationSeconds = 0.06) {
   if (!frameDetections.length) {
@@ -564,6 +601,170 @@ function attachContentStartsToEvents(frameDetections, frameRate, events) {
   });
 }
 
+function extractFrameRgbAtVideoTime(videoPath, tSec, tw, th) {
+  const res = spawnSync(ffmpegPath, [
+    "-ss", String(Math.max(0, tSec)),
+    "-i", videoPath,
+    "-frames", "1",
+    "-vf", `scale=${tw}:${th}:flags=fast_bilinear`,
+    "-f", "rawvideo",
+    "-pix_fmt", "rgb24",
+    "pipe:1",
+  ], { encoding: "buffer", maxBuffer: 30 * 1024 * 1024 });
+  if (res.error || !res.stdout || res.stdout.length < tw * th * 3) return null;
+  return res.stdout;
+}
+
+function writeRgbBufferAsPng(rgb, w, h, outPath) {
+  const raw = `${outPath}.rgb.tmp`;
+  fs.writeFileSync(raw, rgb);
+  const r = spawnSync(ffmpegPath, [
+    "-y",
+    "-f", "rawvideo",
+    "-pixel_format", "rgb24",
+    "-video_size", `${w}x${h}`,
+    "-i", raw,
+    "-frames", "1",
+    outPath,
+  ], { encoding: "utf8" });
+  try {
+    fs.unlinkSync(raw);
+  } catch (e) { /* ignore */ }
+  return r.status === 0 || r.status === 1;
+}
+
+function writeWarmMaskPng(frameData, w, h, outPath) {
+  const raw = `${outPath}.gray.tmp`;
+  const buf = Buffer.alloc(w * h);
+  let i = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 3;
+      const r = frameData[o];
+      const g = frameData[o + 1];
+      const b = frameData[o + 2];
+      buf[i++] = pixelWarmTitleCard(r, g, b) ? 255 : 0;
+    }
+  }
+  fs.writeFileSync(raw, buf);
+  const r = spawnSync(ffmpegPath, [
+    "-y",
+    "-f", "rawvideo",
+    "-pixel_format", "gray",
+    "-video_size", `${w}x${h}`,
+    "-i", raw,
+    "-frames", "1",
+    outPath,
+  ], { encoding: "utf8" });
+  try {
+    fs.unlinkSync(raw);
+  } catch (e) { /* ignore */ }
+  return r.status === 0 || r.status === 1;
+}
+
+/**
+ * Saves frame PNGs, mask PNGs, report JSON under Storage prefix yellow-debug/{lessonId}/{runId}/ when upload succeeds.
+ */
+async function runYellowCalibrationExport({
+  videoPath,
+  lessonId,
+  frameDetections,
+  frameRate,
+  targetWidth,
+  targetHeight,
+  runId,
+}) {
+  const debugDir = path.join(os.tmpdir(), `yellow_cal_${runId}`);
+  fs.mkdirSync(debugDir, { recursive: true });
+  const n = frameDetections.length;
+  const uniformIdx = [];
+  if (n > 0) {
+    for (let k = 0; k < 10; k++) {
+      uniformIdx.push(Math.min(n - 1, Math.floor((k / 9) * Math.max(0, n - 1))));
+    }
+  }
+  const ranked = frameDetections
+    .map((f, i) => ({ i, r: f.yellowRatio || 0 }))
+    .sort((a, b) => b.r - a.r)
+    .slice(0, 20)
+    .map((x) => x.i);
+  const indices = [...new Set([...uniformIdx, ...ranked])].slice(0, 22);
+
+  const topForLog = frameDetections
+    .map((f, i) => ({
+      frameIndex: i,
+      timeSec: Math.round((i / frameRate) * 1000) / 1000,
+      yellowRatio: Math.round((f.yellowRatio || 0) * 10000) / 10000,
+      passedEnter: (f.yellowRatio || 0) >= YELLOW_ENTER_THRESHOLD,
+      passedExit: (f.yellowRatio || 0) >= YELLOW_EXIT_THRESHOLD,
+      passedLooseDebug: (f.yellowRatio || 0) >= YELLOW_DEBUG_LOOSE_ENTER,
+    }))
+    .sort((a, b) => b.yellowRatio - a.yellowRatio)
+    .slice(0, 20);
+
+  for (const idx of indices) {
+    const t = idx / frameRate;
+    const rgb = extractFrameRgbAtVideoTime(videoPath, t, targetWidth, targetHeight);
+    if (!rgb || rgb.length < targetWidth * targetHeight * 3) continue;
+    const base = `f${String(idx).padStart(5, "0")}`;
+    writeRgbBufferAsPng(rgb, targetWidth, targetHeight, path.join(debugDir, `${base}_frame.png`));
+    writeWarmMaskPng(rgb, targetWidth, targetHeight, path.join(debugDir, `${base}_mask.png`));
+  }
+
+  fs.writeFileSync(
+    path.join(debugDir, "report.json"),
+    JSON.stringify({
+      colorPipeline: COLOR_PIPELINE_LABEL,
+      rgbByteOrder: "R,G,B per FFmpeg rawvideo rgb24 (not BGR)",
+      hsv: "color-convert rgb→hsv, hue 0–360°, s/v 0–100 scaled to 0–1 for rules",
+      thresholds: {
+        enter: YELLOW_ENTER_THRESHOLD,
+        exit: YELLOW_EXIT_THRESHOLD,
+        debugLooseEnter: YELLOW_DEBUG_LOOSE_ENTER,
+      },
+      topFramesByRatio: topForLog,
+    }, null, 2)
+  );
+
+  let uploaded = [];
+  try {
+    const bucket = admin.storage().bucket();
+    const prefix = `yellow-debug/${lessonId}/${runId}`;
+    const names = fs.readdirSync(debugDir);
+    for (const name of names) {
+      const localPath = path.join(debugDir, name);
+      const dest = `${prefix}/${name}`;
+      const ct = name.endsWith(".json") ? "application/json" : "image/png";
+      await bucket.upload(localPath, { destination: dest, metadata: { contentType: ct } });
+      uploaded.push(`gs://${bucket.name}/${dest}`);
+    }
+  } catch (e) {
+    console.error("[yellow-cal] Storage upload failed:", e.message);
+  }
+
+  const framesLoose = frameDetections.filter((f) => (f.yellowRatio || 0) >= YELLOW_DEBUG_LOOSE_ENTER).length;
+
+  console.log("[yellow-cal]", JSON.stringify({
+    lessonId,
+    runId,
+    savedFrameIndices: indices.length,
+    gcsUploaded: uploaded.length,
+    topFramesByRatio: topForLog,
+    framesAtOrAboveLooseEnter: framesLoose,
+  }));
+
+  try {
+    fs.rmSync(debugDir, { recursive: true, force: true });
+  } catch (e) { /* ignore */ }
+
+  return {
+    topFramesByRatio: topForLog,
+    gcsPaths: uploaded,
+    gcsPrefix: uploaded.length ? `yellow-debug/${lessonId}/${runId}` : null,
+    framesAtOrAboveLooseEnter: framesLoose,
+  };
+}
+
 /**
  * When regenerating a timeline, keep timing rows the editor explicitly locked.
  */
@@ -639,17 +840,18 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
       while (buffer.length >= frameSize) {
         const frameData = buffer.slice(0, frameSize);
         buffer = buffer.slice(frameSize);
-        const full = estimateYellowDominance(frameData, targetWidth, targetHeight, 4);
-        const center = estimateYellowDominanceCenter(frameData, targetWidth, targetHeight, 4);
-        const combined = Math.max(full, center * 0.85 + full * 0.15);
+        const fullStats = estimateYellowDominance(frameData, targetWidth, targetHeight, 4);
+        const fullRatio = fullStats.yellowRatio;
+        const centerRatio = estimateYellowDominanceCenter(frameData, targetWidth, targetHeight, 4);
+        const combined = Math.max(fullRatio, centerRatio * 0.85 + fullRatio * 0.15);
         frameDetections.push({
           yellowRatio: combined,
-          fullYellowRatio: full,
-          centerYellowRatio: center,
+          fullYellowRatio: fullRatio,
+          centerYellowRatio: centerRatio,
         });
       }
     });
-    proc.on("close", (code) => {
+    proc.on("close", async (code) => {
       if (code !== 0 && code !== 1) {
         console.error("[yellow-dense] ffmpeg failed code", code, stderrTail.slice(-800));
         reject(new Error(`Dense yellow detection failed (ffmpeg code ${code})`));
@@ -663,6 +865,9 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
       const avgYellowRatio = frameDetections.length
         ? frameDetections.reduce((s, f) => s + (f.yellowRatio || 0), 0) / frameDetections.length
         : 0;
+      const framesAtOrAboveLooseEnter = frameDetections.filter(
+        (f) => (f.yellowRatio || 0) >= YELLOW_DEBUG_LOOSE_ENTER
+      ).length;
 
       const zeroReason = (() => {
         if (frameDetections.length === 0) {
@@ -680,17 +885,54 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
         return null;
       })();
 
+      let calibrationReport = null;
+      if (options.yellowDebugCalibration && options.lessonId && frameDetections.length > 0) {
+        const runId = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+        try {
+          calibrationReport = await runYellowCalibrationExport({
+            videoPath: video,
+            lessonId: options.lessonId,
+            frameDetections,
+            frameRate,
+            targetWidth,
+            targetHeight,
+            runId,
+          });
+        } catch (e) {
+          console.error("[yellow-cal] run failed:", e.message);
+        }
+      }
+
+      const topRatioSnapshot = frameDetections
+        .map((f, i) => ({
+          frameIndex: i,
+          timeSec: Math.round((i / frameRate) * 1000) / 1000,
+          yellowRatio: Math.round((f.yellowRatio || 0) * 10000) / 10000,
+          passedEnter: (f.yellowRatio || 0) >= YELLOW_ENTER_THRESHOLD,
+          passedExit: (f.yellowRatio || 0) >= YELLOW_EXIT_THRESHOLD,
+          passedLooseDebug: (f.yellowRatio || 0) >= YELLOW_DEBUG_LOOSE_ENTER,
+        }))
+        .sort((a, b) => b.yellowRatio - a.yellowRatio)
+        .slice(0, 20);
+
       console.log("[yellow-dense]", JSON.stringify({
         video: path.basename(video),
         frameRate,
         frameCount: frameDetections.length,
         minDurationSeconds,
-        thresholds: { enter: YELLOW_ENTER_THRESHOLD, exit: YELLOW_EXIT_THRESHOLD },
+        colorPipeline: COLOR_PIPELINE_LABEL,
+        thresholds: {
+          enter: YELLOW_ENTER_THRESHOLD,
+          exit: YELLOW_EXIT_THRESHOLD,
+          debugLooseEnter: YELLOW_DEBUG_LOOSE_ENTER,
+        },
+        framesAtOrAboveLooseEnter,
         stats: built.stats,
         rawGroupedEventCount: rawGroupedEvents.length,
         finalEventCount: yellowEvents.length,
         maxYellowRatio: Math.round(maxYellowRatio * 1000) / 1000,
         avgYellowRatio: Math.round(avgYellowRatio * 1000) / 1000,
+        topFramesByRatio: topRatioSnapshot,
         zeroReason,
       }));
 
@@ -707,8 +949,12 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
         detectionSummary: {
           maxYellowRatio: Math.round(maxYellowRatio * 1000) / 1000,
           avgYellowRatio: Math.round(avgYellowRatio * 1000) / 1000,
+          framesAtOrAboveLooseEnter,
+          colorPipeline: COLOR_PIPELINE_LABEL,
+          topFramesByRatio: topRatioSnapshot,
         },
         zeroReason,
+        calibrationReport,
         stderrTail: frameDetections.length === 0 ? stderrTail.slice(-2000) : undefined,
       });
     });
@@ -886,6 +1132,7 @@ async function runDeterministicYellowPipeline({
   chapterTitles,
   sourceLabel,
   minDurationSeconds,
+  yellowDebugCalibration,
 }) {
   const minSeg = Number.isFinite(minDurationSeconds) && minDurationSeconds > 0 ? minDurationSeconds : 0.06;
 
@@ -912,6 +1159,8 @@ async function runDeterministicYellowPipeline({
     // Stage 2: dense sequential yellow detection with event state machine.
     const detection = await detectYellowEventsDense(prepared.preparedPath, prepared.info, {
       minDurationSeconds: minSeg,
+      yellowDebugCalibration: yellowDebugCalibration === true,
+      lessonId: lessonId || null,
     });
     const yellowEvents = detection.yellowEvents;
     const yellowRanges = deriveYellowRangesFromEvents(yellowEvents);
@@ -933,13 +1182,16 @@ async function runDeterministicYellowPipeline({
       thresholds: {
         enter: YELLOW_ENTER_THRESHOLD,
         exit: YELLOW_EXIT_THRESHOLD,
+        debugLooseEnter: YELLOW_DEBUG_LOOSE_ENTER,
       },
+      colorPipeline: COLOR_PIPELINE_LABEL,
       rawGroupedEvents: detection.rawGroupedEvents || [],
       events: yellowEvents,
       groupingStats: detection.groupingStats || null,
       frameCount: detection.frameCount,
       decodeFrameRate: detection.frameRate,
       detectionSummary: detection.detectionSummary || null,
+      calibrationReport: detection.calibrationReport || null,
       zeroReason: detection.zeroReason || null,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
@@ -1137,7 +1389,7 @@ exports.detectYellowScreen = onCall(
     timeoutSeconds: 300,
   },
   async (request) => {
-    const { videoPath, lessonId, minSegmentSeconds } = request.data || {};
+    const { videoPath, lessonId, minSegmentSeconds, yellowDebugCalibration } = request.data || {};
     if (!videoPath || !lessonId) {
       throw new Error("videoPath and lessonId are required");
     }
@@ -1155,6 +1407,7 @@ exports.detectYellowScreen = onCall(
         chapterTitles,
         sourceLabel: "manual-yellow-regenerate",
         minDurationSeconds: minSeg,
+        yellowDebugCalibration: yellowDebugCalibration === true,
       });
 
       if (!pipeline.hasYellowEvents) {
@@ -1211,7 +1464,7 @@ exports.generateSrcArrayWithYellowOptions = onCall(
     timeoutSeconds: 540,
   },
   async (request) => {
-    const { videoPath, lessonId, fps, minSegmentSeconds } = request.data || {};
+    const { videoPath, lessonId, minSegmentSeconds, yellowDebugCalibration } = request.data || {};
     if (!videoPath || !lessonId) {
       throw new Error("videoPath and lessonId are required");
     }
@@ -1238,6 +1491,7 @@ exports.generateSrcArrayWithYellowOptions = onCall(
         chapterTitles,
         sourceLabel: "manual-editor",
         minDurationSeconds: effectiveMinSeg,
+        yellowDebugCalibration: yellowDebugCalibration === true,
       });
 
       if (!pipeline.hasYellowEvents) {
@@ -1249,6 +1503,7 @@ exports.generateSrcArrayWithYellowOptions = onCall(
           reason: "no_yellow_events_detected",
           message: pipeline.yellowDetection?.zeroReason || "No yellow events detected",
           yellowDetection: pipeline.yellowDetection,
+          calibrationReport: pipeline.yellowDetection?.calibrationReport || null,
           reviewStates: pipeline.review.states || [],
           duration: pipeline.duration,
           minSegmentSeconds: effectiveMinSeg,
@@ -1286,6 +1541,7 @@ exports.generateSrcArrayWithYellowOptions = onCall(
         duration: pipeline.duration,
         reviewStates: pipeline.review.states || [],
         minSegmentSeconds: effectiveMinSeg,
+        calibrationReport: pipeline.yellowDetection?.calibrationReport || null,
       };
     } catch (error) {
       console.error("generateSrcArrayWithYellowOptions failed:", error);

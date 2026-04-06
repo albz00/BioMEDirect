@@ -1234,22 +1234,39 @@ async function getOrderedChapterTitlesForLesson(lessonId) {
     const metaDoc = await db.collection('lessonMetadata').doc(lessonId).get();
     if (!metaDoc.exists) return [];
     const meta = metaDoc.data() || {};
+    const displayMap = meta.chapterDisplayNames || {};
+    const menuLabels = meta.chapterMenuLabels || {};
 
     if (Array.isArray(meta.chapterOrder) && meta.chapterOrder.length > 0) {
-        const displayMap = meta.chapterDisplayNames || {};
         return meta.chapterOrder
-            .map((key) => (displayMap[key] != null ? String(displayMap[key]).trim() : String(key).trim()))
+            .map((menuId) => {
+                const id = String(menuId).trim();
+                if (!id) return null;
+                if (displayMap[id] != null && String(displayMap[id]).trim() !== '') {
+                    return String(displayMap[id]).trim();
+                }
+                if (menuLabels[id] != null && String(menuLabels[id]).trim() !== '') {
+                    return String(menuLabels[id]).trim();
+                }
+                return id;
+            })
             .filter(Boolean);
     }
 
-    const displayNames = meta.chapterDisplayNames || {};
-    const orderedKeys = Object.keys(displayNames).sort((a, b) => {
+    const orderedKeys = Object.keys(displayMap).sort((a, b) => {
         const na = parseInt(String(a).replace(/\D+/g, ''), 10);
         const nb = parseInt(String(b).replace(/\D+/g, ''), 10);
         if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
         return String(a).localeCompare(String(b));
     });
-    return orderedKeys.map((k) => String(displayNames[k] || '').trim()).filter(Boolean);
+    return orderedKeys
+        .map((k) => {
+            const fromDisplay = displayMap[k] != null ? String(displayMap[k]).trim() : '';
+            if (fromDisplay) return fromDisplay;
+            const fromMenu = menuLabels[k] != null ? String(menuLabels[k]).trim() : '';
+            return fromMenu || String(k).trim();
+        })
+        .filter(Boolean);
 }
 
 /** Load srcArray from Firestore for the Timeline editor (timeline keyed by lessonId). */
@@ -1463,10 +1480,14 @@ function setupSrcArrayEditorListeners() {
                 const fn = functions.httpsCallable('generateSrcArrayWithYellowOptions', {
                     timeout: 540000,
                 });
+                const yellowDebugCalibration = document.getElementById('srcArrayYellowDebugCal')
+                    ? document.getElementById('srcArrayYellowDebugCal').checked
+                    : false;
                 const result = await fn({
                     lessonId: selectedLessonId,
                     videoPath,
-                    minSegmentSeconds
+                    minSegmentSeconds,
+                    yellowDebugCalibration,
                 });
 
                 const data = result.data || {};
@@ -1630,6 +1651,13 @@ async function showChaptersForLesson(lessonId) {
             displayName: chapterDisplayNames[m.menuId] !== undefined ? chapterDisplayNames[m.menuId] : m.label
         }));
 
+        const chapterOrder = menuLinks.map(m => m.menuId);
+        const chapterMenuLabels = Object.fromEntries(menuLinks.map(m => [m.menuId, m.label]));
+        await db.collection('lessonMetadata').doc(lessonId).set({
+            chapterOrder,
+            chapterMenuLabels,
+        }, { merge: true });
+
         editList.innerHTML = chapters.map((ch, idx) => {
             const safeOriginal = ch.originalLabel.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
             const safeDisplay = ch.displayName.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -1759,16 +1787,23 @@ async function saveAllChapters(lessonId, btn) {
     const existing = metaSnap.exists ? metaSnap.data() : {};
     const chapterDisplayNames = { ...(existing.chapterDisplayNames || {}) };
     const chapterSegmentMap = { ...(existing.chapterSegmentMap || {}) };
+    const chapterMenuLabels = { ...(existing.chapterMenuLabels || {}) };
+    const chapterOrder = [];
 
     for (const row of rows) {
         const menuId = row.getAttribute('data-menu-id');
         if (!menuId) continue;
+        chapterOrder.push(menuId);
         const nameInput = row.querySelector('.chapter-name-input');
         const indexInput = row.querySelector('.chapter-index-input');
         const newName = nameInput ? nameInput.value.trim() : '';
         const originalLabel = nameInput ? (nameInput.getAttribute('data-original') || '') : '';
         const segmentIndexRaw = indexInput ? indexInput.value.trim() : '';
         const segmentIndex = segmentIndexRaw ? parseInt(segmentIndexRaw, 10) : null;
+
+        if (originalLabel) {
+            chapterMenuLabels[menuId] = originalLabel;
+        }
 
         if (!newName || newName === originalLabel) {
             delete chapterDisplayNames[menuId];
@@ -1789,7 +1824,9 @@ async function saveAllChapters(lessonId, btn) {
     try {
         await metaRef.set({
             chapterDisplayNames,
-            chapterSegmentMap
+            chapterSegmentMap,
+            chapterOrder,
+            chapterMenuLabels,
         }, { merge: true });
         setStatus(`Saved ${rows.length} chapters`, 'success');
         setTimeout(() => setStatus('Ready'), 2000);

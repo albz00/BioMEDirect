@@ -719,6 +719,15 @@ html {
     color: #94a3b8;
 }
 
+.srcarray-editor-debug {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.82rem;
+    color: #94a3b8;
+    cursor: pointer;
+}
+
 .srcarray-editor-generate {
     display: inline-flex;
     align-items: center;
