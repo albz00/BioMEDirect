@@ -256,10 +256,17 @@ html {
     align-items: center;
 }
 
-.dashboard-header h1 {
-    color: #f1f5f9;
-    font-size: 1.5rem;
-    font-weight: bold;
+.dashboard-header h1.dashboard-header-title {
+    margin: 0;
+    line-height: 0;
+}
+
+.dashboard-header-logo {
+    display: block;
+    height: 2.75rem;
+    width: auto;
+    max-width: min(360px, 42vw);
+    object-fit: contain;
 }
 
 .header-buttons {
