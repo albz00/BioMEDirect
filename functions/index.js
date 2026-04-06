@@ -1,5 +1,5 @@
 const {onObjectFinalized} = require("firebase-functions/v2/storage");
-const {onCall} = require("firebase-functions/v2/https");
+const {onCall, HttpsError} = require("firebase-functions/v2/https");
 const admin = require("firebase-admin");
 const { Storage } = require("@google-cloud/storage");
 
@@ -11,7 +11,8 @@ const { Storage } = require("@google-cloud/storage");
  *   detectYellowScreen            HTTPS — "Regenerate from yellow" in admin (same pipeline)
  *   generateSrcArrayFromYellowScreens  HTTPS — passes chapters[] from menu HTML labels
  * OTHER:
- *   refineFlaggedTimelineSegment  HTTPS stub; future OpenAI per-segment (no auto-run)
+ *   refineFlaggedTimelineSegment  HTTPS — AI title-map one segment (yellow event) via vision + JSON
+ *   mapYellowEventsToChaptersWithAI  HTTPS — batch AI title-map for yellow events (optional eventIndexes)
  *   detectVideoTitles             HTTPS — OCR timestamps for menuLink labels; does not build yellow timeline
  * INTERNAL / LEGACY (not admin "Generate source"):
  *   detectYellowFrames            Sparse LAB @ fps; used by older helpers if any; not the dense path
@@ -25,6 +26,11 @@ const { spawn, spawnSync } = require("child_process");
 const convert = require("color-convert");
 const { createWorker } = require("tesseract.js");
 const Fuse = require("fuse.js");
+const {
+  getOpenAiConfig,
+  isAiTitleMappingConfigured,
+  callOpenAiChapterMatch,
+} = require("./openaiTitleMappingService");
 
 admin.initializeApp();
 
@@ -808,6 +814,230 @@ function writeRgbBufferAsPng(rgb, w, h, outPath) {
     fs.unlinkSync(raw);
   } catch (e) { /* ignore */ }
   return r.status === 0 || r.status === 1;
+}
+
+/** Small 16:9 frames for OpenAI vision (isolated from dense detector resolution). */
+const AI_TITLE_MAP_FRAME_W = 480;
+const AI_TITLE_MAP_FRAME_H = 270;
+
+function extractPngBase64AtVideoTime(videoPath, tSec) {
+  const rgb = extractFrameRgbAtVideoTime(videoPath, tSec, AI_TITLE_MAP_FRAME_W, AI_TITLE_MAP_FRAME_H);
+  if (!rgb || rgb.length < AI_TITLE_MAP_FRAME_W * AI_TITLE_MAP_FRAME_H * 3) return null;
+  const tmp = path.join(os.tmpdir(), `ai_title_${Date.now()}_${Math.random().toString(36).slice(2, 10)}.png`);
+  writeRgbBufferAsPng(rgb, AI_TITLE_MAP_FRAME_W, AI_TITLE_MAP_FRAME_H, tmp);
+  try {
+    const b64 = fs.readFileSync(tmp).toString("base64");
+    fs.unlinkSync(tmp);
+    return b64;
+  } catch (e) {
+    try {
+      fs.unlinkSync(tmp);
+    } catch (e2) { /* ignore */ }
+    return null;
+  }
+}
+
+/**
+ * Up to 3 times around yellowStart / yellowEnd / contentStart (deterministic pipeline).
+ */
+function pickRepresentativeTimesForYellowEvent(ev, durationSec) {
+  const ys = ev.yellowStart != null ? ev.yellowStart : ev.startTime;
+  const ye = ev.yellowEnd != null ? ev.yellowEnd : ev.endTime;
+  const cs = ev.contentStart != null ? ev.contentStart : ye;
+  const mid = ys + Math.max(0, (ye - ys) / 2);
+  const picks = [];
+  const seen = new Set();
+  const maxT = Math.max(0, durationSec - 0.02);
+  const add = (t, label) => {
+    const x = Math.max(0, Math.min(maxT, t));
+    const k = Math.round(x * 1000);
+    if (!seen.has(k)) {
+      seen.add(k);
+      picks.push({ label, t: x });
+    }
+  };
+  add(ys, "yellowStart");
+  if (picks.length < 3) add(ye, "yellowEnd");
+  if (picks.length < 3) add(cs, "contentStart");
+  if (picks.length < 2) add(mid, "midYellow");
+  return picks.slice(0, 3);
+}
+
+function deterministicGuessChapterIndex1Based(eventIndexZeroBased, chapterCount) {
+  if (chapterCount <= 0) return 1;
+  return Math.min(chapterCount, Math.max(1, eventIndexZeroBased + 1));
+}
+
+async function downloadLessonVideoToTemp(lessonId) {
+  const vpDoc = await db.collection("videoPaths").doc(lessonId).get();
+  let videoPath = `videos/${lessonId}.mp4`;
+  if (vpDoc.exists && vpDoc.data().videoPath) {
+    videoPath = String(vpDoc.data().videoPath).trim();
+  }
+  const bucket = admin.storage().bucket();
+  const localPath = path.join(os.tmpdir(), `ai_map_${lessonId}_${Date.now()}.mp4`);
+  await bucket.file(videoPath).download({ destination: localPath });
+  return { localPath, videoPath };
+}
+
+/**
+ * Merges aiChapterMapping into lesson yellowDetection without dropping other yellowDetection fields.
+ */
+async function mergeLessonAiChapterMapping(lessonId, patch) {
+  const ref = db.collection("lessons").doc(lessonId);
+  const snap = await ref.get();
+  const prevYd = snap.exists ? { ...(snap.data().yellowDetection || {}) } : {};
+  prevYd.aiChapterMapping = { ...(prevYd.aiChapterMapping || {}), ...patch };
+  await ref.set({ yellowDetection: prevYd }, { merge: true });
+}
+
+/**
+ * @param {string} lessonId
+ * @param {number[]} eventIndexesZeroBased
+ * @returns {Promise<object>}
+ */
+async function runAiChapterMappingForEventIndexes(lessonId, eventIndexesZeroBased) {
+  const cfg = getOpenAiConfig();
+  if (!cfg.enabled) {
+    return {
+      ok: false,
+      reason: "ai_disabled",
+      message: "Set OPENAI_TITLE_MAPPING_ENABLED=true (Firebase Functions env).",
+    };
+  }
+  if (!isAiTitleMappingConfigured()) {
+    throw new HttpsError("failed-precondition", "OPENAI_API_KEY is not configured on the server.");
+  }
+
+  const lessonSnap = await db.collection("lessons").doc(lessonId).get();
+  if (!lessonSnap.exists) {
+    throw new HttpsError("not-found", `Lesson not found: ${lessonId}`);
+  }
+  const lesson = lessonSnap.data();
+  const events = lesson.yellowScreenEvents || (lesson.yellowDetection && lesson.yellowDetection.events) || [];
+  if (!events.length) {
+    return { ok: false, reason: "no_yellow_events", message: "No yellowScreenEvents / yellowDetection.events on lesson." };
+  }
+
+  const chapterTitles = await loadOrderedChapterTitles(lessonId);
+  if (!chapterTitles.length) {
+    return { ok: false, reason: "no_chapters", message: "lessonMetadata chapterOrder / titles missing." };
+  }
+
+  const indexes = (eventIndexesZeroBased || [])
+    .map((x) => parseInt(String(x), 10))
+    .filter((i) => Number.isFinite(i) && i >= 0 && i < events.length);
+  if (!indexes.length) {
+    return { ok: false, reason: "no_event_indexes", message: "No valid event indexes in range." };
+  }
+
+  let localPath = null;
+  const results = [];
+  const errors = [];
+
+  try {
+    const dl = await downloadLessonVideoToTemp(lessonId);
+    localPath = dl.localPath;
+    const durationSec = await getDuration(localPath);
+
+    for (const i of indexes) {
+      const ev = events[i];
+      try {
+        const times = pickRepresentativeTimesForYellowEvent(ev, durationSec);
+        const images = [];
+        for (const p of times) {
+          const b64 = extractPngBase64AtVideoTime(localPath, p.t);
+          if (b64) images.push({ label: p.label, base64Png: b64 });
+        }
+        if (!images.length) {
+          errors.push({ eventIndex: i, error: "frame_extraction_failed" });
+          continue;
+        }
+
+        const guessed = deterministicGuessChapterIndex1Based(i, chapterTitles.length);
+        const t0 = Date.now();
+        console.log("[aiChapterMapping] request", { lessonId, eventIndex: i, model: cfg.model, frameCount: images.length });
+
+        const ai = await callOpenAiChapterMatch({
+          chapterTitles,
+          images,
+          eventContext: {
+            eventIndex: i,
+            eventIndex1Based: i + 1,
+            yellowStart: ev.yellowStart != null ? ev.yellowStart : ev.startTime,
+            yellowEnd: ev.yellowEnd != null ? ev.yellowEnd : ev.endTime,
+            contentStart: ev.contentStart,
+            deterministicGuessChapterIndex: guessed,
+            guessedTitle: chapterTitles[guessed - 1] || null,
+          },
+        });
+
+        const ms = Date.now() - t0;
+        console.log("[aiChapterMapping] response", {
+          lessonId,
+          eventIndex: i,
+          bestChapterIndex: ai.bestChapterIndex,
+          confidence: ai.confidence,
+          needsManualReview: ai.needsManualReview,
+          ms,
+        });
+
+        results.push({
+          eventIndex: i,
+          model: cfg.model,
+          ...ai,
+        });
+      } catch (err) {
+        console.error("[aiChapterMapping] event failed", { lessonId, eventIndex: i, err: err.message });
+        errors.push({ eventIndex: i, error: err.message || String(err) });
+      }
+    }
+
+    const ydSnap = lessonSnap.data().yellowDetection || {};
+    const aimSnap = ydSnap.aiChapterMapping || {};
+    const prevByIdx = {
+      ...((aimSnap.resultsByEventIndex) || {}),
+    };
+    const resultsByEventIndex = { ...prevByIdx };
+    for (const r of results) {
+      resultsByEventIndex[String(r.eventIndex)] = {
+        bestChapterIndex: r.bestChapterIndex,
+        matchedTitle: r.matchedTitle,
+        normalizedTitle: r.normalizedTitle,
+        confidence: r.confidence,
+        startAdjustmentSec: r.startAdjustmentSec,
+        endAdjustmentSec: r.endAdjustmentSec,
+        reason: r.reason,
+        needsManualReview: r.needsManualReview,
+        model: r.model,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+    }
+
+    await mergeLessonAiChapterMapping(lessonId, {
+      version: 1,
+      lastRunAt: admin.firestore.FieldValue.serverTimestamp(),
+      model: cfg.model,
+      videoPath: dl.videoPath,
+      resultsByEventIndex,
+      lastRunErrors: errors,
+    });
+
+    return {
+      ok: true,
+      model: cfg.model,
+      processed: results.length,
+      errors,
+      results,
+      resultsByEventIndex,
+    };
+  } finally {
+    if (localPath && fs.existsSync(localPath)) {
+      try {
+        fs.unlinkSync(localPath);
+      } catch (e) { /* ignore */ }
+    }
+  }
 }
 
 function writeWarmMaskPng(frameData, w, h, outPath) {
@@ -2994,44 +3224,98 @@ exports.generateSrcArrayFromYellowScreens = onCall(
 );
 
 /**
- * Isolated hook for future per-segment vision/LLM refinement (OpenAI, etc.).
- * Deterministic pipeline only until frames are extracted and merged here.
+ * AI title-mapping for one yellow event (vision + structured JSON). Does not re-run yellow detection.
+ * Pass either yellowEventIndex (0-based, aligned with yellowScreenEvents) or segmentId/segmentIndex
+ * (srcArray row: 0 = opening, 1 = first chapter row → yellow event 0).
  */
 exports.refineFlaggedTimelineSegment = onCall(
   {
-    memory: "1GiB",
-    timeoutSeconds: 120,
+    memory: "2GiB",
+    timeoutSeconds: 300,
   },
   async (request) => {
-    const data = request.data || {};
-    const { lessonId } = data;
-    const segmentRef = data.segmentId != null ? data.segmentId : data.segmentIndex;
-    if (!lessonId || segmentRef == null) {
-      throw new Error("lessonId and segmentId (or segmentIndex) are required");
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Sign in required.");
     }
-    const idx = parseInt(String(segmentRef), 10);
-    if (!Number.isFinite(idx) || idx < 0) {
-      throw new Error("segmentIndex must be a non-negative integer");
+    const data = request.data || {};
+    const { lessonId, yellowEventIndex } = data;
+    const segmentRef = data.segmentId != null ? data.segmentId : data.segmentIndex;
+
+    if (!lessonId) {
+      throw new HttpsError("invalid-argument", "lessonId is required");
+    }
+
+    let eventIdx = null;
+    if (yellowEventIndex != null && String(yellowEventIndex).trim() !== "") {
+      eventIdx = parseInt(String(yellowEventIndex), 10);
+    } else if (segmentRef != null && String(segmentRef).trim() !== "") {
+      const segIdx = parseInt(String(segmentRef), 10);
+      if (!Number.isFinite(segIdx) || segIdx < 0) {
+        throw new HttpsError("invalid-argument", "segmentIndex must be a non-negative integer");
+      }
+      if (segIdx === 0) {
+        throw new HttpsError(
+          "invalid-argument",
+          "segmentIndex 0 is opening; use yellowEventIndex or a content row index >= 1."
+        );
+      }
+      eventIdx = segIdx - 1;
+    } else {
+      throw new HttpsError(
+        "invalid-argument",
+        "Provide yellowEventIndex (0-based) or segmentId / segmentIndex (srcArray row, >= 1 for content)."
+      );
+    }
+
+    if (!Number.isFinite(eventIdx) || eventIdx < 0) {
+      throw new HttpsError("invalid-argument", "Invalid yellow event index");
     }
 
     const snap = await db.collection("lessons").doc(lessonId).get();
     if (!snap.exists) {
-      throw new Error(`Lesson not found: ${lessonId}`);
+      throw new HttpsError("not-found", `Lesson not found: ${lessonId}`);
     }
-    const srcArray = snap.data().srcArray || [];
-    const seg = srcArray[idx];
-    if (!seg) {
-      throw new Error(`No segment at index ${idx}`);
+    const snapData = snap.data();
+    const events = snapData.yellowScreenEvents ||
+      (snapData.yellowDetection && snapData.yellowDetection.events) || [];
+    if (eventIdx >= events.length) {
+      throw new HttpsError("out-of-range", `No yellow event at index ${eventIdx} (${events.length} events).`);
     }
 
-    return {
-      ok: false,
-      message: "AI refinement is not implemented yet; timeline architecture is ready for a frame-extract + OpenAI step.",
-      lessonId,
-      segmentId: idx,
-      segmentIndex: idx,
-      flagged: seg.flagged === true,
-      hasYellowBounds: seg.yellowStart != null && seg.yellowEnd != null,
-    };
+    return runAiChapterMappingForEventIndexes(lessonId, [eventIdx]);
+  }
+);
+
+/**
+ * Batch AI title-mapping: optional eventIndexes (0-based); defaults to all yellow events.
+ */
+exports.mapYellowEventsToChaptersWithAI = onCall(
+  {
+    memory: "2GiB",
+    timeoutSeconds: 540,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Sign in required.");
+    }
+    const { lessonId, eventIndexes } = request.data || {};
+    if (!lessonId) {
+      throw new HttpsError("invalid-argument", "lessonId is required");
+    }
+
+    const lessonSnap = await db.collection("lessons").doc(lessonId).get();
+    if (!lessonSnap.exists) {
+      throw new HttpsError("not-found", `Lesson not found: ${lessonId}`);
+    }
+    const lsData = lessonSnap.data();
+    const events = lsData.yellowScreenEvents ||
+      (lsData.yellowDetection && lsData.yellowDetection.events) || [];
+    let idxs;
+    if (Array.isArray(eventIndexes) && eventIndexes.length > 0) {
+      idxs = eventIndexes;
+    } else {
+      idxs = events.map((_, i) => i);
+    }
+    return runAiChapterMappingForEventIndexes(lessonId, idxs);
   }
 );
