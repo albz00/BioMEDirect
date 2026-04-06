@@ -1255,8 +1255,11 @@ async function getOrderedChapterTitlesForLesson(lessonId) {
 /** Load srcArray from Firestore for the Timeline editor (timeline keyed by lessonId). */
 async function loadSrcArrayForEditor(lessonId) {
     const lessonDoc = await db.collection('lessons').doc(lessonId).get();
-    const srcArray = (lessonDoc.exists && lessonDoc.data().srcArray) ? lessonDoc.data().srcArray : [];
-    return { lessonId, srcArray };
+    const data = lessonDoc.exists ? lessonDoc.data() : {};
+    const srcArray = data.srcArray ? data.srcArray : [];
+    const timelinePipeline = data.timelinePipeline || null;
+    const timelineReview = data.timelineReview || null;
+    return { lessonId, srcArray, timelinePipeline, timelineReview };
 }
 
 function renderSrcArrayTable(srcArray, lessonId, chapterTitles) {
@@ -1336,10 +1339,18 @@ async function refreshSrcArrayEditor() {
     }
     if (statusEl) statusEl.textContent = 'Loading…';
     try {
-        const { lessonId, srcArray } = await loadSrcArrayForEditor(selectedLessonId);
+        const { lessonId, srcArray, timelinePipeline, timelineReview } = await loadSrcArrayForEditor(selectedLessonId);
         const chapterTitles = await getOrderedChapterTitlesForLesson(selectedLessonId);
         renderSrcArrayTable(srcArray, selectedLessonId, chapterTitles);
-        if (statusEl) statusEl.textContent = selectedLessonId ? `${srcArray.length} segments` : 'No lesson selected';
+        if (statusEl) {
+            let line = selectedLessonId ? `${srcArray.length} segments` : 'No lesson selected';
+            if (timelinePipeline && timelinePipeline.status === 'no_yellow_detected') {
+                line += ' · Last generate: no yellow detected (see Firestore yellowDetection)';
+            } else if (timelineReview && timelineReview.generationFailed) {
+                line += ' · Last generate failed';
+            }
+            statusEl.textContent = line;
+        }
     } catch (e) {
         console.error('refreshSrcArrayEditor:', e);
         renderSrcArrayTable([], null, []);
@@ -1365,7 +1376,6 @@ function setupSrcArrayEditorListeners() {
     setupCollapsibleCard('videosCard', 'videosCardToggle', 'videosCardBody');
     const saveBtn = document.getElementById('srcArraySaveAllBtn');
     const generateBtn = document.getElementById('srcArrayGenerateFromYellowBtn');
-    const fpsInput = document.getElementById('srcArrayFpsInput');
     const minSegInput = document.getElementById('srcArrayMinSegInput');
     if (saveBtn) {
         saveBtn.addEventListener('click', async () => {
@@ -1424,7 +1434,7 @@ function setupSrcArrayEditorListeners() {
             }
         });
     }
-    if (generateBtn && fpsInput && minSegInput) {
+    if (generateBtn && minSegInput) {
         generateBtn.addEventListener('click', async () => {
             if (!selectedLessonId) {
                 setStatus('Select a lesson first', 'error');
@@ -1437,14 +1447,12 @@ function setupSrcArrayEditorListeners() {
                 return;
             }
 
-            const fpsVal = parseFloat(fpsInput.value);
             const minSegVal = parseFloat(minSegInput.value);
-            const fps = Number.isFinite(fpsVal) && fpsVal > 0 ? fpsVal : 10;
             const minSegmentSeconds = Number.isFinite(minSegVal) && minSegVal > 0 ? minSegVal : 0.05;
 
             try {
                 setButtonLoading(generateBtn, true);
-                setStatus('Generating timeline (dense yellow + chapter mapping; FPS/min segment stored for reference only)…', 'scanning');
+                setStatus(`Generating timeline (min yellow duration ${minSegmentSeconds}s)…`, 'scanning');
 
                 const videoPath = await getVideoPathForLesson(selectedLessonId);
                 if (!videoPath) {
@@ -1458,11 +1466,17 @@ function setupSrcArrayEditorListeners() {
                 const result = await fn({
                     lessonId: selectedLessonId,
                     videoPath,
-                    fps,
                     minSegmentSeconds
                 });
 
                 const data = result.data || {};
+                if (data.success === false) {
+                    const reason = data.reason || 'unknown';
+                    const msg = data.message || reason;
+                    setStatus(`Generate failed: ${msg}. Timeline not overwritten. Check lesson yellowDetection in Firestore.`, 'error');
+                    await refreshSrcArrayEditor();
+                    return;
+                }
                 const segs = typeof data.segments === 'number' ? data.segments : 'updated';
                 const ranges = typeof data.yellowRanges === 'number' ? data.yellowRanges : '?';
                 const states = Array.isArray(data.reviewStates) && data.reviewStates.length
@@ -1927,9 +1941,13 @@ async function regenerateSrcArrayFromYellow(lessonId, btn) {
             timeout: 300000,
         });
         const result = await detectYellow({ videoPath, lessonId });
+        const rd = result.data || {};
 
-        if (!result.data || !result.data.success) {
-            throw new Error('Yellow detection function reported failure');
+        if (!rd.success) {
+            const msg = rd.message || rd.reason || 'Yellow detection found no events';
+            setStatus(`Regenerate skipped: ${msg}. Timeline unchanged.`, 'error');
+            if (selectedLessonId === lessonId) await refreshSrcArrayEditor();
+            return;
         }
 
         // Reload the updated srcArray into the Timeline editor if this is the selected lesson
@@ -1937,8 +1955,8 @@ async function regenerateSrcArrayFromYellow(lessonId, btn) {
             await refreshSrcArrayEditor();
         }
 
-        const rangesCount = Array.isArray(result.data.yellowRanges) ? result.data.yellowRanges.length : 0;
-        const segs = typeof result.data.adjustedSegments === 'number' ? result.data.adjustedSegments : 'updated';
+        const rangesCount = Array.isArray(rd.yellowRanges) ? rd.yellowRanges.length : 0;
+        const segs = typeof rd.adjustedSegments === 'number' ? rd.adjustedSegments : 'updated';
         setStatus(`Regenerated from yellow: ${rangesCount} ranges detected, ${segs} segments in srcArray`, 'success');
         setTimeout(() => setStatus('Ready'), 3000);
     } catch (error) {
@@ -2300,9 +2318,9 @@ async function generateSrcArrayFromYellowScreensForLesson(lessonId) {
         });
 
         const data = result.data || {};
-        if (!data.success) {
-            const msg = data.reason || 'Generation failed';
-            setStatus(`Auto-generate failed: ${msg}`, 'error');
+        if (data.success === false) {
+            const msg = data.message || data.reason || 'Generation failed';
+            setStatus(`Auto-generate failed: ${msg}. Timeline unchanged.`, 'error');
         } else {
             const segs = data.segments || 0;
             setStatus(`Generated ${segs} segments from yellow screens`, data.status === 'ok' ? 'success' : 'scanning');

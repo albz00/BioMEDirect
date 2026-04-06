@@ -2,6 +2,21 @@ const {onObjectFinalized} = require("firebase-functions/v2/storage");
 const {onCall} = require("firebase-functions/v2/https");
 const admin = require("firebase-admin");
 const { Storage } = require("@google-cloud/storage");
+
+/**
+ * --- Callable / trigger map ---
+ * PRIMARY TIMELINE PATH (all call runDeterministicYellowPipeline → dense RGB yellow detector):
+ *   generateSrcArray              Storage trigger, videos/*.mp4 upload; lessonId from metadata/videoPaths
+ *   generateSrcArrayWithYellowOptions  HTTPS — admin "Generate source" (minDurationSeconds only)
+ *   detectYellowScreen            HTTPS — "Regenerate from yellow" in admin (same pipeline)
+ *   generateSrcArrayFromYellowScreens  HTTPS — passes chapters[] from menu HTML labels
+ * OTHER:
+ *   refineFlaggedTimelineSegment  HTTPS stub; future OpenAI per-segment (no auto-run)
+ *   detectVideoTitles             HTTPS — OCR timestamps for menuLink labels; does not build yellow timeline
+ * INTERNAL / LEGACY (not admin "Generate source"):
+ *   detectYellowFrames            Sparse LAB @ fps; used by older helpers if any; not the dense path
+ *   buildSrcArrayFromYellow       Gap-based segments from ranges; legacy; not written on success path now
+ */
 const os = require("os");
 const path = require("path");
 const fs = require("fs");
@@ -68,6 +83,28 @@ exports.generateSrcArray = onObjectFinalized(
         sourceLabel: "upload-trigger",
       });
 
+      if (!pipeline.hasYellowEvents) {
+        console.warn("[generateSrcArray] no yellow events; not writing srcArray", { lessonId, filePath });
+        if (lessonId) {
+          await persistLessonYellowDetectionFailure(lessonId, filePath, "upload-trigger", pipeline);
+        } else {
+          await db.collection("videoAnalyses").doc(uploadedVideoId).set(
+            {
+              videoPath: filePath,
+              yellowDetection: pipeline.yellowDetection,
+              timelinePipeline: {
+                version: "yellow-content-v2",
+                source: "upload-trigger",
+                status: "no_yellow_detected",
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              },
+            },
+            { merge: true }
+          );
+        }
+        return;
+      }
+
       let srcArray = pipeline.srcArray;
       if (lessonId) {
         const existingDoc = await db.collection("lessons").doc(lessonId).get();
@@ -85,6 +122,7 @@ exports.generateSrcArray = onObjectFinalized(
             originalSrcArray: srcArray,
             yellowScreenRanges: pipeline.yellowRanges,
             yellowScreenEvents: pipeline.yellowEvents,
+            yellowDetection: pipeline.yellowDetection,
             chapterTimeline: pipeline.chapterTimeline,
             timelineReview: pipeline.review,
             timelinePipeline: {
@@ -103,6 +141,7 @@ exports.generateSrcArray = onObjectFinalized(
             srcArrayProposal: srcArray,
             yellowScreenRanges: pipeline.yellowRanges,
             yellowScreenEvents: pipeline.yellowEvents,
+            yellowDetection: pipeline.yellowDetection,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             timelinePipeline: {
@@ -364,13 +403,32 @@ function estimateYellowDominanceCenter(frameData, width, height, sampleStep = 4)
   return samples > 0 ? yellowCount / samples : 0;
 }
 
+const YELLOW_ENTER_THRESHOLD = 0.14;
+const YELLOW_EXIT_THRESHOLD = 0.09;
+
 function buildYellowEventsFromFrames(frameDetections, frameRate, minDurationSeconds = 0.06) {
-  if (!frameDetections.length) return [];
+  if (!frameDetections.length) {
+    return {
+      events: [],
+      stats: {
+        framesDecoded: 0,
+        framesAtOrAboveEnter: 0,
+        minFramesRequired: 0,
+        eventsEmitted: 0,
+        eventsRejectedTooShort: 0,
+        enterThreshold: YELLOW_ENTER_THRESHOLD,
+        exitThreshold: YELLOW_EXIT_THRESHOLD,
+        minDurationSeconds,
+      },
+    };
+  }
   const frameInterval = frameRate > 0 ? 1 / frameRate : 1 / 30;
   const minFrames = Math.max(1, Math.ceil(minDurationSeconds / frameInterval));
-  const enterThreshold = 0.14;
-  const exitThreshold = 0.09;
+  const enterThreshold = YELLOW_ENTER_THRESHOLD;
+  const exitThreshold = YELLOW_EXIT_THRESHOLD;
   const exitDebounceFrames = 1;
+
+  const framesAtOrAboveEnter = frameDetections.filter((f) => (f.yellowRatio || 0) >= enterThreshold).length;
 
   let inEvent = false;
   let eventStartIdx = 0;
@@ -380,10 +438,14 @@ function buildYellowEventsFromFrames(frameDetections, frameRate, minDurationSeco
   let sumYellow = 0;
   let metricFrames = 0;
   const events = [];
+  let eventsRejectedTooShort = 0;
 
   const closeEvent = (endIdx) => {
     const frames = endIdx - eventStartIdx + 1;
-    if (frames < minFrames) return;
+    if (frames < minFrames) {
+      eventsRejectedTooShort++;
+      return;
+    }
     const avgYellow = metricFrames > 0 ? sumYellow / metricFrames : 0;
     const confidence = clamp((avgYellow - exitThreshold) / 0.32, 0, 1);
     const startTime = eventStartIdx * frameInterval;
@@ -438,7 +500,20 @@ function buildYellowEventsFromFrames(frameDetections, frameRate, minDurationSeco
   }
 
   if (inEvent) closeEvent(lastYellowIdx >= 0 ? lastYellowIdx : frameDetections.length - 1);
-  return events;
+
+  return {
+    events,
+    stats: {
+      framesDecoded: frameDetections.length,
+      framesAtOrAboveEnter,
+      minFramesRequired: minFrames,
+      eventsEmitted: events.length,
+      eventsRejectedTooShort,
+      enterThreshold,
+      exitThreshold,
+      minDurationSeconds,
+    },
+  };
 }
 
 /**
@@ -527,7 +602,11 @@ function mergeManualTimelineOverrides(newSegments, existing) {
   });
 }
 
-function detectYellowEventsDense(video, streamInfo) {
+function detectYellowEventsDense(video, streamInfo, options = {}) {
+  const minDurationSeconds = Number.isFinite(options.minDurationSeconds) && options.minDurationSeconds > 0
+    ? options.minDurationSeconds
+    : 0.06;
+
   return new Promise((resolve, reject) => {
     const sourceWidth = Number.isFinite(streamInfo.width) ? streamInfo.width : 1280;
     const sourceHeight = Number.isFinite(streamInfo.height) ? streamInfo.height : 720;
@@ -538,6 +617,7 @@ function detectYellowEventsDense(video, streamInfo) {
     const frameSize = targetWidth * targetHeight * 3;
     let buffer = Buffer.alloc(0);
     const frameDetections = [];
+    let stderrTail = "";
 
     const proc = spawn(ffmpegPath, [
       "-i", video,
@@ -548,6 +628,11 @@ function detectYellowEventsDense(video, streamInfo) {
       "-an",
       "-",
     ]);
+
+    proc.stderr.on("data", (data) => {
+      const s = data.toString();
+      stderrTail = (stderrTail + s).slice(-4000);
+    });
 
     proc.stdout.on("data", (chunk) => {
       buffer = Buffer.concat([buffer, chunk]);
@@ -566,23 +651,65 @@ function detectYellowEventsDense(video, streamInfo) {
     });
     proc.on("close", (code) => {
       if (code !== 0 && code !== 1) {
+        console.error("[yellow-dense] ffmpeg failed code", code, stderrTail.slice(-800));
         reject(new Error(`Dense yellow detection failed (ffmpeg code ${code})`));
         return;
       }
-      const rawEvents = buildYellowEventsFromFrames(frameDetections, frameRate, 0.06);
-      const yellowEvents = attachContentStartsToEvents(frameDetections, frameRate, rawEvents);
+
+      const built = buildYellowEventsFromFrames(frameDetections, frameRate, minDurationSeconds);
+      const rawGroupedEvents = built.events;
+      const yellowEvents = attachContentStartsToEvents(frameDetections, frameRate, rawGroupedEvents);
       const maxYellowRatio = frameDetections.reduce((m, f) => Math.max(m, f.yellowRatio || 0), 0);
       const avgYellowRatio = frameDetections.length
         ? frameDetections.reduce((s, f) => s + (f.yellowRatio || 0), 0) / frameDetections.length
         : 0;
+
+      const zeroReason = (() => {
+        if (frameDetections.length === 0) {
+          return "no_frames_decoded_check_video_and_ffmpeg_stderr";
+        }
+        if (built.stats.framesAtOrAboveEnter === 0) {
+          return "no_frames_met_enter_threshold_color_may_not_match_yellow_card_rule";
+        }
+        if (rawGroupedEvents.length === 0 && built.stats.eventsRejectedTooShort > 0) {
+          return "only_sub_min_duration_yellow_spans_increase_min_segment_or_lower_threshold";
+        }
+        if (rawGroupedEvents.length === 0) {
+          return "grouping_produced_zero_events";
+        }
+        return null;
+      })();
+
+      console.log("[yellow-dense]", JSON.stringify({
+        video: path.basename(video),
+        frameRate,
+        frameCount: frameDetections.length,
+        minDurationSeconds,
+        thresholds: { enter: YELLOW_ENTER_THRESHOLD, exit: YELLOW_EXIT_THRESHOLD },
+        stats: built.stats,
+        rawGroupedEventCount: rawGroupedEvents.length,
+        finalEventCount: yellowEvents.length,
+        maxYellowRatio: Math.round(maxYellowRatio * 1000) / 1000,
+        avgYellowRatio: Math.round(avgYellowRatio * 1000) / 1000,
+        zeroReason,
+      }));
+
+      if (frameDetections.length === 0) {
+        console.error("[yellow-dense] stderr tail:", stderrTail.slice(-1200));
+      }
+
       resolve({
         frameRate,
         frameCount: frameDetections.length,
         yellowEvents,
+        rawGroupedEvents,
+        groupingStats: built.stats,
         detectionSummary: {
           maxYellowRatio: Math.round(maxYellowRatio * 1000) / 1000,
           avgYellowRatio: Math.round(avgYellowRatio * 1000) / 1000,
         },
+        zeroReason,
+        stderrTail: frameDetections.length === 0 ? stderrTail.slice(-2000) : undefined,
       });
     });
     proc.on("error", reject);
@@ -753,16 +880,69 @@ function generateChapterAwareSrcArray(mappings, duration) {
   return srcArray;
 }
 
-async function runDeterministicYellowPipeline({ lessonId, localVideoPath, chapterTitles, sourceLabel }) {
+async function runDeterministicYellowPipeline({
+  lessonId,
+  localVideoPath,
+  chapterTitles,
+  sourceLabel,
+  minDurationSeconds,
+}) {
+  const minSeg = Number.isFinite(minDurationSeconds) && minDurationSeconds > 0 ? minDurationSeconds : 0.06;
+
   // Stage 1: prep / normalize only if stream is clearly unsuitable.
   const prepared = await prepareVideoForAnalysis(localVideoPath);
   const analysisDuration = await getDuration(prepared.preparedPath);
 
+  console.log("[yellow-pipeline] start", JSON.stringify({
+    lessonId: lessonId || null,
+    source: sourceLabel || "pipeline",
+    localVideo: path.basename(localVideoPath),
+    durationSec: Math.round(analysisDuration * 1000) / 1000,
+    minDurationSeconds: minSeg,
+    normalization: {
+      cleanupPrepared: prepared.cleanupPrepared,
+      width: prepared.info.width,
+      height: prepared.info.height,
+      frameRate: prepared.info.frameRate,
+      codec: prepared.info.codec,
+    },
+  }));
+
   try {
     // Stage 2: dense sequential yellow detection with event state machine.
-    const detection = await detectYellowEventsDense(prepared.preparedPath, prepared.info);
+    const detection = await detectYellowEventsDense(prepared.preparedPath, prepared.info, {
+      minDurationSeconds: minSeg,
+    });
     const yellowEvents = detection.yellowEvents;
     const yellowRanges = deriveYellowRangesFromEvents(yellowEvents);
+
+    const yellowDetection = {
+      version: 2,
+      lessonId: lessonId || null,
+      sourceLabel: sourceLabel || "pipeline",
+      analyzedVideoBasename: path.basename(prepared.preparedPath),
+      durationSec: Math.round(analysisDuration * 1000) / 1000,
+      minDurationSeconds: minSeg,
+      normalization: {
+        usedTranscodedFile: prepared.cleanupPrepared === true,
+        streamWidth: prepared.info.width,
+        streamHeight: prepared.info.height,
+        streamFrameRate: prepared.info.frameRate,
+        streamCodec: prepared.info.codec,
+      },
+      thresholds: {
+        enter: YELLOW_ENTER_THRESHOLD,
+        exit: YELLOW_EXIT_THRESHOLD,
+      },
+      rawGroupedEvents: detection.rawGroupedEvents || [],
+      events: yellowEvents,
+      groupingStats: detection.groupingStats || null,
+      frameCount: detection.frameCount,
+      decodeFrameRate: detection.frameRate,
+      detectionSummary: detection.detectionSummary || null,
+      zeroReason: detection.zeroReason || null,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
 
     // Stage 3: deterministic ordered chapter mapping (bootstrap strategy).
     const effectiveChapterTitles = (chapterTitles && chapterTitles.length > 0)
@@ -781,8 +961,9 @@ async function runDeterministicYellowPipeline({ lessonId, localVideoPath, chapte
       frameRate: detection.frameRate,
       frameCount: detection.frameCount,
       detectionSummary: detection.detectionSummary || null,
+      chapterTitlesCount: effectiveChapterTitles.length,
+      detectedEventCount: yellowEvents.length,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      // Stage 6 hook: reserved shape for future GPT frame refinement.
       refinementHook: {
         ready: true,
         strategy: "gpt-vision-future",
@@ -795,6 +976,8 @@ async function runDeterministicYellowPipeline({ lessonId, localVideoPath, chapte
       srcArray,
       yellowRanges,
       yellowEvents,
+      yellowDetection,
+      hasYellowEvents: yellowEvents.length > 0,
       chapterTimeline: mapping.mappings,
       review,
       duration: analysisDuration,
@@ -806,6 +989,37 @@ async function runDeterministicYellowPipeline({ lessonId, localVideoPath, chapte
       fs.unlinkSync(prepared.preparedPath);
     }
   }
+}
+
+/**
+ * Writes detector output + explicit failure status without overwriting srcArray (timeline playback).
+ */
+async function persistLessonYellowDetectionFailure(lessonId, videoPath, sourceLabel, pipeline, extraPipeline = {}) {
+  const failureReview = {
+    ...pipeline.review,
+    generationFailed: true,
+    failureReason: "no_yellow_events_detected",
+    message: "No yellow transition cards met detection rules; existing timeline left unchanged. Inspect yellowDetection in Firestore.",
+    videoPath: videoPath || null,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+  await db.collection("lessons").doc(lessonId).set(
+    {
+      yellowDetection: pipeline.yellowDetection,
+      yellowScreenEvents: [],
+      yellowScreenRanges: [],
+      chapterTimeline: pipeline.chapterTimeline,
+      timelineReview: failureReview,
+      timelinePipeline: {
+        version: "yellow-content-v2",
+        source: sourceLabel,
+        status: "no_yellow_detected",
+        lastAttemptAt: admin.firestore.FieldValue.serverTimestamp(),
+        ...extraPipeline,
+      },
+    },
+    { merge: true }
+  );
 }
 
 // Build srcArray only from the complement of yellow (non-yellow intervals).
@@ -923,10 +1137,11 @@ exports.detectYellowScreen = onCall(
     timeoutSeconds: 300,
   },
   async (request) => {
-    const { videoPath, lessonId } = request.data;
+    const { videoPath, lessonId, minSegmentSeconds } = request.data || {};
     if (!videoPath || !lessonId) {
       throw new Error("videoPath and lessonId are required");
     }
+    const minSeg = Number.isFinite(minSegmentSeconds) && minSegmentSeconds > 0 ? minSegmentSeconds : 0.06;
 
     const bucket = admin.storage().bucket();
     const tmpFile = path.join(os.tmpdir(), `yellow_detect_${Date.now()}.mp4`);
@@ -939,7 +1154,19 @@ exports.detectYellowScreen = onCall(
         localVideoPath: tmpFile,
         chapterTitles,
         sourceLabel: "manual-yellow-regenerate",
+        minDurationSeconds: minSeg,
       });
+
+      if (!pipeline.hasYellowEvents) {
+        await persistLessonYellowDetectionFailure(lessonId, videoPath, "manual-yellow-regenerate", pipeline);
+        return {
+          success: false,
+          reason: "no_yellow_events_detected",
+          message: pipeline.yellowDetection?.zeroReason || "No yellow events detected",
+          yellowDetection: pipeline.yellowDetection,
+          reviewStates: pipeline.review.states,
+        };
+      }
 
       const existingDoc = await db.collection("lessons").doc(lessonId).get();
       const existing = existingDoc.exists ? (existingDoc.data().srcArray || []) : [];
@@ -950,11 +1177,13 @@ exports.detectYellowScreen = onCall(
         originalSrcArray: srcArray,
         yellowScreenRanges: pipeline.yellowRanges,
         yellowScreenEvents: pipeline.yellowEvents,
+        yellowDetection: pipeline.yellowDetection,
         chapterTimeline: pipeline.chapterTimeline,
         timelineReview: pipeline.review,
         timelinePipeline: {
           version: "yellow-content-v2",
           source: "manual-yellow-regenerate",
+          status: "ok",
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
       }, { merge: true });
@@ -975,8 +1204,7 @@ exports.detectYellowScreen = onCall(
   }
 );
 
-// Manually generate a srcArray for a lesson's assigned video using yellow detection
-// with configurable sampling FPS and minimum non-yellow segment length.
+// Manually generate a srcArray for a lesson's assigned video (dense decode; min yellow duration only).
 exports.generateSrcArrayWithYellowOptions = onCall(
   {
     memory: "2GiB",
@@ -988,7 +1216,6 @@ exports.generateSrcArrayWithYellowOptions = onCall(
       throw new Error("videoPath and lessonId are required");
     }
 
-    const effectiveFps = Number.isFinite(fps) && fps > 0 ? fps : 10;
     const effectiveMinSeg = Number.isFinite(minSegmentSeconds) && minSegmentSeconds > 0 ? minSegmentSeconds : 0.05;
 
     const bucket = admin.storage().bucket();
@@ -998,12 +1225,35 @@ exports.generateSrcArrayWithYellowOptions = onCall(
       await bucket.file(videoPath).download({ destination: tmpFile });
 
       const chapterTitles = await loadOrderedChapterTitles(lessonId);
+      console.log("[generateSrcArrayWithYellowOptions]", JSON.stringify({
+        lessonId,
+        videoPath,
+        chapterTitleCount: chapterTitles.length,
+        minDurationSeconds: effectiveMinSeg,
+      }));
+
       const pipeline = await runDeterministicYellowPipeline({
         lessonId,
         localVideoPath: tmpFile,
         chapterTitles,
         sourceLabel: "manual-editor",
+        minDurationSeconds: effectiveMinSeg,
       });
+
+      if (!pipeline.hasYellowEvents) {
+        await persistLessonYellowDetectionFailure(lessonId, videoPath, "manual-editor", pipeline, {
+          minDurationSecondsApplied: effectiveMinSeg,
+        });
+        return {
+          success: false,
+          reason: "no_yellow_events_detected",
+          message: pipeline.yellowDetection?.zeroReason || "No yellow events detected",
+          yellowDetection: pipeline.yellowDetection,
+          reviewStates: pipeline.review.states || [],
+          duration: pipeline.duration,
+          minSegmentSeconds: effectiveMinSeg,
+        };
+      }
 
       const existingDoc = await db.collection("lessons").doc(lessonId).get();
       const existing = existingDoc.exists ? (existingDoc.data().srcArray || []) : [];
@@ -1015,15 +1265,14 @@ exports.generateSrcArrayWithYellowOptions = onCall(
           originalSrcArray: srcArray,
           yellowScreenRanges: pipeline.yellowRanges,
           yellowScreenEvents: pipeline.yellowEvents,
+          yellowDetection: pipeline.yellowDetection,
           chapterTimeline: pipeline.chapterTimeline,
           timelineReview: pipeline.review,
           timelinePipeline: {
             version: "yellow-content-v2",
             source: "manual-editor",
             status: "ok",
-            note: "Dense detection; fps/minSegmentSeconds are recorded for reference only",
-            requestedFps: effectiveFps,
-            requestedMinSegmentSeconds: effectiveMinSeg,
+            minDurationSecondsApplied: effectiveMinSeg,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
         },
@@ -1036,7 +1285,6 @@ exports.generateSrcArrayWithYellowOptions = onCall(
         yellowRanges: pipeline.yellowRanges.length,
         duration: pipeline.duration,
         reviewStates: pipeline.review.states || [],
-        fps: effectiveFps,
         minSegmentSeconds: effectiveMinSeg,
       };
     } catch (error) {
@@ -1780,6 +2028,19 @@ exports.generateSrcArrayFromYellowScreens = onCall(
         sourceLabel: "manual-generate-from-yellow",
       });
 
+      if (!pipeline.hasYellowEvents) {
+        await persistLessonYellowDetectionFailure(lessonId, videoPath, "manual-generate-from-yellow", pipeline);
+        return {
+          success: false,
+          reason: "no_yellow_events_detected",
+          message: pipeline.yellowDetection?.zeroReason || "No yellow events detected",
+          yellowDetection: pipeline.yellowDetection,
+          chapters: chapters.length,
+          detections: 0,
+          states: pipeline.review.states,
+        };
+      }
+
       const existingDoc = await db.collection("lessons").doc(lessonId).get();
       const existing = existingDoc.exists ? (existingDoc.data().srcArray || []) : [];
       const mergedSrc = mergeManualTimelineOverrides(pipeline.srcArray, existing);
@@ -1790,6 +2051,7 @@ exports.generateSrcArrayFromYellowScreens = onCall(
           originalSrcArray: mergedSrc,
           yellowScreenRanges: pipeline.yellowRanges,
           yellowScreenEvents: pipeline.yellowEvents,
+          yellowDetection: pipeline.yellowDetection,
           chapterTimeline: pipeline.chapterTimeline,
           timelineReview: pipeline.review,
           autoMapping: {
@@ -1799,6 +2061,12 @@ exports.generateSrcArrayFromYellowScreens = onCall(
             chapters: chapters.length,
             detections: pipeline.yellowEvents.length,
             states: pipeline.review.states,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          timelinePipeline: {
+            version: "yellow-content-v2",
+            source: "manual-generate-from-yellow",
+            status: "ok",
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
         },

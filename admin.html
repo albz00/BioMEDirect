@@ -201,19 +201,7 @@
                                 <button type="button" id="srcArraySaveAllBtn" class="btn btn-primary btn-sm">Save all</button>
                                 <div class="srcarray-editor-generate">
                                     <label class="srcarray-editor-label">
-                                        FPS
-                                        <input
-                                            type="number"
-                                            id="srcArrayFpsInput"
-                                            min="1"
-                                            max="60"
-                                            step="1"
-                                            value="10"
-                                            placeholder="10"
-                                        >
-                                    </label>
-                                    <label class="srcarray-editor-label">
-                                        Min segment (s)
+                                        Min yellow duration (s)
                                         <input
                                             type="number"
                                             id="srcArrayMinSegInput"
@@ -222,6 +210,7 @@
                                             step="0.01"
                                             value="0.05"
                                             placeholder="0.05"
+                                            title="Minimum duration for a yellow block to count as one event (dense decode uses the video’s native frame rate)"
                                         >
                                     </label>
                                     <button type="button" id="srcArrayGenerateFromYellowBtn" class="btn btn-secondary btn-sm">
@@ -229,7 +218,7 @@
                                     </button>
                                 </div>
                                 <span id="srcArrayEditorStatus" class="srcarray-editor-status"></span>
-                                <p class="srcarray-editor-hint">Playback uses start/end below (content after yellow). Chapter names come from the chapter editor; yellow/source/confidence are debug-only.</p>
+                                <p class="srcarray-editor-hint">Dense scan uses native video FPS (not configurable here). Playback start/end are content after yellow. Chapter names come from the chapter editor; yellow/source/confidence are debug-only.</p>
                             </div>
                             <div class="srcarray-editor-table-wrap">
                                 <table class="srcarray-editor-table" id="srcArrayEditorTable">
