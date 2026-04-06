@@ -176,6 +176,11 @@ button:focus {
 	color: #8285DF;
 }
 
+/* Gated by CommonFiles/AdminAccessToggle.js (Ctrl+`). Keeps Login / Admin Panel link hidden until toggled. */
+.footer-login-link.admin-hidden {
+	display: none !important;
+}
+
 /* https://css-tricks.com/aspect-ratio-boxes/ */
 
 .lessons {
