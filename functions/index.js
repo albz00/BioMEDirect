@@ -371,7 +371,7 @@ function clamp(v, min, max) {
  * FFmpeg rawvideo rgb24 byte order: R, G, B (not BGR). Classifier uses RGB only.
  * Broad warm title-card band: yellow / gold / mustard / yellow-orange via HSV + loose RGB.
  */
-const COLOR_PIPELINE_LABEL = "ffmpeg_pix_fmt=rgb24_byte_order_RGB→sampled_pixels→color_convert.rgb.hsv→dual_rule";
+const COLOR_PIPELINE_LABEL = "title_card_v2_strict_hsv43-68+structure_gate(lumaStd+edgeMean)+warm_downweighted";
 
 function pixelWarmTitleCard(r, g, b) {
   const maxc = Math.max(r, g, b);
@@ -404,6 +404,138 @@ function pixelWarmTitleCard(r, g, b) {
   }
 
   return false;
+}
+
+/**
+ * Narrow HSV band for saturated “slide yellow” backgrounds — excludes skin, wood, beige lecture halls.
+ */
+function pixelStrictTitleYellow(r, g, b) {
+  const maxc = Math.max(r, g, b);
+  if (maxc < 40) return false;
+  const hsv = convert.rgb.hsv([r, g, b]);
+  const h = hsv[0];
+  const s = hsv[1] / 100;
+  const v = hsv[2] / 100;
+  if (v < 0.28 || s < 0.36) return false;
+  if (h >= 43 && h <= 68) return true;
+  return false;
+}
+
+function lumaAtOffset(frameData, offset) {
+  const r = frameData[offset];
+  const g = frameData[offset + 1];
+  const b = frameData[offset + 2];
+  return 0.299 * r + 0.587 * g + 0.114 * b;
+}
+
+/** Flat backgrounds (title cards) vs busy lecture frames: low luma variance among samples. */
+const TITLE_LUMA_STD_MAX = 30;
+/** Typical title card: low edge energy; talking-head / slides: higher. */
+const TITLE_EDGE_MEAN_MAX = 26;
+
+function structureGateFromMetrics(lumaStd, edgeMean) {
+  const u = lumaStd <= TITLE_LUMA_STD_MAX
+    ? 1
+    : Math.max(0, 1 - (lumaStd - TITLE_LUMA_STD_MAX) / 48);
+  const e = edgeMean <= TITLE_EDGE_MEAN_MAX
+    ? 1
+    : Math.max(0, 1 - (edgeMean - TITLE_EDGE_MEAN_MAX) / 58);
+  return Math.min(1, u * e);
+}
+
+/**
+ * Single-pass title-card score: strict yellow band + warm (legacy) + flatness + low edge density.
+ * Warm pixels alone are down-weighted; structure gate suppresses long “warm content” false runs.
+ */
+function scoreTitleCardFrame(frameData, width, height, sampleStep = 4) {
+  let warmFull = 0;
+  let strictFull = 0;
+  let samples = 0;
+  const lumas = [];
+
+  for (let y = 0; y < height; y += sampleStep) {
+    for (let x = 0; x < width; x += sampleStep) {
+      const offset = (y * width + x) * 3;
+      const r = frameData[offset];
+      const g = frameData[offset + 1];
+      const b = frameData[offset + 2];
+      if (r == null || g == null || b == null) continue;
+      samples++;
+      if (pixelWarmTitleCard(r, g, b)) warmFull++;
+      if (pixelStrictTitleYellow(r, g, b)) strictFull++;
+      lumas.push(lumaAtOffset(frameData, offset));
+    }
+  }
+
+  const warmFullRatio = samples ? warmFull / samples : 0;
+  const strictFullRatio = samples ? strictFull / samples : 0;
+
+  const x0 = Math.floor(width * 0.2);
+  const x1 = Math.floor(width * 0.8);
+  const y0 = Math.floor(height * 0.2);
+  const y1 = Math.floor(height * 0.8);
+  let warmCt = 0;
+  let strictCt = 0;
+  let sampC = 0;
+  for (let y = y0; y < y1; y += sampleStep) {
+    for (let x = x0; x < x1; x += sampleStep) {
+      const offset = (y * width + x) * 3;
+      const r = frameData[offset];
+      const g = frameData[offset + 1];
+      const b = frameData[offset + 2];
+      if (r == null || g == null || b == null) continue;
+      sampC++;
+      if (pixelWarmTitleCard(r, g, b)) warmCt++;
+      if (pixelStrictTitleYellow(r, g, b)) strictCt++;
+    }
+  }
+  const warmCenterRatio = sampC ? warmCt / sampC : 0;
+  const strictCenterRatio = sampC ? strictCt / sampC : 0;
+
+  const warmCombined = Math.max(warmFullRatio, warmCenterRatio * 0.85 + warmFullRatio * 0.15);
+  const strictCombined = Math.max(strictFullRatio, strictCenterRatio * 0.85 + strictFullRatio * 0.15);
+
+  const meanL = lumas.length ? lumas.reduce((a, b) => a + b, 0) / lumas.length : 0;
+  const varL = lumas.length
+    ? lumas.reduce((s, x) => s + (x - meanL) * (x - meanL), 0) / lumas.length
+    : 0;
+  const lumaStd = Math.sqrt(varL);
+
+  let edgeSum = 0;
+  let edgeN = 0;
+  for (let y = 0; y < height - sampleStep; y += sampleStep) {
+    for (let x = 0; x < width - sampleStep; x += sampleStep) {
+      const o = (y * width + x) * 3;
+      const ox = (y * width + x + sampleStep) * 3;
+      const oy = ((y + sampleStep) * width + x) * 3;
+      const l0 = lumaAtOffset(frameData, o);
+      const l1 = lumaAtOffset(frameData, ox);
+      const l2 = lumaAtOffset(frameData, oy);
+      edgeSum += Math.abs(l0 - l1) + Math.abs(l0 - l2);
+      edgeN++;
+    }
+  }
+  const edgeMean = edgeN ? edgeSum / edgeN : 0;
+
+  const gate = structureGateFromMetrics(lumaStd, edgeMean);
+  const yellowRatio = Math.max(
+    strictCombined * gate,
+    warmCombined * gate * 0.22,
+  );
+
+  return {
+    yellowRatio,
+    warmFullRatio,
+    strictFullRatio,
+    warmCombined,
+    strictCombined,
+    warmCenterRatio,
+    strictCenterRatio,
+    lumaStd: Math.round(lumaStd * 1000) / 1000,
+    edgeMean: Math.round(edgeMean * 1000) / 1000,
+    structureGate: Math.round(gate * 1000) / 1000,
+    samplePixels: samples,
+  };
 }
 
 function estimateYellowDominance(frameData, width, height, sampleStep = 4) {
@@ -457,8 +589,8 @@ function estimateYellowDominanceCenter(frameData, width, height, sampleStep = 4)
   return samples > 0 ? yellowCount / samples : 0;
 }
 
-const YELLOW_ENTER_THRESHOLD = 0.14;
-const YELLOW_EXIT_THRESHOLD = 0.09;
+const YELLOW_ENTER_THRESHOLD = 0.115;
+const YELLOW_EXIT_THRESHOLD = 0.078;
 /** Temporary comparison: how many frames exceed this loose ratio (logged with calibration). */
 const YELLOW_DEBUG_LOOSE_ENTER = 0.04;
 
@@ -681,6 +813,141 @@ function writeWarmMaskPng(frameData, w, h, outPath) {
   return r.status === 0 || r.status === 1;
 }
 
+function writePredicateMaskPng(frameData, w, h, predicate, outPath) {
+  const raw = `${outPath}.gray.tmp`;
+  const buf = Buffer.alloc(w * h);
+  let i = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 3;
+      const pr = frameData[o];
+      const pg = frameData[o + 1];
+      const pb = frameData[o + 2];
+      buf[i++] = predicate(pr, pg, pb) ? 255 : 0;
+    }
+  }
+  fs.writeFileSync(raw, buf);
+  const ff = spawnSync(ffmpegPath, [
+    "-y",
+    "-f", "rawvideo",
+    "-pixel_format", "gray",
+    "-video_size", `${w}x${h}`,
+    "-i", raw,
+    "-frames", "1",
+    outPath,
+  ], { encoding: "utf8" });
+  try {
+    fs.unlinkSync(raw);
+  } catch (e) { /* ignore */ }
+  return ff.status === 0 || ff.status === 1;
+}
+
+/**
+ * When the first detected yellow event is very long (false positive run), export start/mid/end frames,
+ * warm vs strict masks, and a JSON report with per-metric reasons (logged + optional Storage upload).
+ */
+async function saveFirstGiantYellowEventDebug({
+  videoPath,
+  firstEvent,
+  frameDetections,
+  frameRate,
+  targetWidth,
+  targetHeight,
+  lessonId,
+}) {
+  const dur = firstEvent.duration != null ? firstEvent.duration : 0;
+  if (dur < 6 || !frameDetections.length) return null;
+
+  const runId = `firstEv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const debugDir = path.join(os.tmpdir(), `yellow_first_ev_${runId}`);
+  fs.mkdirSync(debugDir, { recursive: true });
+
+  const sf = firstEvent.startFrame != null ? firstEvent.startFrame : 0;
+  const ef = firstEvent.endFrame != null ? firstEvent.endFrame : 0;
+  const mid = Math.floor((sf + ef) / 2);
+  const picks = [
+    { label: "near_start", frameIndex: Math.min(sf + 3, frameDetections.length - 1) },
+    { label: "middle", frameIndex: Math.min(Math.max(sf + 1, mid), frameDetections.length - 1) },
+    { label: "near_end", frameIndex: Math.min(Math.max(sf + 1, ef - 3), frameDetections.length - 1) },
+  ];
+
+  const report = {
+    runId,
+    lessonId: lessonId || null,
+    eventDurationSec: Math.round(dur * 1000) / 1000,
+    startFrame: sf,
+    endFrame: ef,
+    frameRate,
+    classifier: COLOR_PIPELINE_LABEL,
+    thresholds: {
+      enter: YELLOW_ENTER_THRESHOLD,
+      exit: YELLOW_EXIT_THRESHOLD,
+      titleLumaStdMax: TITLE_LUMA_STD_MAX,
+      titleEdgeMeanMax: TITLE_EDGE_MEAN_MAX,
+    },
+    samples: [],
+  };
+
+  for (const p of picks) {
+    const idx = Math.min(Math.max(0, p.frameIndex), frameDetections.length - 1);
+    const t = idx / frameRate;
+    const rgb = extractFrameRgbAtVideoTime(videoPath, t, targetWidth, targetHeight);
+    if (!rgb || rgb.length < targetWidth * targetHeight * 3) continue;
+    const scored = scoreTitleCardFrame(rgb, targetWidth, targetHeight, 4);
+    const frameSnap = frameDetections[idx] || {};
+    const base = path.join(debugDir, p.label);
+    writeRgbBufferAsPng(rgb, targetWidth, targetHeight, `${base}_frame.png`);
+    writePredicateMaskPng(rgb, targetWidth, targetHeight, pixelWarmTitleCard, `${base}_mask_warm.png`);
+    writePredicateMaskPng(rgb, targetWidth, targetHeight, pixelStrictTitleYellow, `${base}_mask_strict.png`);
+    report.samples.push({
+      label: p.label,
+      frameIndex: idx,
+      timeSec: Math.round(t * 1000) / 1000,
+      fromDenseDecode: {
+        yellowRatio: frameSnap.yellowRatio,
+        warmFullRatio: frameSnap.warmFullRatio,
+        strictFullRatio: frameSnap.strictFullRatio,
+        structureGate: frameSnap.structureGate,
+        lumaStd: frameSnap.lumaStd,
+        edgeMean: frameSnap.edgeMean,
+      },
+      rescoredFromExtractedPng: scored,
+      whyPassedYellowRule: {
+        combinedUses: "max(strictCombined*gate, warmCombined*gate*0.22)",
+        passedEnter: (frameSnap.yellowRatio || 0) >= YELLOW_ENTER_THRESHOLD,
+        note: "Old false-positive runs: high warmCombined with weak strict band; v2 suppresses via structureGate (flat luma + low edges) and strict HSV band.",
+      },
+    });
+  }
+
+  fs.writeFileSync(path.join(debugDir, "first_giant_event_report.json"), JSON.stringify(report, null, 2));
+  console.log("[yellow-first-event-debug]", JSON.stringify(report, null, 2));
+
+  let uploaded = [];
+  if (lessonId) {
+    try {
+      const bucket = admin.storage().bucket();
+      const prefix = `yellow-debug/${lessonId}/${runId}/first-giant-event`;
+      const names = fs.readdirSync(debugDir);
+      for (const name of names) {
+        const localPath = path.join(debugDir, name);
+        const ct = name.endsWith(".json") ? "application/json" : "image/png";
+        const dest = `${prefix}/${name}`;
+        await bucket.upload(localPath, { destination: dest, metadata: { contentType: ct } });
+        uploaded.push(`gs://${bucket.name}/${dest}`);
+      }
+    } catch (e) {
+      console.error("[yellow-first-event-debug] upload failed:", e.message);
+    }
+  }
+
+  try {
+    fs.rmSync(debugDir, { recursive: true, force: true });
+  } catch (e) { /* ignore */ }
+
+  return { runId, gcsPaths: uploaded, report };
+}
+
 /**
  * Saves frame PNGs, mask PNGs, report JSON under Storage prefix yellow-debug/{lessonId}/{runId}/ when upload succeeds.
  */
@@ -859,14 +1126,16 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
       while (buffer.length >= frameSize) {
         const frameData = buffer.slice(0, frameSize);
         buffer = buffer.slice(frameSize);
-        const fullStats = estimateYellowDominance(frameData, targetWidth, targetHeight, 4);
-        const fullRatio = fullStats.yellowRatio;
-        const centerRatio = estimateYellowDominanceCenter(frameData, targetWidth, targetHeight, 4);
-        const combined = Math.max(fullRatio, centerRatio * 0.85 + fullRatio * 0.15);
+        const scored = scoreTitleCardFrame(frameData, targetWidth, targetHeight, 4);
         frameDetections.push({
-          yellowRatio: combined,
-          fullYellowRatio: fullRatio,
-          centerYellowRatio: centerRatio,
+          yellowRatio: scored.yellowRatio,
+          warmFullRatio: scored.warmFullRatio,
+          strictFullRatio: scored.strictFullRatio,
+          warmCombined: scored.warmCombined,
+          strictCombined: scored.strictCombined,
+          structureGate: scored.structureGate,
+          lumaStd: scored.lumaStd,
+          edgeMean: scored.edgeMean,
         });
       }
     });
@@ -880,6 +1149,26 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
       const built = buildYellowEventsFromFrames(frameDetections, frameRate, minDurationSeconds);
       const rawGroupedEvents = built.events;
       const yellowEvents = attachContentStartsToEvents(frameDetections, frameRate, rawGroupedEvents);
+
+      if (yellowEvents.length > 0) {
+        const d0 = yellowEvents[0].duration != null ? yellowEvents[0].duration : 0;
+        if (d0 >= 6) {
+          try {
+            await saveFirstGiantYellowEventDebug({
+              videoPath: video,
+              firstEvent: yellowEvents[0],
+              frameDetections,
+              frameRate,
+              targetWidth,
+              targetHeight,
+              lessonId: options.lessonId || null,
+            });
+          } catch (err) {
+            console.error("[yellow-first-event-debug]", err.message);
+          }
+        }
+      }
+
       const maxYellowRatio = frameDetections.reduce((m, f) => Math.max(m, f.yellowRatio || 0), 0);
       const avgYellowRatio = frameDetections.length
         ? frameDetections.reduce((s, f) => s + (f.yellowRatio || 0), 0) / frameDetections.length

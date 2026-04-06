@@ -3,6 +3,12 @@ var clickedLink = false; // added to allow for display difference when link is c
 var lastSlide; // Will be set after srcArray is loaded
 var firstSlide = 0;
 
+/**
+ * Player timeline loaded from Firestore (see initializePlayer). Must be a real var so
+ * nextSlide/update/safeSrcSegmentAt resolve; window.srcArray alone does not create this binding.
+ */
+var srcArray = [];
+
 /** One-time warnings per slide index for invalid timeline rows (legacy data). */
 var warnedInvalidSlide = {};
 
@@ -27,9 +33,9 @@ function safeSrcSegmentAt(idx) {
     return srcArray[idx];
 }
 
-// Initialize function - called after srcArray is loaded
-function initializePlayer(videoUrl, srcArray) {
-    // Set as global so other parts of the code can still reference it
+// Initialize function - called after timeline array is loaded from Firestore
+function initializePlayer(videoUrl, timelineArray) {
+    srcArray = Array.isArray(timelineArray) ? timelineArray : [];
     window.srcArray = srcArray;
     window.videoUrl = videoUrl;  // make video globally accessible
     warnedInvalidSlide = {};
