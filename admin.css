@@ -848,6 +848,46 @@ html {
     border-color: #3b82f6;
 }
 
+.yellow-events-debug {
+    margin-top: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.yellow-events-debug-summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: #94a3b8;
+}
+
+.yellow-events-debug-hint {
+    font-size: 0.78rem;
+    color: #64748b;
+    margin: 0.35rem 0 0.5rem;
+}
+
+.yellow-events-debug-h4 {
+    font-size: 0.8rem;
+    margin: 0.5rem 0 0.25rem;
+    color: #cbd5e1;
+}
+
+.yellow-events-debug-pre {
+    font-size: 0.72rem;
+    line-height: 1.35;
+    max-height: 220px;
+    overflow: auto;
+    margin: 0;
+    padding: 0.5rem;
+    background: #0f172a;
+    border-radius: 4px;
+    color: #e2e8f0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 .srcarray-editor-empty {
     margin: 1rem 0;
     color: #94a3b8;

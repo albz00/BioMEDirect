@@ -54,9 +54,20 @@ exports.generateSrcArray = onObjectFinalized(
     const object = event.data;
     const filePath = object.name;
     const bucketName = object.bucket;
+    const contentType = (object.contentType && String(object.contentType)) || "";
+    const ext = path.extname(filePath || "").toLowerCase();
+    const VIDEO_EXTS = new Set([".mp4", ".mov", ".webm", ".m4v"]);
 
-    if (!filePath.startsWith("videos/") || !filePath.endsWith(".mp4")) {
-      console.log("Skipping non-video file:", filePath);
+    if (!filePath || filePath.startsWith("yellow-debug/")) {
+      return;
+    }
+    if (!VIDEO_EXTS.has(ext)) {
+      return;
+    }
+    if (contentType && !contentType.startsWith("video/")) {
+      return;
+    }
+    if (!filePath.startsWith("videos/")) {
       return;
     }
 
@@ -1024,6 +1035,72 @@ function mapYellowEventsToChapters(chapterTitles, yellowEvents) {
   };
 }
 
+function buildSegmentBuildExplanation({
+  effectiveChapterTitles,
+  yellowEvents,
+  mappings,
+  extraEvents,
+  srcArray,
+  review,
+}) {
+  const chapters = effectiveChapterTitles || [];
+  const evs = yellowEvents || [];
+  const openingRows = srcArray.filter((s) => s.src_start == null).length;
+  const timedRows = srcArray.filter((s) => s.src_start != null).length;
+
+  const chaptersWithoutYellow = (mappings || [])
+    .filter((m) => m.event == null)
+    .map((m) => ({
+      chapterIndex: m.chapterIndex,
+      title: m.title,
+      status: m.status,
+      reason: "no_yellow_detection_for_this_chapter_slot",
+    }));
+
+  const extraYellowDetail = (extraEvents || []).map((ev, i) => ({
+    detectionOrder: chapters.length + i + 1,
+    eventIndex: ev.eventIndex != null ? ev.eventIndex : i + 1,
+    yellowStart: ev.yellowStart != null ? ev.yellowStart : ev.startTime,
+    yellowEnd: ev.yellowEnd != null ? ev.yellowEnd : ev.endTime,
+    reason: "more_detections_than_chapter_titles_not_assigned_timeline_row",
+  }));
+
+  return {
+    chapterTitlesLoaded: chapters.length,
+    chapterTitlesOrder: chapters.slice(),
+    yellowEventsDetected: evs.length,
+    timelineRowsTotal: srcArray.length,
+    openingRowCount: openingRows,
+    timedChapterRows: timedRows,
+    mappedChapterEventPairs: review.mappedCount,
+    chaptersWithoutMatchingYellow: chaptersWithoutYellow,
+    extraYellowEventsNotMappedToRows: extraYellowDetail,
+    reviewStates: review.states || [],
+    summaryLines: [
+      `${chapters.length} chapter title(s) loaded (ordered)`,
+      `${evs.length} yellow event(s) detected`,
+      `${srcArray.length} srcArray row(s) (${openingRows} opening + ${timedRows} timed)`,
+      evs.length > chapters.length
+        ? `${evs.length - chapters.length} extra detection(s) beyond chapter list (unmapped)`
+        : null,
+      chapters.length > evs.length
+        ? `${chapters.length - evs.length} chapter(s) without a detection`
+        : null,
+    ].filter(Boolean),
+  };
+}
+
+function timelineReviewForSuccessfulGeneration(review) {
+  return {
+    ...review,
+    generationFailed: false,
+    failureReason: null,
+    message: null,
+    videoPath: null,
+    lastSuccessfulGenerationAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+}
+
 function generateChapterAwareSrcArray(mappings, duration) {
   const srcArray = [{
     src_start: null,
@@ -1205,8 +1282,29 @@ async function runDeterministicYellowPipeline({
     // Stage 4: chapter-aware srcArray proposal generation.
     const srcArray = generateChapterAwareSrcArray(mapping.mappings, analysisDuration);
 
+    const segmentBuildExplanation = buildSegmentBuildExplanation({
+      effectiveChapterTitles,
+      yellowEvents,
+      mappings: mapping.mappings,
+      extraEvents: mapping.extraEvents,
+      srcArray,
+      review: mapping.review,
+    });
+
+    yellowDetection.segmentBuildExplanation = segmentBuildExplanation;
+
+    console.log("[yellow-pipeline] mapping", JSON.stringify({
+      source: sourceLabel || "pipeline",
+      chapterTitlesLoaded: effectiveChapterTitles.length,
+      chapterTitlesOrder: effectiveChapterTitles,
+      yellowEventsDetected: yellowEvents.length,
+      srcArrayRows: srcArray.length,
+      mappedPairs: mapping.review.mappedCount,
+      reviewStates: mapping.review.states,
+    }));
+
     // Stage 5: explicit review/mismatch states, easy to render in admin.
-    const review = {
+    const reviewExpanded = {
       ...mapping.review,
       source: sourceLabel || "pipeline",
       duration: analysisDuration,
@@ -1214,6 +1312,7 @@ async function runDeterministicYellowPipeline({
       frameCount: detection.frameCount,
       detectionSummary: detection.detectionSummary || null,
       chapterTitlesCount: effectiveChapterTitles.length,
+      chapterTitlesOrder: effectiveChapterTitles.slice(),
       detectedEventCount: yellowEvents.length,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       refinementHook: {
@@ -1223,6 +1322,9 @@ async function runDeterministicYellowPipeline({
         notes: "Per-segment AI hook; does not run automatically.",
       },
     };
+    const review = yellowEvents.length > 0
+      ? timelineReviewForSuccessfulGeneration(reviewExpanded)
+      : reviewExpanded;
 
     return {
       srcArray,
@@ -1235,6 +1337,7 @@ async function runDeterministicYellowPipeline({
       duration: analysisDuration,
       extraEvents: mapping.extraEvents,
       detectionSummary: detection.detectionSummary || null,
+      segmentBuildExplanation,
     };
   } finally {
     if (prepared.cleanupPrepared && fs.existsSync(prepared.preparedPath)) {
@@ -1542,6 +1645,10 @@ exports.generateSrcArrayWithYellowOptions = onCall(
         reviewStates: pipeline.review.states || [],
         minSegmentSeconds: effectiveMinSeg,
         calibrationReport: pipeline.yellowDetection?.calibrationReport || null,
+        segmentBuildExplanation: pipeline.segmentBuildExplanation || pipeline.yellowDetection?.segmentBuildExplanation || null,
+        chapterTitlesLoaded: pipeline.review?.chapterTitlesCount,
+        chapterTitlesOrder: pipeline.review?.chapterTitlesOrder,
+        yellowEventsDetected: pipeline.yellowEvents?.length,
       };
     } catch (error) {
       console.error("generateSrcArrayWithYellowOptions failed:", error);

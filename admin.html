@@ -242,6 +242,16 @@
                                     <tbody id="srcArrayEditorTbody"></tbody>
                                 </table>
                             </div>
+                            <div id="yellowEventsDebugWrap" class="yellow-events-debug" hidden>
+                                <details open>
+                                    <summary class="yellow-events-debug-summary">Raw yellow events &amp; mapping (persisted)</summary>
+                                    <p class="yellow-events-debug-hint">From <code>yellowDetection.events</code> (fallback: <code>yellowScreenEvents</code>). Mapping explanation from <code>segmentBuildExplanation</code>.</p>
+                                    <h4 class="yellow-events-debug-h4">Events</h4>
+                                    <pre id="yellowEventsDebugEvents" class="yellow-events-debug-pre"></pre>
+                                    <h4 class="yellow-events-debug-h4">Segment build / mapping</h4>
+                                    <pre id="yellowEventsDebugExplain" class="yellow-events-debug-pre"></pre>
+                                </details>
+                            </div>
                             <p id="srcArrayEditorEmpty" class="srcarray-editor-empty">Select a lesson with an assigned video to view or edit the timeline.</p>
                         </div>
                     </div>

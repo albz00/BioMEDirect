@@ -1276,7 +1276,43 @@ async function loadSrcArrayForEditor(lessonId) {
     const srcArray = data.srcArray ? data.srcArray : [];
     const timelinePipeline = data.timelinePipeline || null;
     const timelineReview = data.timelineReview || null;
-    return { lessonId, srcArray, timelinePipeline, timelineReview };
+    const yellowDetection = data.yellowDetection || null;
+    const yellowScreenEvents = data.yellowScreenEvents || null;
+    return { lessonId, srcArray, timelinePipeline, timelineReview, yellowDetection, yellowScreenEvents };
+}
+
+function renderYellowEventsDebugPanel(yellowDetection, yellowScreenEvents) {
+    const wrap = document.getElementById('yellowEventsDebugWrap');
+    const preEv = document.getElementById('yellowEventsDebugEvents');
+    const preEx = document.getElementById('yellowEventsDebugExplain');
+    if (!wrap || !preEv) return;
+    if (yellowDetection == null && yellowScreenEvents == null) {
+        wrap.hidden = true;
+        return;
+    }
+    const fromDet = yellowDetection && Array.isArray(yellowDetection.events) ? yellowDetection.events : null;
+    const events = fromDet || (Array.isArray(yellowScreenEvents) ? yellowScreenEvents : []);
+    const expl = yellowDetection && yellowDetection.segmentBuildExplanation;
+    if (events.length === 0 && !expl) {
+        wrap.hidden = true;
+        return;
+    }
+    wrap.hidden = false;
+    if (events.length) {
+        preEv.textContent = JSON.stringify(events.map((ev) => ({
+            eventIndex: ev.eventIndex,
+            yellowStart: ev.yellowStart != null ? ev.yellowStart : ev.startTime,
+            yellowEnd: ev.yellowEnd != null ? ev.yellowEnd : ev.endTime,
+            contentStart: ev.contentStart,
+            detectionConfidence: ev.detectionConfidence,
+            metrics: ev.metrics,
+        })), null, 2);
+    } else {
+        preEv.textContent = '(no events in yellowDetection.events / yellowScreenEvents)';
+    }
+    if (preEx) {
+        preEx.textContent = expl ? JSON.stringify(expl, null, 2) : '(no segmentBuildExplanation)';
+    }
 }
 
 function renderSrcArrayTable(srcArray, lessonId, chapterTitles) {
@@ -1351,19 +1387,32 @@ async function refreshSrcArrayEditor() {
         currentSrcArrayLessonId = null;
         currentChapterTitlesForEditor = [];
         renderSrcArrayTable([], null, []);
+        renderYellowEventsDebugPanel(null, null);
         if (statusEl) statusEl.textContent = '';
         return;
     }
     if (statusEl) statusEl.textContent = 'Loading…';
     try {
-        const { lessonId, srcArray, timelinePipeline, timelineReview } = await loadSrcArrayForEditor(selectedLessonId);
+        const {
+            lessonId,
+            srcArray,
+            timelinePipeline,
+            timelineReview,
+            yellowDetection,
+            yellowScreenEvents,
+        } = await loadSrcArrayForEditor(selectedLessonId);
         const chapterTitles = await getOrderedChapterTitlesForLesson(selectedLessonId);
         renderSrcArrayTable(srcArray, selectedLessonId, chapterTitles);
+        renderYellowEventsDebugPanel(yellowDetection, yellowScreenEvents);
         if (statusEl) {
             let line = selectedLessonId ? `${srcArray.length} segments` : 'No lesson selected';
-            if (timelinePipeline && timelinePipeline.status === 'no_yellow_detected') {
-                line += ' · Last generate: no yellow detected (see Firestore yellowDetection)';
-            } else if (timelineReview && timelineReview.generationFailed) {
+            const genOk = timelinePipeline && timelinePipeline.status === 'ok';
+            const genFailed = timelineReview && timelineReview.generationFailed === true;
+            if (genOk && !genFailed) {
+                line += ' · Last generate: OK';
+            } else if (timelinePipeline && timelinePipeline.status === 'no_yellow_detected') {
+                line += ' · Last generate: no yellow detected (see yellowDetection)';
+            } else if (genFailed) {
                 line += ' · Last generate failed';
             }
             statusEl.textContent = line;
@@ -1371,6 +1420,7 @@ async function refreshSrcArrayEditor() {
     } catch (e) {
         console.error('refreshSrcArrayEditor:', e);
         renderSrcArrayTable([], null, []);
+        renderYellowEventsDebugPanel(null, null);
         if (statusEl) statusEl.textContent = 'Error loading';
     }
 }
@@ -1499,11 +1549,18 @@ function setupSrcArrayEditorListeners() {
                     return;
                 }
                 const segs = typeof data.segments === 'number' ? data.segments : 'updated';
+                const yEv = typeof data.yellowEventsDetected === 'number' ? data.yellowEventsDetected : null;
                 const ranges = typeof data.yellowRanges === 'number' ? data.yellowRanges : '?';
                 const states = Array.isArray(data.reviewStates) && data.reviewStates.length
                     ? ` Review: ${data.reviewStates.join(', ')}.`
                     : '';
-                setStatus(`Generated ${segs} segments, ${ranges} yellow events.${states}`, 'success');
+                const exp = data.segmentBuildExplanation;
+                const sum = exp && Array.isArray(exp.summaryLines) ? ` ${exp.summaryLines.join(' ')}` : '';
+                const chLine = typeof data.chapterTitlesLoaded === 'number'
+                    ? ` Chapters loaded: ${data.chapterTitlesLoaded}.`
+                    : '';
+                const yLine = yEv != null ? ` Yellow events detected: ${yEv}.` : ` Yellow ranges: ${ranges}.`;
+                setStatus(`Generated ${segs} timeline row(s).${yLine}${chLine}${sum}${states}`, 'success');
 
                 await refreshSrcArrayEditor();
             } catch (e) {
