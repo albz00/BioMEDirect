@@ -3,7 +3,8 @@
  * Isolated OpenAI title-mapping layer (server-side only).
  * Uses the Responses API (POST /v1/responses) with image inputs + structured JSON (json_schema).
  *
- * Env: OPENAI_API_KEY (required), OPENAI_MODEL (default gpt-5.4-mini),
+ * Env (local: functions/.env loaded via dotenv in index.js; deploy: set in Cloud Functions / Firebase):
+ * OPENAI_API_KEY (required), OPENAI_MODEL (default gpt-5.4-mini),
  * OPENAI_TITLE_MAPPING_ENABLED (optional "true")
  */
 
@@ -59,6 +60,19 @@ function getOpenAiConfig() {
 function isAiTitleMappingConfigured() {
   const {apiKey} = getOpenAiConfig();
   return Boolean(apiKey && String(apiKey).trim());
+}
+
+/**
+ * One-line startup log: enabled flag, model, hasApiKey (boolean only). Never logs the key.
+ */
+function logOpenAiTitleMappingEnvHealth() {
+  const cfg = getOpenAiConfig();
+  const hasApiKey = Boolean(cfg.apiKey && String(cfg.apiKey).trim());
+  console.log("[openai-title-mapping env]", JSON.stringify({
+    aiEnabled: cfg.enabled,
+    model: cfg.model,
+    hasApiKey,
+  }));
 }
 
 /**
@@ -213,5 +227,6 @@ module.exports = {
   getOpenAiConfig,
   isAiTitleMappingConfigured,
   callOpenAiChapterMatch,
+  logOpenAiTitleMappingEnvHealth,
   CHAPTER_MATCH_JSON_SCHEMA,
 };

@@ -18,8 +18,10 @@ const { Storage } = require("@google-cloud/storage");
  *   detectYellowFrames            Sparse LAB @ fps; used by older helpers if any; not the dense path
  *   buildSrcArrayFromYellow       Gap-based segments from ranges; legacy; not written on success path now
  */
-const os = require("os");
 const path = require("path");
+require("dotenv").config({path: path.join(__dirname, ".env")});
+
+const os = require("os");
 const fs = require("fs");
 const ffmpegPath = require("ffmpeg-static");
 const { spawn, spawnSync } = require("child_process");
@@ -30,7 +32,10 @@ const {
   getOpenAiConfig,
   isAiTitleMappingConfigured,
   callOpenAiChapterMatch,
+  logOpenAiTitleMappingEnvHealth,
 } = require("./openaiTitleMappingService");
+
+logOpenAiTitleMappingEnvHealth();
 
 admin.initializeApp();
 
