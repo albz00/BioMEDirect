@@ -1208,6 +1208,7 @@ function getLessonCardHTML(lesson) {
 function selectLesson(lessonId) {
     const lesson = lessonsData.find(l => l.lessonId === lessonId);
     if (lesson) collapsedSections.delete(lesson.originalSection);
+    resetAiTitleMappingPanel();
     selectedLessonId = lessonId;
     renderSidebarTree();
     displaySelectedLesson();
@@ -1453,6 +1454,69 @@ function renderSrcArrayTable(srcArray, lessonId, chapterTitles, panelExtras) {
     tbody.innerHTML = rows;
 }
 
+function resetAiTitleMappingPanel() {
+    const st = document.getElementById('aiTitleMappingStatus');
+    const res = document.getElementById('aiTitleMappingResults');
+    if (st) {
+        st.textContent = 'Idle';
+        st.className = 'srcarray-editor-ai-status ai-mapping-idle';
+    }
+    if (res) {
+        res.hidden = true;
+        res.innerHTML = '';
+    }
+}
+
+function setAiTitleMappingStatus(state, message) {
+    const st = document.getElementById('aiTitleMappingStatus');
+    if (!st) return;
+    const map = {
+        idle: 'ai-mapping-idle',
+        running: 'ai-mapping-running',
+        success: 'ai-mapping-success',
+        failed: 'ai-mapping-failed',
+    };
+    st.className = `srcarray-editor-ai-status ${map[state] || map.idle}`;
+    st.textContent = message || state;
+}
+
+function escapeHtmlAdmin(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/"/g, '&quot;');
+}
+
+function renderAiTitleMappingResults(data) {
+    const el = document.getElementById('aiTitleMappingResults');
+    if (!el) return;
+    const rb = data.resultsByEventIndex || {};
+    const keys = Object.keys(rb).sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+    const errs = data.errors || [];
+    let head = `<p><strong>Model:</strong> ${escapeHtmlAdmin(data.model)} · <strong>Processed:</strong> ${data.processedEventCount != null ? data.processedEventCount : '—'} · <strong>Mapped:</strong> ${data.mappedCount != null ? data.mappedCount : '—'} · <strong>Manual review:</strong> ${data.manualReviewCount != null ? data.manualReviewCount : '—'}</p>`;
+    if (errs.length) {
+        head += `<p><strong>Errors (${errs.length}):</strong> ${escapeHtmlAdmin(JSON.stringify(errs))}</p>`;
+    }
+    if (keys.length === 0) {
+        el.innerHTML = head + '<p>No per-event rows in resultsByEventIndex.</p>';
+        el.hidden = false;
+        return;
+    }
+    const rows = keys.map((k) => {
+        const r = rb[k] || {};
+        return `<tr>
+            <td>${escapeHtmlAdmin(k)}</td>
+            <td>${escapeHtmlAdmin(r.bestChapterIndex)}</td>
+            <td>${escapeHtmlAdmin(r.matchedTitle)}</td>
+            <td>${escapeHtmlAdmin(r.confidence)}</td>
+            <td>${escapeHtmlAdmin(r.needsManualReview)}</td>
+            <td>${escapeHtmlAdmin(r.reason)}</td>
+        </tr>`;
+    }).join('');
+    el.innerHTML = head + `<table><thead><tr><th>Event</th><th>Ch#</th><th>Matched title</th><th>Confidence</th><th>Review?</th><th>Reason</th></tr></thead><tbody>${rows}</tbody></table>`;
+    el.hidden = false;
+}
+
 async function refreshSrcArrayEditor() {
     const statusEl = document.getElementById('srcArrayEditorStatus');
     if (!selectedLessonId) {
@@ -1462,6 +1526,7 @@ async function refreshSrcArrayEditor() {
         renderSrcArrayTable([], null, [], {});
         renderYellowEventsDebugPanel(null, null);
         if (statusEl) statusEl.textContent = '';
+        resetAiTitleMappingPanel();
         return;
     }
     if (statusEl) statusEl.textContent = 'Loading…';
@@ -1659,6 +1724,71 @@ function setupSrcArrayEditorListeners() {
                 setStatus('Error generating timeline: ' + e.message, 'error');
             } finally {
                 setButtonLoading(generateBtn, false);
+            }
+        });
+    }
+
+    const aiTitleMappingBtn = document.getElementById('aiTitleMappingBtn');
+    if (aiTitleMappingBtn) {
+        aiTitleMappingBtn.addEventListener('click', async () => {
+            const resEl = document.getElementById('aiTitleMappingResults');
+            if (!selectedLessonId) {
+                setAiTitleMappingStatus('failed', 'Select a lesson first');
+                setStatus('Select a lesson first', 'error');
+                return;
+            }
+            try {
+                requireAuth();
+            } catch (err) {
+                setAiTitleMappingStatus('failed', 'Authentication required');
+                setStatus('Authentication required', 'error');
+                return;
+            }
+
+            setButtonLoading(aiTitleMappingBtn, true);
+            setAiTitleMappingStatus('running', 'Running…');
+            if (resEl) {
+                resEl.hidden = true;
+                resEl.innerHTML = '';
+            }
+
+            try {
+                const mapFn = functions.httpsCallable('mapYellowEventsToChaptersWithAI', {
+                    timeout: 540000,
+                });
+                const result = await mapFn({ lessonId: selectedLessonId });
+                const data = result.data || {};
+
+                if (data.success === false) {
+                    const msg = data.message || data.reason || 'AI title mapping failed';
+                    setAiTitleMappingStatus('failed', msg);
+                    if (resEl) {
+                        resEl.innerHTML = `<p>${escapeHtmlAdmin(msg)}</p>`;
+                        resEl.hidden = false;
+                    }
+                    setStatus(`AI title mapping: ${msg}`, 'error');
+                    return;
+                }
+
+                const line = `OK · processed ${data.processedEventCount}, mapped ${data.mappedCount}, manual review ${data.manualReviewCount}`;
+                setAiTitleMappingStatus('success', line);
+                renderAiTitleMappingResults(data);
+                setStatus('AI title mapping completed', 'success');
+                await refreshSrcArrayEditor();
+            } catch (err) {
+                console.error('mapYellowEventsToChaptersWithAI failed:', err);
+                let msg = err.message || String(err);
+                if (err.code === 'functions/failed-precondition') {
+                    msg = 'Server: OPENAI_API_KEY missing or AI not configured.';
+                }
+                setAiTitleMappingStatus('failed', msg);
+                if (resEl) {
+                    resEl.innerHTML = `<p>${escapeHtmlAdmin(msg)}</p>`;
+                    resEl.hidden = false;
+                }
+                setStatus('AI title mapping failed: ' + msg, 'error');
+            } finally {
+                setButtonLoading(aiTitleMappingBtn, false);
             }
         });
     }

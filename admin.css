@@ -714,6 +714,66 @@ html {
     line-height: 1.35;
 }
 
+.srcarray-editor-ai-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin: 0.75rem 0 0.25rem;
+    width: 100%;
+}
+
+.srcarray-editor-ai-status {
+    margin: 0;
+    font-size: 0.82rem;
+    color: #94a3b8;
+}
+
+.srcarray-editor-ai-status.ai-mapping-idle {
+    color: #94a3b8;
+}
+
+.srcarray-editor-ai-status.ai-mapping-running {
+    color: #fbbf24;
+}
+
+.srcarray-editor-ai-status.ai-mapping-success {
+    color: #34d399;
+}
+
+.srcarray-editor-ai-status.ai-mapping-failed {
+    color: #f87171;
+}
+
+.srcarray-editor-ai-results {
+    margin: 0.5rem 0 0.75rem;
+    padding: 0.5rem 0.65rem;
+    border-radius: 6px;
+    background: rgba(15, 23, 42, 0.65);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    font-size: 0.8rem;
+    max-height: 280px;
+    overflow: auto;
+}
+
+.srcarray-editor-ai-results table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.srcarray-editor-ai-results th,
+.srcarray-editor-ai-results td {
+    padding: 0.25rem 0.4rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    text-align: left;
+    vertical-align: top;
+}
+
+.srcarray-editor-ai-results th {
+    color: #94a3b8;
+    font-weight: 600;
+}
+
 .srcarray-editor-status {
     font-size: 0.85rem;
     color: #94a3b8;

@@ -891,6 +891,28 @@ async function mergeLessonAiChapterMapping(lessonId, patch) {
   await ref.set({ yellowDetection: prevYd }, { merge: true });
 }
 
+/** Callable responses must not include FieldValue / sentinel objects. */
+function sanitizeAiChapterMappingResultsForClient(map) {
+  const out = {};
+  if (!map || typeof map !== "object") return out;
+  for (const k of Object.keys(map)) {
+    const v = map[k];
+    if (!v || typeof v !== "object") continue;
+    out[k] = {
+      bestChapterIndex: v.bestChapterIndex,
+      matchedTitle: v.matchedTitle,
+      normalizedTitle: v.normalizedTitle,
+      confidence: v.confidence,
+      startAdjustmentSec: v.startAdjustmentSec,
+      endAdjustmentSec: v.endAdjustmentSec,
+      reason: v.reason,
+      needsManualReview: v.needsManualReview,
+      model: v.model,
+    };
+  }
+  return out;
+}
+
 /**
  * @param {string} lessonId
  * @param {number[]} eventIndexesZeroBased
@@ -900,7 +922,9 @@ async function runAiChapterMappingForEventIndexes(lessonId, eventIndexesZeroBase
   const cfg = getOpenAiConfig();
   if (!cfg.enabled) {
     return {
+      success: false,
       ok: false,
+      lessonId,
       reason: "ai_disabled",
       message: "Set OPENAI_TITLE_MAPPING_ENABLED=true (Firebase Functions env).",
     };
@@ -916,19 +940,37 @@ async function runAiChapterMappingForEventIndexes(lessonId, eventIndexesZeroBase
   const lesson = lessonSnap.data();
   const events = lesson.yellowScreenEvents || (lesson.yellowDetection && lesson.yellowDetection.events) || [];
   if (!events.length) {
-    return { ok: false, reason: "no_yellow_events", message: "No yellowScreenEvents / yellowDetection.events on lesson." };
+    return {
+      success: false,
+      ok: false,
+      lessonId,
+      reason: "no_yellow_events",
+      message: "No yellowScreenEvents / yellowDetection.events on lesson.",
+    };
   }
 
   const chapterTitles = await loadOrderedChapterTitles(lessonId);
   if (!chapterTitles.length) {
-    return { ok: false, reason: "no_chapters", message: "lessonMetadata chapterOrder / titles missing." };
+    return {
+      success: false,
+      ok: false,
+      lessonId,
+      reason: "no_chapters",
+      message: "lessonMetadata chapterOrder / titles missing.",
+    };
   }
 
   const indexes = (eventIndexesZeroBased || [])
     .map((x) => parseInt(String(x), 10))
     .filter((i) => Number.isFinite(i) && i >= 0 && i < events.length);
   if (!indexes.length) {
-    return { ok: false, reason: "no_event_indexes", message: "No valid event indexes in range." };
+    return {
+      success: false,
+      ok: false,
+      lessonId,
+      reason: "no_event_indexes",
+      message: "No valid event indexes in range.",
+    };
   }
 
   let localPath = null;
@@ -1023,13 +1065,24 @@ async function runAiChapterMappingForEventIndexes(lessonId, eventIndexesZeroBase
       lastRunErrors: errors,
     });
 
+    const processedEventCount = indexes.length;
+    const mappedCount = results.length;
+    const manualReviewCount = results.filter((r) => r.needsManualReview === true).length;
+    const allFailed = mappedCount === 0 && errors.length > 0;
+
     return {
-      ok: true,
+      success: !allFailed,
+      lessonId,
+      processedEventCount,
+      mappedCount,
+      manualReviewCount,
       model: cfg.model,
-      processed: results.length,
+      resultsByEventIndex: sanitizeAiChapterMappingResultsForClient(resultsByEventIndex),
       errors,
       results,
-      resultsByEventIndex,
+      ok: !allFailed,
+      processed: mappedCount,
+      reason: allFailed ? "all_events_failed" : undefined,
     };
   } finally {
     if (localPath && fs.existsSync(localPath)) {

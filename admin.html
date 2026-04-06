@@ -223,6 +223,11 @@
                                 </div>
                                 <span id="srcArrayEditorStatus" class="srcarray-editor-status"></span>
                                 <p class="srcarray-editor-hint">Dense scan uses native video FPS (not configurable here). Playback start/end are content after yellow. Chapter names come from the chapter editor; yellow/source/confidence are debug-only.</p>
+                                <div class="srcarray-editor-ai-row">
+                                    <button type="button" id="aiTitleMappingBtn" class="btn btn-secondary btn-sm">Run AI Title Mapping</button>
+                                    <p id="aiTitleMappingStatus" class="srcarray-editor-ai-status ai-mapping-idle" aria-live="polite">Idle</p>
+                                </div>
+                                <div id="aiTitleMappingResults" class="srcarray-editor-ai-results" hidden></div>
                             </div>
                             <div class="srcarray-editor-table-wrap">
                                 <table class="srcarray-editor-table" id="srcArrayEditorTable">
