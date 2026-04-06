@@ -12,6 +12,11 @@ var srcArray = [];
 /** One-time warnings per slide index for invalid timeline rows (legacy data). */
 var warnedInvalidSlide = {};
 
+/** Nudge past yellow/content boundary so the first decoded frame is content, not the tail of a yellow card. */
+var CONTENT_SEEK_LEAD_IN_SEC = 0.1;
+/** When skipping yellow intervals, land clearly after the detected end (seconds). */
+var YELLOW_RANGE_SKIP_EPS_SEC = 0.1;
+
 // Need to add 1 to lastSlide to account for extra click to return to menu at end
 
 function isOpeningUIRow(seg) {
@@ -38,7 +43,7 @@ function safeSrcSegmentAt(idx) {
  * (prefer contentStart), advance to just past any overlapping yellowScreenRanges (safety net).
  */
 function ensureSeekPastYellowRanges(t) {
-    var eps = 0.08;
+    var eps = YELLOW_RANGE_SKIP_EPS_SEC;
     var cur = Number(t);
     if (!isFinite(cur)) return t;
     var ranges = typeof window !== "undefined" ? window.yellowScreenRanges : null;
@@ -96,12 +101,12 @@ function initializePlayer(videoUrl, timelineArray) {
         // If we are inside a yellow-screen range and skipping is enabled, jump past it
         if (typeof window.shouldSkipYellow !== 'undefined' && window.shouldSkipYellow &&
             Array.isArray(window.yellowScreenRanges) && window.yellowScreenRanges.length > 0) {
-            var eps = 0.05;
+            var epsSkip = YELLOW_RANGE_SKIP_EPS_SEC;
             for (var i = 0; i < window.yellowScreenRanges.length; i++) {
                 var r = window.yellowScreenRanges[i];
                 if (!r || typeof r.start !== 'number' || typeof r.end !== 'number') continue;
                 if (t >= r.start && t < r.end) {
-                    this.currentTime = r.end + eps;
+                    this.currentTime = r.end + epsSkip;
                     return;
                 }
             }
@@ -193,16 +198,21 @@ function updateVideoId(play=true){ // FindMe3
             // If yellowScreenRanges are defined globally (from Firestore), and we are
             // supposed to skip them, move the start just past any yellow block.
             if (typeof window.shouldSkipYellow !== 'undefined' && window.shouldSkipYellow && Array.isArray(window.yellowScreenRanges)) {
-                var eps = 0.05;
+                var epsNav = YELLOW_RANGE_SKIP_EPS_SEC;
                 for (var i = 0; i < window.yellowScreenRanges.length; i++) {
                     var r = window.yellowScreenRanges[i];
                     if (!r || typeof r.start !== 'number' || typeof r.end !== 'number') continue;
                     if (startTime >= r.start && startTime < r.end) {
-                        startTime = r.end + eps;
+                        startTime = r.end + epsNav;
                     }
                 }
             }
             startTime = ensureSeekPastYellowRanges(startTime);
+            startTime += CONTENT_SEEK_LEAD_IN_SEC;
+            var segEnd = Number(seg.src_end);
+            if (isFinite(segEnd) && startTime > segEnd - 0.02) {
+                startTime = segEnd - 0.035;
+            }
 			videoId.currentTime = startTime;
 	}
 	else {
