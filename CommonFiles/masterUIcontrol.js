@@ -23,6 +23,7 @@ var PAUSE_AT_YELLOW_MARKERS = true;
 var yellowMarkers = [];
 var nextYellowMarkerIdx = 0;
 var pausedAtYellowMarkerIdx = -1;
+var lastPlaybackTimeForMarkerCheck = null;
 
 // Need to add 1 to lastSlide to account for extra click to return to menu at end
 
@@ -124,6 +125,7 @@ function initializePlayer(videoUrl, timelineArray) {
     // Pause all videos upon loading
     videoId.pause();
     loadYellowMarkersFromWindow();
+    lastPlaybackTimeForMarkerCheck = null;
     if (typeof window !== "undefined" && typeof window.pauseAtYellowMarkersEnabled === "boolean") {
         PAUSE_AT_YELLOW_MARKERS = window.pauseAtYellowMarkersEnabled;
     } else {
@@ -140,6 +142,7 @@ function initializePlayer(videoUrl, timelineArray) {
         }
         pausedAtYellowMarkerIdx = -1;
         advanceMarkerCursorToTime(this.currentTime);
+        lastPlaybackTimeForMarkerCheck = Number(this.currentTime);
     });
     
     // Listener to pause video when reach specified time and implements looping // FindMe4
@@ -148,18 +151,42 @@ function initializePlayer(videoUrl, timelineArray) {
 
         if (CONTINUOUS_VIDEO_PLAYBACK) {
             if (PAUSE_AT_YELLOW_MARKERS && yellowMarkers.length > 0) {
+                var prev = Number(lastPlaybackTimeForMarkerCheck);
+                if (!isFinite(prev)) prev = Number(t);
                 advanceMarkerCursorToTime(t);
                 if (nextYellowMarkerIdx < yellowMarkers.length) {
                     var mk = yellowMarkers[nextYellowMarkerIdx];
-                    if (t >= mk.start && t <= mk.end + YELLOW_RANGE_SKIP_EPS_SEC) {
+                    var crossedStart = prev < mk.start && t >= mk.start;
+                    var landedInside = t >= mk.start && t <= mk.end + YELLOW_RANGE_SKIP_EPS_SEC;
+                    var shouldPauseAtMarker = crossedStart || landedInside;
+                    console.log("[yellow-marker-check]", JSON.stringify({
+                        markerIndex: nextYellowMarkerIdx,
+                        previousTime: Math.round(prev * 1000) / 1000,
+                        currentTime: Math.round(t * 1000) / 1000,
+                        markerStart: Math.round(mk.start * 1000) / 1000,
+                        markerEnd: Math.round(mk.end * 1000) / 1000,
+                        crossedStart: crossedStart,
+                        landedInside: landedInside,
+                        markerPauseFired: shouldPauseAtMarker,
+                    }));
+                    if (shouldPauseAtMarker) {
                         this.pause();
                         this.currentTime = mk.start;
                         pausedAtYellowMarkerIdx = nextYellowMarkerIdx;
+                        console.log("[yellow-marker-pause-fired]", JSON.stringify({
+                            markerIndex: nextYellowMarkerIdx,
+                            previousTime: Math.round(prev * 1000) / 1000,
+                            currentTime: Math.round(t * 1000) / 1000,
+                            markerStart: Math.round(mk.start * 1000) / 1000,
+                            markerEnd: Math.round(mk.end * 1000) / 1000,
+                        }));
                         nextYellowMarkerIdx++;
+                        lastPlaybackTimeForMarkerCheck = Number(this.currentTime);
                         return;
                     }
                 }
             }
+            lastPlaybackTimeForMarkerCheck = Number(t);
             return;
         }
 
@@ -197,6 +224,7 @@ function initializePlayer(videoUrl, timelineArray) {
                 this.pause();
             }
         }
+        lastPlaybackTimeForMarkerCheck = Number(t);
     });
 }
 
