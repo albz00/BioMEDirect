@@ -26,7 +26,6 @@ var pausedAtYellowMarkerIdx = -1;
 var lastPlaybackTimeForMarkerCheck = null;
 var guidedPlaybackState = "idle"; // idle | playing_to_marker | paused_at_marker | completed
 var guidedTargetMarkerIdx = -1;
-var maskedSeekPending = null;
 
 // Need to add 1 to lastSlide to account for extra click to return to menu at end
 
@@ -107,9 +106,6 @@ function loadYellowMarkersFromWindow() {
     nextYellowMarkerIdx = 0;
     pausedAtYellowMarkerIdx = -1;
     guidedTargetMarkerIdx = -1;
-    console.log("[guided-playback][markers-loaded]", JSON.stringify({
-        markerCount: yellowMarkers.length,
-    }));
 }
 
 function advanceMarkerCursorToTime(t) {
@@ -118,109 +114,15 @@ function advanceMarkerCursorToTime(t) {
     }
 }
 
-function setTransitionShield(on, reason) {
-    var v = document.getElementById("videoId");
-    if (!v) return;
-    if (on) {
-        v.style.opacity = "0";
-    } else {
-        v.style.opacity = "";
-    }
-    console.log("[guided-playback][transition-shield]", JSON.stringify({
-        on: on === true,
-        reason: reason || null,
-        currentTime: isFinite(Number(v.currentTime)) ? Math.round(Number(v.currentTime) * 1000) / 1000 : null,
-    }));
-}
-
-function isTimeInsideYellowRange(t) {
-    var x = Number(t);
-    if (!isFinite(x)) return false;
-    if (!Array.isArray(yellowMarkers) || yellowMarkers.length === 0) return false;
-    for (var i = 0; i < yellowMarkers.length; i++) {
-        var mk = yellowMarkers[i];
-        if (!mk) continue;
-        if (x >= mk.start - 0.001 && x <= mk.end + 0.02) return true;
-    }
-    return false;
-}
-
-function startMaskedSeek(targetTime, reason, onReveal) {
-    var v = document.getElementById("videoId");
-    if (!v) return;
-    var target = Number(targetTime);
-    if (!isFinite(target)) return;
-    maskedSeekPending = {
-        reason: reason || "masked_seek",
-        targetTime: target,
-        onReveal: typeof onReveal === "function" ? onReveal : null,
-    };
-    console.log("[guided-playback][transition-started]", JSON.stringify({
-        reason: maskedSeekPending.reason,
-        resolvedTargetTime: Math.round(target * 1000) / 1000,
-    }));
-    setTransitionShield(true, maskedSeekPending.reason);
-    v.currentTime = target;
-}
-
-function finalizeMaskedSeekReveal(videoEl) {
-    var pending = maskedSeekPending;
-    if (!pending) return;
-    var t = Number(videoEl.currentTime);
-    var post = ensureSeekPastYellowRanges(t);
-    var needsNudge = isFinite(post) && Math.abs(post - t) > 1e-6;
-    if (!needsNudge) {
-        if (isTimeInsideYellowRange(t)) {
-            var n = ensureSeekPastYellowRanges(t + 0.02);
-            if (isFinite(n) && n > t + 0.001) {
-                post = n;
-                needsNudge = true;
-            }
-        }
-    }
-    console.log("[guided-playback][seeked-fired]", JSON.stringify({
-        reason: pending.reason,
-        seekedTime: Math.round(t * 1000) / 1000,
-        resolvedPostSeek: Math.round(Number(post) * 1000) / 1000,
-        extraNudgeNeeded: needsNudge,
-    }));
-    if (needsNudge) {
-        videoEl.currentTime = post;
-        console.log("[guided-playback][extra-nudge-applied]", JSON.stringify({
-            reason: pending.reason,
-            nudgedTo: Math.round(Number(post) * 1000) / 1000,
-        }));
-        return;
-    }
-
-    var reveal = function() {
-        var now = Number(videoEl.currentTime);
-        setTransitionShield(false, pending.reason);
-        console.log("[guided-playback][final-reveal]", JSON.stringify({
-            reason: pending.reason,
-            finalRevealTime: Math.round(now * 1000) / 1000,
-            shieldOff: true,
-        }));
-        maskedSeekPending = null;
-        if (pending.onReveal) {
-            try { pending.onReveal(); } catch (e) { console.log(e); }
-        }
-    };
-    if (typeof videoEl.requestVideoFrameCallback === "function") {
-        videoEl.requestVideoFrameCallback(function() { reveal(); });
-    } else {
-        setTimeout(reveal, 0);
-    }
-}
 
 function setGuidedPlaybackState(nextState, reason) {
     guidedPlaybackState = nextState;
-    console.log("[guided-playback][state]", JSON.stringify({
-        state: guidedPlaybackState,
-        reason: reason || null,
+    console.log("[player-debug]", JSON.stringify({
+        event: "state",
+        mode: guidedPlaybackState,
         currentTime: isFinite(Number(videoId.currentTime)) ? Math.round(Number(videoId.currentTime) * 1000) / 1000 : null,
         nextMarkerIndex: nextYellowMarkerIdx,
-        targetMarkerIndex: guidedTargetMarkerIdx,
+        reason: reason || null,
     }));
 }
 
@@ -231,12 +133,12 @@ function beginPlayToNextMarker(reason) {
     advanceMarkerCursorToTime(t);
     guidedTargetMarkerIdx = nextYellowMarkerIdx < yellowMarkers.length ? nextYellowMarkerIdx : -1;
     setGuidedPlaybackState("playing_to_marker", reason || "play_to_next_marker");
-    console.log("[guided-playback][play_to_marker_start]", JSON.stringify({
-        reason: reason || null,
+    console.log("[player-debug]", JSON.stringify({
+        event: "play_to_marker_start",
+        mode: guidedPlaybackState,
         currentTime: Math.round(t * 1000) / 1000,
-        targetMarkerIndex: guidedTargetMarkerIdx,
-        markerStart: guidedTargetMarkerIdx >= 0 ? Math.round(yellowMarkers[guidedTargetMarkerIdx].start * 1000) / 1000 : null,
-        markerEnd: guidedTargetMarkerIdx >= 0 ? Math.round(yellowMarkers[guidedTargetMarkerIdx].end * 1000) / 1000 : null,
+        nextMarkerIndex: guidedTargetMarkerIdx,
+        reason: reason || null,
     }));
 }
 
@@ -245,15 +147,15 @@ function resolvePostYellowStopTime(marker, markerIndex, logReason) {
     var base = Number(marker.end) + YELLOW_RANGE_SKIP_EPS_SEC;
     var resolved = ensureSeekPastYellowRanges(base);
     var leapfrogAdjusted = Math.abs(resolved - base) > 1e-6;
-    console.log("[guided-playback][resolved-stop-point]", JSON.stringify({
-        reason: logReason || null,
-        markerIndex: markerIndex,
-        yellowStart: Math.round(Number(marker.start) * 1000) / 1000,
-        yellowEnd: Math.round(Number(marker.end) * 1000) / 1000,
-        basePostYellow: Math.round(base * 1000) / 1000,
-        contentStartResolved: Math.round(Number(resolved) * 1000) / 1000,
-        leapfrogHelperCalled: true,
+    console.log("[player-debug]", JSON.stringify({
+        event: "resolved_post_yellow_target",
+        mode: guidedPlaybackState,
+        currentTime: isFinite(Number(videoId.currentTime)) ? Math.round(Number(videoId.currentTime) * 1000) / 1000 : null,
+        nextMarkerIndex: markerIndex,
+        chosenSeekTarget: Math.round(base * 1000) / 1000,
+        resolvedPostYellowTarget: Math.round(Number(resolved) * 1000) / 1000,
         leapfrogAdjusted: leapfrogAdjusted,
+        reason: logReason || null,
     }));
     return resolved;
 }
@@ -279,40 +181,28 @@ function initializePlayer(videoUrl, timelineArray) {
         PAUSE_AT_YELLOW_MARKERS = true;
     }
     setGuidedPlaybackState("idle", "initialize");
-    videoId.addEventListener("seeked", function() {
-        if (!maskedSeekPending) return;
-        finalizeMaskedSeekReveal(this);
-    });
 
     videoId.addEventListener("play", function() {
         if (!CONTINUOUS_VIDEO_PLAYBACK) return;
-        if (pausedAtYellowMarkerIdx < 0 || pausedAtYellowMarkerIdx >= yellowMarkers.length) return;
-        var resumedMarkerIdx = pausedAtYellowMarkerIdx;
-        var mk = yellowMarkers[resumedMarkerIdx];
-        var tNow = Number(this.currentTime);
-        if (isFinite(tNow) && tNow >= mk.start - 0.05 && tNow <= mk.end + 0.1) {
-            var resumeTarget = resolvePostYellowStopTime(mk, resumedMarkerIdx, "resume_after_marker_seek");
-            var self = this;
+        if (pausedAtYellowMarkerIdx >= 0 && pausedAtYellowMarkerIdx < yellowMarkers.length) {
+            var resumedMarkerIdx = pausedAtYellowMarkerIdx;
+            var mk = yellowMarkers[resumedMarkerIdx];
+            var resumeTarget = resolvePostYellowStopTime(mk, resumedMarkerIdx, "resume_after_marker");
+            if (isFinite(Number(resumeTarget))) {
+                this.currentTime = Number(resumeTarget);
+            }
             pausedAtYellowMarkerIdx = -1;
-            startMaskedSeek(resumeTarget, "resume_after_marker", function() {
-                try { self.play(); } catch (err) { console.log(err); }
-            });
+            advanceMarkerCursorToTime(this.currentTime);
+            lastPlaybackTimeForMarkerCheck = Number(this.currentTime);
+            beginPlayToNextMarker("resume_after_marker");
+            console.log("[player-debug]", JSON.stringify({
+                event: "resume_fired",
+                mode: guidedPlaybackState,
+                currentTime: Math.round(Number(this.currentTime) * 1000) / 1000,
+                nextMarkerIndex: nextYellowMarkerIdx,
+            }));
             return;
         }
-        pausedAtYellowMarkerIdx = -1;
-        advanceMarkerCursorToTime(this.currentTime);
-        lastPlaybackTimeForMarkerCheck = Number(this.currentTime);
-        beginPlayToNextMarker("resume_after_marker");
-        console.log("[guided-playback][resume_after_marker]", JSON.stringify({
-            currentTime: Math.round(Number(this.currentTime) * 1000) / 1000,
-            resumedPastMarkerIndex: resumedMarkerIdx,
-            nextMarkerIndex: nextYellowMarkerIdx,
-        }));
-    });
-
-    videoId.addEventListener("play", function() {
-        if (!CONTINUOUS_VIDEO_PLAYBACK) return;
-        if (maskedSeekPending) return;
         if (guidedPlaybackState !== "playing_to_marker") {
             beginPlayToNextMarker("play_event");
         }
@@ -337,34 +227,22 @@ function initializePlayer(videoUrl, timelineArray) {
                 if (guidedPlaybackState === "playing_to_marker" && guidedTargetMarkerIdx >= 0 && guidedTargetMarkerIdx < yellowMarkers.length) {
                     var mk = yellowMarkers[guidedTargetMarkerIdx];
                     var crossedStart = prev < mk.start && t >= mk.start;
-                    var landedInside = t >= mk.start && t <= mk.end + YELLOW_RANGE_SKIP_EPS_SEC;
-                    var shouldPauseAtMarker = crossedStart || landedInside;
-                    console.log("[yellow-marker-check]", JSON.stringify({
-                        markerIndex: guidedTargetMarkerIdx,
-                        previousTime: Math.round(prev * 1000) / 1000,
-                        currentTime: Math.round(t * 1000) / 1000,
-                        markerStart: Math.round(mk.start * 1000) / 1000,
-                        markerEnd: Math.round(mk.end * 1000) / 1000,
-                        crossedStart: crossedStart,
-                        landedInside: landedInside,
-                        markerPauseFired: shouldPauseAtMarker,
-                    }));
-                    if (shouldPauseAtMarker) {
+                    if (crossedStart) {
                         var resolvedStop = resolvePostYellowStopTime(mk, guidedTargetMarkerIdx, "marker_crossing_pause");
                         this.pause();
                         var stopTarget = isFinite(Number(resolvedStop)) ? Number(resolvedStop) : (mk.end + YELLOW_RANGE_SKIP_EPS_SEC);
-                        startMaskedSeek(stopTarget, "pause_at_marker");
+                        this.currentTime = stopTarget;
                         pausedAtYellowMarkerIdx = guidedTargetMarkerIdx;
                         nextYellowMarkerIdx = guidedTargetMarkerIdx + 1;
                         guidedTargetMarkerIdx = -1;
                         setGuidedPlaybackState("paused_at_marker", "marker_reached");
-                        console.log("[yellow-marker-pause-fired]", JSON.stringify({
-                            markerIndex: pausedAtYellowMarkerIdx,
-                            previousTime: Math.round(prev * 1000) / 1000,
-                            currentTime: Math.round(t * 1000) / 1000,
-                            markerStart: Math.round(mk.start * 1000) / 1000,
-                            markerEnd: Math.round(mk.end * 1000) / 1000,
-                            stopAt: Math.round(Number(stopTarget) * 1000) / 1000,
+                        console.log("[player-debug]", JSON.stringify({
+                            event: "marker_pause_fired",
+                            mode: guidedPlaybackState,
+                            currentTime: Math.round(Number(stopTarget) * 1000) / 1000,
+                            nextMarkerIndex: nextYellowMarkerIdx,
+                            chosenSeekTarget: Math.round(Number(mk.start) * 1000) / 1000,
+                            resolvedPostYellowTarget: Math.round(Number(stopTarget) * 1000) / 1000,
                         }));
                         lastPlaybackTimeForMarkerCheck = Number(stopTarget);
                         return;
@@ -491,11 +369,18 @@ function updateVideoId(play=true){ // FindMe3
             if (isFinite(segEnd) && startTime > segEnd - 0.02) {
                 startTime = segEnd - 0.035;
             }
+            videoId.currentTime = startTime;
             if (CONTINUOUS_VIDEO_PLAYBACK) {
                 beginPlayToNextMarker("chapter_jump_play");
-                startMaskedSeek(startTime, "chapter_jump", function() {
-                    try { videoId.play(); } catch (err) { console.log(err); }
-                });
+                console.log("[player-debug]", JSON.stringify({
+                    event: "chapter_seek_target",
+                    mode: guidedPlaybackState,
+                    currentTime: isFinite(Number(videoId.currentTime)) ? Math.round(Number(videoId.currentTime) * 1000) / 1000 : null,
+                    nextMarkerIndex: guidedTargetMarkerIdx,
+                    chosenSeekTarget: Math.round(Number(startTime) * 1000) / 1000,
+                    resolvedPostYellowTarget: Math.round(Number(startTime) * 1000) / 1000,
+                }));
+                try { videoId.play(); } catch (err) { console.log(err); }
             }
 	}
 	else {
@@ -513,7 +398,7 @@ function updateVideoId(play=true){ // FindMe3
                     }
                 }
             }
-            startMaskedSeek(endTime, "chapter_anchor_preview");
+            videoId.currentTime = endTime;
             if (CONTINUOUS_VIDEO_PLAYBACK) {
                 try { videoId.pause(); } catch (err2) { console.log(err2); }
                 setGuidedPlaybackState("idle", "chapter_anchor_preview");
@@ -564,7 +449,7 @@ function update(playVid){ // FindMe2
 		$('#lesson').css('display', 'block');
 	}
 
-	console.log(currentSlide);
+	// currentSlide UI index; keep quiet to avoid debug spam.
     
     if (currentSlide > 0 && currentSlide < srcArray.length) {
     	if (playVid) {
@@ -585,9 +470,10 @@ function update(playVid){ // FindMe2
 //Adds one to currentSlide, i.e. defines currentSlide as the next stop point
 function nextSlide(){ // FindMe1
     if (CONTINUOUS_VIDEO_PLAYBACK && guidedPlaybackState === "paused_at_marker") {
-        console.log("[guided-playback][resume_click]", JSON.stringify({
+        console.log("[player-debug]", JSON.stringify({
+            event: "resume_fired",
+            mode: guidedPlaybackState,
             currentTime: isFinite(Number(videoId.currentTime)) ? Math.round(Number(videoId.currentTime) * 1000) / 1000 : null,
-            pausedAtMarkerIndex: pausedAtYellowMarkerIdx,
             nextMarkerIndex: nextYellowMarkerIdx,
         }));
         try { videoId.play(); } catch (err) { console.log(err); }
