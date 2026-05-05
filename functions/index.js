@@ -635,6 +635,14 @@ function buildYellowEventsFromFrames(frameDetections, frameRate, minDurationSeco
   if (!frameDetections.length) {
     return {
       events: [],
+      rawCandidateSpans: [],
+      candidateSpanSummary: {
+        candidateSpanCount: 0,
+        survivingSpanCount: 0,
+        shortestCandidate: null,
+        longestCandidate: null,
+        minDurationSecondsUsed: minDurationSeconds,
+      },
       stats: {
         framesDecoded: 0,
         framesAtOrAboveEnter: 0,
@@ -663,18 +671,36 @@ function buildYellowEventsFromFrames(frameDetections, frameRate, minDurationSeco
   let sumYellow = 0;
   let metricFrames = 0;
   const events = [];
+  const rawCandidateSpans = [];
   let eventsRejectedTooShort = 0;
 
   const closeEvent = (endIdx) => {
     const frames = endIdx - eventStartIdx + 1;
+    const avgYellow = metricFrames > 0 ? sumYellow / metricFrames : 0;
+    const startTime = eventStartIdx * frameInterval;
+    const endTime = (endIdx + 1) * frameInterval;
+    const duration = endTime - startTime;
+    const rejected = frames < minFrames;
+    const rejectionReason = rejected ? "below_min_duration_seconds" : "accepted";
+    rawCandidateSpans.push({
+      startFrame: eventStartIdx,
+      endFrame: endIdx,
+      startTime: Math.round(startTime * 1000) / 1000,
+      endTime: Math.round(endTime * 1000) / 1000,
+      duration: Math.round(duration * 1000) / 1000,
+      averageYellowRatio: Math.round(avgYellow * 1000) / 1000,
+      peakYellowRatio: Math.round(peakYellow * 1000) / 1000,
+      minDurationSecondsUsed: minDurationSeconds,
+      minFramesRequired: minFrames,
+      frames,
+      rejected,
+      rejectionReason,
+    });
     if (frames < minFrames) {
       eventsRejectedTooShort++;
       return;
     }
-    const avgYellow = metricFrames > 0 ? sumYellow / metricFrames : 0;
     const confidence = clamp((avgYellow - exitThreshold) / 0.32, 0, 1);
-    const startTime = eventStartIdx * frameInterval;
-    const endTime = (endIdx + 1) * frameInterval;
     events.push({
       eventIndex: events.length + 1,
       startFrame: eventStartIdx,
@@ -725,9 +751,20 @@ function buildYellowEventsFromFrames(frameDetections, frameRate, minDurationSeco
   }
 
   if (inEvent) closeEvent(lastYellowIdx >= 0 ? lastYellowIdx : frameDetections.length - 1);
+  const durations = rawCandidateSpans.map((s) => s.duration).filter((d) => Number.isFinite(d));
+  const shortestCandidate = durations.length ? Math.min(...durations) : null;
+  const longestCandidate = durations.length ? Math.max(...durations) : null;
 
   return {
     events,
+    rawCandidateSpans,
+    candidateSpanSummary: {
+      candidateSpanCount: rawCandidateSpans.length,
+      survivingSpanCount: events.length,
+      shortestCandidate: shortestCandidate != null ? Math.round(shortestCandidate * 1000) / 1000 : null,
+      longestCandidate: longestCandidate != null ? Math.round(longestCandidate * 1000) / 1000 : null,
+      minDurationSecondsUsed: minDurationSeconds,
+    },
     stats: {
       framesDecoded: frameDetections.length,
       framesAtOrAboveEnter,
@@ -1464,6 +1501,14 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
 
       const built = buildYellowEventsFromFrames(frameDetections, frameRate, minDurationSeconds);
       const rawGroupedEvents = built.events;
+      const rawCandidateSpans = built.rawCandidateSpans || [];
+      const candidateSpanSummary = built.candidateSpanSummary || {
+        candidateSpanCount: rawCandidateSpans.length,
+        survivingSpanCount: rawGroupedEvents.length,
+        shortestCandidate: null,
+        longestCandidate: null,
+        minDurationSecondsUsed: minDurationSeconds,
+      };
       const yellowEvents = attachContentStartsToEvents(frameDetections, frameRate, rawGroupedEvents);
 
       if (yellowEvents.length > 0) {
@@ -1501,7 +1546,7 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
           return "no_frames_met_enter_threshold_color_may_not_match_yellow_card_rule";
         }
         if (rawGroupedEvents.length === 0 && built.stats.eventsRejectedTooShort > 0) {
-          return "only_sub_min_duration_yellow_spans_increase_min_segment_or_lower_threshold";
+          return "yellow_candidates_found_but_all_shorter_than_min_duration_seconds_lower_min_segment_seconds";
         }
         if (rawGroupedEvents.length === 0) {
           return "grouping_produced_zero_events";
@@ -1552,8 +1597,11 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
         },
         framesAtOrAboveLooseEnter,
         stats: built.stats,
+        rawCandidateSpanCount: rawCandidateSpans.length,
         rawGroupedEventCount: rawGroupedEvents.length,
         finalEventCount: yellowEvents.length,
+        candidateSpanSummary,
+        rawCandidateSpans,
         maxYellowRatio: Math.round(maxYellowRatio * 1000) / 1000,
         avgYellowRatio: Math.round(avgYellowRatio * 1000) / 1000,
         topFramesByRatio: topRatioSnapshot,
@@ -1568,6 +1616,8 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
         frameRate,
         frameCount: frameDetections.length,
         yellowEvents,
+        rawCandidateSpans,
+        candidateSpanSummary,
         rawGroupedEvents,
         groupingStats: built.stats,
         detectionSummary: {
@@ -2025,6 +2075,8 @@ async function runDeterministicYellowPipeline({
       },
       colorPipeline: COLOR_PIPELINE_LABEL,
       rawGroupedEvents: detection.rawGroupedEvents || [],
+      rawCandidateSpans: detection.rawCandidateSpans || [],
+      candidateSpanSummary: detection.candidateSpanSummary || null,
       events: yellowEvents,
       groupingStats: detection.groupingStats || null,
       frameCount: detection.frameCount,
@@ -2134,11 +2186,18 @@ async function runDeterministicYellowPipeline({
  * Writes detector output + explicit failure status without overwriting srcArray (timeline playback).
  */
 async function persistLessonYellowDetectionFailure(lessonId, videoPath, sourceLabel, pipeline, extraPipeline = {}) {
+  const yd = pipeline.yellowDetection || {};
+  const cand = yd.candidateSpanSummary || {};
+  const allTooShort = yd.zeroReason ===
+    "yellow_candidates_found_but_all_shorter_than_min_duration_seconds_lower_min_segment_seconds";
+  const detail = allTooShort
+    ? ` Yellow candidates were found (${cand.candidateSpanCount || 0}), but all were shorter than minDurationSeconds (${cand.minDurationSecondsUsed || yd.minDurationSeconds || "n/a"}). Try lowering minDurationSeconds.`
+    : "";
   const failureReview = {
     ...pipeline.review,
     generationFailed: true,
     failureReason: "no_yellow_events_detected",
-    message: "No yellow transition cards met detection rules; existing timeline left unchanged. Inspect yellowDetection in Firestore.",
+    message: `No yellow transition cards met detection rules; existing timeline left unchanged. Inspect yellowDetection in Firestore.${detail}`,
     videoPath: videoPath || null,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
@@ -2298,12 +2357,18 @@ exports.detectYellowScreen = onCall(
       });
 
       if (!pipeline.hasYellowEvents) {
+        const csum = (pipeline.yellowDetection && pipeline.yellowDetection.candidateSpanSummary) || null;
         await persistLessonYellowDetectionFailure(lessonId, videoPath, "manual-yellow-regenerate", pipeline);
         return {
           success: false,
           reason: "no_yellow_events_detected",
-          message: pipeline.yellowDetection?.zeroReason || "No yellow events detected",
+          message: (pipeline.yellowDetection && pipeline.yellowDetection.zeroReason) || "No yellow events detected",
           yellowDetection: pipeline.yellowDetection,
+          candidateSpanCount: csum ? csum.candidateSpanCount : 0,
+          survivingSpanCount: csum ? csum.survivingSpanCount : 0,
+          shortestCandidate: csum ? csum.shortestCandidate : null,
+          longestCandidate: csum ? csum.longestCandidate : null,
+          minDurationSecondsUsed: csum ? csum.minDurationSecondsUsed : minSeg,
           reviewStates: pipeline.review.states,
         };
       }
@@ -2391,15 +2456,21 @@ exports.generateSrcArrayWithYellowOptions = onCall(
       });
 
       if (!pipeline.hasYellowEvents) {
+        const csum = (pipeline.yellowDetection && pipeline.yellowDetection.candidateSpanSummary) || null;
         await persistLessonYellowDetectionFailure(lessonId, videoPath, "manual-editor", pipeline, {
           minDurationSecondsApplied: effectiveMinSeg,
         });
         return {
           success: false,
           reason: "no_yellow_events_detected",
-          message: pipeline.yellowDetection?.zeroReason || "No yellow events detected",
+          message: (pipeline.yellowDetection && pipeline.yellowDetection.zeroReason) || "No yellow events detected",
           yellowDetection: pipeline.yellowDetection,
-          calibrationReport: pipeline.yellowDetection?.calibrationReport || null,
+          calibrationReport: (pipeline.yellowDetection && pipeline.yellowDetection.calibrationReport) || null,
+          candidateSpanCount: csum ? csum.candidateSpanCount : 0,
+          survivingSpanCount: csum ? csum.survivingSpanCount : 0,
+          shortestCandidate: csum ? csum.shortestCandidate : null,
+          longestCandidate: csum ? csum.longestCandidate : null,
+          minDurationSecondsUsed: csum ? csum.minDurationSecondsUsed : effectiveMinSeg,
           reviewStates: pipeline.review.states || [],
           duration: pipeline.duration,
           minSegmentSeconds: effectiveMinSeg,
@@ -3201,12 +3272,18 @@ exports.generateSrcArrayFromYellowScreens = onCall(
       });
 
       if (!pipeline.hasYellowEvents) {
+        const csum = (pipeline.yellowDetection && pipeline.yellowDetection.candidateSpanSummary) || null;
         await persistLessonYellowDetectionFailure(lessonId, videoPath, "manual-generate-from-yellow", pipeline);
         return {
           success: false,
           reason: "no_yellow_events_detected",
-          message: pipeline.yellowDetection?.zeroReason || "No yellow events detected",
+          message: (pipeline.yellowDetection && pipeline.yellowDetection.zeroReason) || "No yellow events detected",
           yellowDetection: pipeline.yellowDetection,
+          candidateSpanCount: csum ? csum.candidateSpanCount : 0,
+          survivingSpanCount: csum ? csum.survivingSpanCount : 0,
+          shortestCandidate: csum ? csum.shortestCandidate : null,
+          longestCandidate: csum ? csum.longestCandidate : null,
+          minDurationSecondsUsed: csum ? csum.minDurationSecondsUsed : 0.06,
           chapters: chapters.length,
           detections: 0,
           states: pipeline.review.states,
