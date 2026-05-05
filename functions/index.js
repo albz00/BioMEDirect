@@ -779,6 +779,87 @@ function buildYellowEventsFromFrames(frameDetections, frameRate, minDurationSeco
 }
 
 /**
+ * Secondary path for videos with genuine but ultra-short yellow title flashes.
+ * Runs only when normal grouping found candidates but rejected all as too short.
+ */
+function buildShortFlashFallbackEvents(rawCandidateSpans, frameRate) {
+  const frameInterval = frameRate > 0 ? 1 / frameRate : 1 / 30;
+  const minFrames = Math.max(2, Math.ceil(0.02 / frameInterval));
+  const minGapFrames = Math.max(2, Math.ceil(0.04 / frameInterval));
+  const minPeakYellowRatio = 0.14;
+  const minAverageYellowRatio = 0.105;
+  const minScore = 0.13;
+  const evaluated = [];
+  const accepted = [];
+  let lastAcceptedEndFrame = -Infinity;
+
+  for (const span of rawCandidateSpans || []) {
+    const frames = Number.isFinite(span.frames) ? span.frames : (
+      Number.isFinite(span.startFrame) && Number.isFinite(span.endFrame)
+        ? (span.endFrame - span.startFrame + 1)
+        : 0
+    );
+    const avg = Number.isFinite(span.averageYellowRatio) ? span.averageYellowRatio : 0;
+    const peak = Number.isFinite(span.peakYellowRatio) ? span.peakYellowRatio : 0;
+    const startFrame = Number.isFinite(span.startFrame) ? span.startFrame : 0;
+    const endFrame = Number.isFinite(span.endFrame) ? span.endFrame : startFrame;
+
+    const score = (avg * 0.65) + (peak * 0.35);
+    let rejectionReason = "accepted_short_flash";
+    if (frames < minFrames) rejectionReason = "fallback_reject_too_few_frames";
+    else if (peak < minPeakYellowRatio) rejectionReason = "fallback_reject_peak_too_low";
+    else if (avg < minAverageYellowRatio) rejectionReason = "fallback_reject_avg_too_low";
+    else if (score < minScore) rejectionReason = "fallback_reject_score_too_low";
+    else if (startFrame - lastAcceptedEndFrame < minGapFrames) rejectionReason = "fallback_reject_not_separated";
+
+    const acceptedThis = rejectionReason === "accepted_short_flash";
+    evaluated.push({
+      ...span,
+      fallbackScore: Math.round(score * 1000) / 1000,
+      acceptedByShortFlashFallback: acceptedThis,
+      fallbackRejectionReason: acceptedThis ? null : rejectionReason,
+    });
+    if (!acceptedThis) continue;
+
+    lastAcceptedEndFrame = endFrame;
+    const startTime = Number.isFinite(span.startTime) ? span.startTime : Math.round((startFrame * frameInterval) * 1000) / 1000;
+    const endTime = Number.isFinite(span.endTime) ? span.endTime : Math.round(((endFrame + 1) * frameInterval) * 1000) / 1000;
+    const confidence = clamp((avg - YELLOW_EXIT_THRESHOLD) / 0.24, 0, 1);
+    accepted.push({
+      eventIndex: accepted.length + 1,
+      startFrame,
+      endFrame,
+      startTime: Math.round(startTime * 1000) / 1000,
+      endTime: Math.round(endTime * 1000) / 1000,
+      duration: Math.round((endTime - startTime) * 1000) / 1000,
+      detectionConfidence: Math.round(confidence * 1000) / 1000,
+      metrics: {
+        averageYellowRatio: Math.round(avg * 1000) / 1000,
+        peakYellowRatio: Math.round(peak * 1000) / 1000,
+        frames,
+      },
+    });
+  }
+
+  return {
+    acceptedEvents: accepted,
+    report: {
+      activatedBecause: "normal_candidates_found_but_all_too_short_for_min_duration",
+      thresholds: {
+        minFrames,
+        minGapFrames,
+        minPeakYellowRatio,
+        minAverageYellowRatio,
+        minScore,
+      },
+      acceptedShortFlashSpanCount: accepted.length,
+      evaluatedCandidateCount: evaluated.length,
+      evaluatedSpans: evaluated,
+    },
+  };
+}
+
+/**
  * After a yellow block ends, find the first timecode where the frame is clearly not yellow
  * (so playback can seek to real content, not the tail of a transition).
  */
@@ -1509,7 +1590,24 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
         longestCandidate: null,
         minDurationSecondsUsed: minDurationSeconds,
       };
-      const yellowEvents = attachContentStartsToEvents(frameDetections, frameRate, rawGroupedEvents);
+      const normalFailedOnlyTooShort =
+        rawGroupedEvents.length === 0 &&
+        built.stats.eventsRejectedTooShort > 0 &&
+        rawCandidateSpans.length > 0;
+      let detectionModeUsed = "normal";
+      let shortFlashFallbackActivated = false;
+      let shortFlashFallbackReport = null;
+      let groupedEventsForOutput = rawGroupedEvents;
+      if (normalFailedOnlyTooShort) {
+        shortFlashFallbackActivated = true;
+        const fb = buildShortFlashFallbackEvents(rawCandidateSpans, frameRate);
+        shortFlashFallbackReport = fb.report;
+        if (fb.acceptedEvents.length > 0) {
+          groupedEventsForOutput = fb.acceptedEvents;
+          detectionModeUsed = "short_flash_fallback";
+        }
+      }
+      const yellowEvents = attachContentStartsToEvents(frameDetections, frameRate, groupedEventsForOutput);
 
       if (yellowEvents.length > 0) {
         const d0 = yellowEvents[0].duration != null ? yellowEvents[0].duration : 0;
@@ -1545,8 +1643,11 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
         if (built.stats.framesAtOrAboveEnter === 0) {
           return "no_frames_met_enter_threshold_color_may_not_match_yellow_card_rule";
         }
-        if (rawGroupedEvents.length === 0 && built.stats.eventsRejectedTooShort > 0) {
+        if (rawGroupedEvents.length === 0 && built.stats.eventsRejectedTooShort > 0 && !shortFlashFallbackActivated) {
           return "yellow_candidates_found_but_all_shorter_than_min_duration_seconds_lower_min_segment_seconds";
+        }
+        if (shortFlashFallbackActivated && groupedEventsForOutput.length === 0) {
+          return "short_flash_fallback_failed";
         }
         if (rawGroupedEvents.length === 0) {
           return "grouping_produced_zero_events";
@@ -1600,6 +1701,10 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
         rawCandidateSpanCount: rawCandidateSpans.length,
         rawGroupedEventCount: rawGroupedEvents.length,
         finalEventCount: yellowEvents.length,
+        detectionModeUsed,
+        shortFlashFallbackActivated,
+        acceptedShortFlashSpanCount: shortFlashFallbackReport ? shortFlashFallbackReport.acceptedShortFlashSpanCount : 0,
+        shortFlashFallbackReport,
         candidateSpanSummary,
         rawCandidateSpans,
         maxYellowRatio: Math.round(maxYellowRatio * 1000) / 1000,
@@ -1618,6 +1723,10 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
         yellowEvents,
         rawCandidateSpans,
         candidateSpanSummary,
+        detectionModeUsed,
+        shortFlashFallbackActivated,
+        acceptedShortFlashSpanCount: shortFlashFallbackReport ? shortFlashFallbackReport.acceptedShortFlashSpanCount : 0,
+        shortFlashFallbackReport,
         rawGroupedEvents,
         groupingStats: built.stats,
         detectionSummary: {
@@ -2077,6 +2186,10 @@ async function runDeterministicYellowPipeline({
       rawGroupedEvents: detection.rawGroupedEvents || [],
       rawCandidateSpans: detection.rawCandidateSpans || [],
       candidateSpanSummary: detection.candidateSpanSummary || null,
+      detectionModeUsed: detection.detectionModeUsed || "normal",
+      shortFlashFallbackActivated: detection.shortFlashFallbackActivated === true,
+      acceptedShortFlashSpanCount: detection.acceptedShortFlashSpanCount || 0,
+      shortFlashFallbackReport: detection.shortFlashFallbackReport || null,
       events: yellowEvents,
       groupingStats: detection.groupingStats || null,
       frameCount: detection.frameCount,
@@ -2190,14 +2303,17 @@ async function persistLessonYellowDetectionFailure(lessonId, videoPath, sourceLa
   const cand = yd.candidateSpanSummary || {};
   const allTooShort = yd.zeroReason ===
     "yellow_candidates_found_but_all_shorter_than_min_duration_seconds_lower_min_segment_seconds";
+  const fallbackFailed = yd.zeroReason === "short_flash_fallback_failed";
   const detail = allTooShort
     ? ` Yellow candidates were found (${cand.candidateSpanCount || 0}), but all were shorter than minDurationSeconds (${cand.minDurationSecondsUsed || yd.minDurationSeconds || "n/a"}). Try lowering minDurationSeconds.`
     : "";
   const failureReview = {
     ...pipeline.review,
     generationFailed: true,
-    failureReason: "no_yellow_events_detected",
-    message: `No yellow transition cards met detection rules; existing timeline left unchanged. Inspect yellowDetection in Firestore.${detail}`,
+    failureReason: fallbackFailed ? "short_flash_fallback_failed" : "no_yellow_events_detected",
+    message: fallbackFailed
+      ? "Normal yellow detection found only short candidates and short-flash fallback did not pass confidence/separation rules; existing timeline left unchanged. Inspect yellowDetection in Firestore."
+      : `No yellow transition cards met detection rules; existing timeline left unchanged. Inspect yellowDetection in Firestore.${detail}`,
     videoPath: videoPath || null,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
@@ -2361,7 +2477,9 @@ exports.detectYellowScreen = onCall(
         await persistLessonYellowDetectionFailure(lessonId, videoPath, "manual-yellow-regenerate", pipeline);
         return {
           success: false,
-          reason: "no_yellow_events_detected",
+          reason: (pipeline.yellowDetection && pipeline.yellowDetection.zeroReason) === "short_flash_fallback_failed"
+            ? "short_flash_fallback_failed"
+            : "no_yellow_events_detected",
           message: (pipeline.yellowDetection && pipeline.yellowDetection.zeroReason) || "No yellow events detected",
           yellowDetection: pipeline.yellowDetection,
           candidateSpanCount: csum ? csum.candidateSpanCount : 0,
@@ -2369,6 +2487,18 @@ exports.detectYellowScreen = onCall(
           shortestCandidate: csum ? csum.shortestCandidate : null,
           longestCandidate: csum ? csum.longestCandidate : null,
           minDurationSecondsUsed: csum ? csum.minDurationSecondsUsed : minSeg,
+          detectionModeUsed: pipeline.yellowDetection && pipeline.yellowDetection.detectionModeUsed
+            ? pipeline.yellowDetection.detectionModeUsed
+            : "normal",
+          shortFlashFallbackActivated: pipeline.yellowDetection && pipeline.yellowDetection.shortFlashFallbackActivated === true,
+          acceptedShortFlashSpanCount: pipeline.yellowDetection && pipeline.yellowDetection.acceptedShortFlashSpanCount
+            ? pipeline.yellowDetection.acceptedShortFlashSpanCount
+            : 0,
+          shortFlashFallbackActivationReason: pipeline.yellowDetection &&
+            pipeline.yellowDetection.shortFlashFallbackReport &&
+            pipeline.yellowDetection.shortFlashFallbackReport.activatedBecause
+            ? pipeline.yellowDetection.shortFlashFallbackReport.activatedBecause
+            : null,
           reviewStates: pipeline.review.states,
         };
       }
@@ -2462,7 +2592,9 @@ exports.generateSrcArrayWithYellowOptions = onCall(
         });
         return {
           success: false,
-          reason: "no_yellow_events_detected",
+          reason: (pipeline.yellowDetection && pipeline.yellowDetection.zeroReason) === "short_flash_fallback_failed"
+            ? "short_flash_fallback_failed"
+            : "no_yellow_events_detected",
           message: (pipeline.yellowDetection && pipeline.yellowDetection.zeroReason) || "No yellow events detected",
           yellowDetection: pipeline.yellowDetection,
           calibrationReport: (pipeline.yellowDetection && pipeline.yellowDetection.calibrationReport) || null,
@@ -2471,6 +2603,18 @@ exports.generateSrcArrayWithYellowOptions = onCall(
           shortestCandidate: csum ? csum.shortestCandidate : null,
           longestCandidate: csum ? csum.longestCandidate : null,
           minDurationSecondsUsed: csum ? csum.minDurationSecondsUsed : effectiveMinSeg,
+          detectionModeUsed: pipeline.yellowDetection && pipeline.yellowDetection.detectionModeUsed
+            ? pipeline.yellowDetection.detectionModeUsed
+            : "normal",
+          shortFlashFallbackActivated: pipeline.yellowDetection && pipeline.yellowDetection.shortFlashFallbackActivated === true,
+          acceptedShortFlashSpanCount: pipeline.yellowDetection && pipeline.yellowDetection.acceptedShortFlashSpanCount
+            ? pipeline.yellowDetection.acceptedShortFlashSpanCount
+            : 0,
+          shortFlashFallbackActivationReason: pipeline.yellowDetection &&
+            pipeline.yellowDetection.shortFlashFallbackReport &&
+            pipeline.yellowDetection.shortFlashFallbackReport.activatedBecause
+            ? pipeline.yellowDetection.shortFlashFallbackReport.activatedBecause
+            : null,
           reviewStates: pipeline.review.states || [],
           duration: pipeline.duration,
           minSegmentSeconds: effectiveMinSeg,
@@ -3276,7 +3420,9 @@ exports.generateSrcArrayFromYellowScreens = onCall(
         await persistLessonYellowDetectionFailure(lessonId, videoPath, "manual-generate-from-yellow", pipeline);
         return {
           success: false,
-          reason: "no_yellow_events_detected",
+          reason: (pipeline.yellowDetection && pipeline.yellowDetection.zeroReason) === "short_flash_fallback_failed"
+            ? "short_flash_fallback_failed"
+            : "no_yellow_events_detected",
           message: (pipeline.yellowDetection && pipeline.yellowDetection.zeroReason) || "No yellow events detected",
           yellowDetection: pipeline.yellowDetection,
           candidateSpanCount: csum ? csum.candidateSpanCount : 0,
@@ -3284,6 +3430,18 @@ exports.generateSrcArrayFromYellowScreens = onCall(
           shortestCandidate: csum ? csum.shortestCandidate : null,
           longestCandidate: csum ? csum.longestCandidate : null,
           minDurationSecondsUsed: csum ? csum.minDurationSecondsUsed : 0.06,
+          detectionModeUsed: pipeline.yellowDetection && pipeline.yellowDetection.detectionModeUsed
+            ? pipeline.yellowDetection.detectionModeUsed
+            : "normal",
+          shortFlashFallbackActivated: pipeline.yellowDetection && pipeline.yellowDetection.shortFlashFallbackActivated === true,
+          acceptedShortFlashSpanCount: pipeline.yellowDetection && pipeline.yellowDetection.acceptedShortFlashSpanCount
+            ? pipeline.yellowDetection.acceptedShortFlashSpanCount
+            : 0,
+          shortFlashFallbackActivationReason: pipeline.yellowDetection &&
+            pipeline.yellowDetection.shortFlashFallbackReport &&
+            pipeline.yellowDetection.shortFlashFallbackReport.activatedBecause
+            ? pipeline.yellowDetection.shortFlashFallbackReport.activatedBecause
+            : null,
           chapters: chapters.length,
           detections: 0,
           states: pipeline.review.states,
