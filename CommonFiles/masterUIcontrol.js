@@ -18,6 +18,11 @@ var CONTENT_SEEK_LEAD_IN_SEC = 0.1;
 var YELLOW_RANGE_SKIP_EPS_SEC = 0.1;
 /** Keep video continuous; timeline rows are chapter/navigation anchors. */
 var CONTINUOUS_VIDEO_PLAYBACK = true;
+/** Pause at yellow marker starts during continuous playback. */
+var PAUSE_AT_YELLOW_MARKERS = true;
+var yellowMarkers = [];
+var nextYellowMarkerIdx = 0;
+var pausedAtYellowMarkerIdx = -1;
 
 // Need to add 1 to lastSlide to account for extra click to return to menu at end
 
@@ -82,6 +87,29 @@ function segmentContentEndTime(seg) {
     return seg.src_end != null ? Number(seg.src_end) : null;
 }
 
+function loadYellowMarkersFromWindow() {
+    var ranges = (typeof window !== "undefined" && Array.isArray(window.yellowScreenRanges))
+        ? window.yellowScreenRanges
+        : [];
+    yellowMarkers = ranges
+        .filter(function(r) { return r && typeof r.start === "number" && typeof r.end === "number" && r.end > r.start; })
+        .map(function(r) {
+            return {
+                start: Number(r.start),
+                end: Number(r.end),
+            };
+        })
+        .sort(function(a, b) { return a.start - b.start; });
+    nextYellowMarkerIdx = 0;
+    pausedAtYellowMarkerIdx = -1;
+}
+
+function advanceMarkerCursorToTime(t) {
+    while (nextYellowMarkerIdx < yellowMarkers.length && t > (yellowMarkers[nextYellowMarkerIdx].end + YELLOW_RANGE_SKIP_EPS_SEC)) {
+        nextYellowMarkerIdx++;
+    }
+}
+
 // Initialize function - called after timeline array is loaded from Firestore
 function initializePlayer(videoUrl, timelineArray) {
     srcArray = Array.isArray(timelineArray) ? timelineArray : [];
@@ -95,12 +123,47 @@ function initializePlayer(videoUrl, timelineArray) {
     lastSlide = srcArray.length; // see note below
     // Pause all videos upon loading
     videoId.pause();
+    loadYellowMarkersFromWindow();
+    if (typeof window !== "undefined" && typeof window.pauseAtYellowMarkersEnabled === "boolean") {
+        PAUSE_AT_YELLOW_MARKERS = window.pauseAtYellowMarkersEnabled;
+    } else {
+        PAUSE_AT_YELLOW_MARKERS = true;
+    }
+
+    videoId.addEventListener("play", function() {
+        if (!CONTINUOUS_VIDEO_PLAYBACK) return;
+        if (pausedAtYellowMarkerIdx < 0 || pausedAtYellowMarkerIdx >= yellowMarkers.length) return;
+        var mk = yellowMarkers[pausedAtYellowMarkerIdx];
+        var tNow = Number(this.currentTime);
+        if (isFinite(tNow) && tNow >= mk.start - 0.05 && tNow <= mk.end + 0.1) {
+            this.currentTime = mk.end + YELLOW_RANGE_SKIP_EPS_SEC;
+        }
+        pausedAtYellowMarkerIdx = -1;
+        advanceMarkerCursorToTime(this.currentTime);
+    });
     
     // Listener to pause video when reach specified time and implements looping // FindMe4
     videoId.addEventListener("timeupdate", function(){
         var t = this.currentTime;
 
-        // If we are inside a yellow-screen range and skipping is enabled, jump past it
+        if (CONTINUOUS_VIDEO_PLAYBACK) {
+            if (PAUSE_AT_YELLOW_MARKERS && yellowMarkers.length > 0) {
+                advanceMarkerCursorToTime(t);
+                if (nextYellowMarkerIdx < yellowMarkers.length) {
+                    var mk = yellowMarkers[nextYellowMarkerIdx];
+                    if (t >= mk.start && t <= mk.end + YELLOW_RANGE_SKIP_EPS_SEC) {
+                        this.pause();
+                        this.currentTime = mk.start;
+                        pausedAtYellowMarkerIdx = nextYellowMarkerIdx;
+                        nextYellowMarkerIdx++;
+                        return;
+                    }
+                }
+            }
+            return;
+        }
+
+        // Legacy slice mode: skip yellow intervals when configured.
         if (typeof window.shouldSkipYellow !== 'undefined' && window.shouldSkipYellow &&
             Array.isArray(window.yellowScreenRanges) && window.yellowScreenRanges.length > 0) {
             var epsSkip = YELLOW_RANGE_SKIP_EPS_SEC;
@@ -112,10 +175,6 @@ function initializePlayer(videoUrl, timelineArray) {
                     return;
                 }
             }
-        }
-
-        if (CONTINUOUS_VIDEO_PLAYBACK) {
-            return;
         }
 
         var cur = safeSrcSegmentAt(currentSlide);
