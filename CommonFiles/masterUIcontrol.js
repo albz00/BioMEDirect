@@ -144,6 +144,24 @@ function beginPlayToNextMarker(reason) {
     }));
 }
 
+function resolvePostYellowStopTime(marker, markerIndex, logReason) {
+    if (!marker) return null;
+    var base = Number(marker.end) + YELLOW_RANGE_SKIP_EPS_SEC;
+    var resolved = ensureSeekPastYellowRanges(base);
+    var leapfrogAdjusted = Math.abs(resolved - base) > 1e-6;
+    console.log("[guided-playback][resolved-stop-point]", JSON.stringify({
+        reason: logReason || null,
+        markerIndex: markerIndex,
+        yellowStart: Math.round(Number(marker.start) * 1000) / 1000,
+        yellowEnd: Math.round(Number(marker.end) * 1000) / 1000,
+        basePostYellow: Math.round(base * 1000) / 1000,
+        contentStartResolved: Math.round(Number(resolved) * 1000) / 1000,
+        leapfrogHelperCalled: true,
+        leapfrogAdjusted: leapfrogAdjusted,
+    }));
+    return resolved;
+}
+
 // Initialize function - called after timeline array is loaded from Firestore
 function initializePlayer(videoUrl, timelineArray) {
     srcArray = Array.isArray(timelineArray) ? timelineArray : [];
@@ -225,8 +243,13 @@ function initializePlayer(videoUrl, timelineArray) {
                         markerPauseFired: shouldPauseAtMarker,
                     }));
                     if (shouldPauseAtMarker) {
+                        var resolvedStop = resolvePostYellowStopTime(mk, guidedTargetMarkerIdx, "marker_crossing_pause");
                         this.pause();
-                        this.currentTime = mk.start;
+                        if (isFinite(Number(resolvedStop))) {
+                            this.currentTime = Number(resolvedStop);
+                        } else {
+                            this.currentTime = mk.end + YELLOW_RANGE_SKIP_EPS_SEC;
+                        }
                         pausedAtYellowMarkerIdx = guidedTargetMarkerIdx;
                         nextYellowMarkerIdx = guidedTargetMarkerIdx + 1;
                         guidedTargetMarkerIdx = -1;
@@ -237,6 +260,7 @@ function initializePlayer(videoUrl, timelineArray) {
                             currentTime: Math.round(t * 1000) / 1000,
                             markerStart: Math.round(mk.start * 1000) / 1000,
                             markerEnd: Math.round(mk.end * 1000) / 1000,
+                            stopAt: Math.round(Number(this.currentTime) * 1000) / 1000,
                         }));
                         lastPlaybackTimeForMarkerCheck = Number(this.currentTime);
                         return;
