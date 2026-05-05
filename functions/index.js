@@ -784,11 +784,11 @@ function buildYellowEventsFromFrames(frameDetections, frameRate, minDurationSeco
  */
 function buildShortFlashFallbackEvents(rawCandidateSpans, frameRate) {
   const frameInterval = frameRate > 0 ? 1 / frameRate : 1 / 30;
-  const minFrames = Math.max(2, Math.ceil(0.02 / frameInterval));
-  const minGapFrames = Math.max(2, Math.ceil(0.04 / frameInterval));
-  const minPeakYellowRatio = 0.14;
-  const minAverageYellowRatio = 0.105;
-  const minScore = 0.13;
+  const minFrames = Math.max(1, Math.ceil(0.01 / frameInterval));
+  const minGapFrames = 1;
+  const minPeakYellowRatio = YELLOW_ENTER_THRESHOLD;
+  const minAverageYellowRatio = Math.max(0.072, YELLOW_EXIT_THRESHOLD);
+  const minScore = Math.max(0.082, YELLOW_EXIT_THRESHOLD + 0.004);
   const evaluated = [];
   const accepted = [];
   let lastAcceptedEndFrame = -Infinity;
@@ -856,6 +856,31 @@ function buildShortFlashFallbackEvents(rawCandidateSpans, frameRate) {
       evaluatedCandidateCount: evaluated.length,
       evaluatedSpans: evaluated,
     },
+  };
+}
+
+function summarizeEventSpansForComparison(events) {
+  return (events || []).map((ev) => ({
+    startFrame: ev.startFrame,
+    endFrame: ev.endFrame,
+    startTime: ev.startTime,
+    endTime: ev.endTime,
+    duration: ev.duration,
+    averageYellowRatio: ev.metrics ? ev.metrics.averageYellowRatio : null,
+    peakYellowRatio: ev.metrics ? ev.metrics.peakYellowRatio : null,
+  }));
+}
+
+function diffSpanSetsByFrame(aSpans, bSpans) {
+  const a = aSpans || [];
+  const b = bSpans || [];
+  const key = (s) => `${s.startFrame}:${s.endFrame}`;
+  const bKeys = new Set(b.map(key));
+  const aKeys = new Set(a.map(key));
+  return {
+    onlyInA: a.filter((x) => !bKeys.has(key(x))),
+    onlyInB: b.filter((x) => !aKeys.has(key(x))),
+    inBothCount: a.filter((x) => bKeys.has(key(x))).length,
   };
 }
 
@@ -1597,11 +1622,23 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
       let detectionModeUsed = "normal";
       let shortFlashFallbackActivated = false;
       let shortFlashFallbackReport = null;
+      let shortFlashManual001Comparison = null;
       let groupedEventsForOutput = rawGroupedEvents;
       if (normalFailedOnlyTooShort) {
         shortFlashFallbackActivated = true;
         const fb = buildShortFlashFallbackEvents(rawCandidateSpans, frameRate);
         shortFlashFallbackReport = fb.report;
+        const manual001Built = buildYellowEventsFromFrames(frameDetections, frameRate, 0.01);
+        const manual001Accepted = summarizeEventSpansForComparison(manual001Built.events || []);
+        const fallbackAccepted = summarizeEventSpansForComparison(fb.acceptedEvents || []);
+        const diff = diffSpanSetsByFrame(manual001Accepted, fallbackAccepted);
+        shortFlashManual001Comparison = {
+          manual001AcceptedCount: manual001Accepted.length,
+          fallbackAcceptedCount: fallbackAccepted.length,
+          sharedAcceptedCount: diff.inBothCount,
+          manual001OnlyAcceptedSpans: diff.onlyInA,
+          fallbackOnlyAcceptedSpans: diff.onlyInB,
+        };
         if (fb.acceptedEvents.length > 0) {
           groupedEventsForOutput = fb.acceptedEvents;
           detectionModeUsed = "short_flash_fallback";
@@ -1705,6 +1742,7 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
         shortFlashFallbackActivated,
         acceptedShortFlashSpanCount: shortFlashFallbackReport ? shortFlashFallbackReport.acceptedShortFlashSpanCount : 0,
         shortFlashFallbackReport,
+        shortFlashManual001Comparison,
         candidateSpanSummary,
         rawCandidateSpans,
         maxYellowRatio: Math.round(maxYellowRatio * 1000) / 1000,
@@ -1727,6 +1765,7 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
         shortFlashFallbackActivated,
         acceptedShortFlashSpanCount: shortFlashFallbackReport ? shortFlashFallbackReport.acceptedShortFlashSpanCount : 0,
         shortFlashFallbackReport,
+        shortFlashManual001Comparison,
         rawGroupedEvents,
         groupingStats: built.stats,
         detectionSummary: {
@@ -2190,6 +2229,7 @@ async function runDeterministicYellowPipeline({
       shortFlashFallbackActivated: detection.shortFlashFallbackActivated === true,
       acceptedShortFlashSpanCount: detection.acceptedShortFlashSpanCount || 0,
       shortFlashFallbackReport: detection.shortFlashFallbackReport || null,
+      shortFlashManual001Comparison: detection.shortFlashManual001Comparison || null,
       events: yellowEvents,
       groupingStats: detection.groupingStats || null,
       frameCount: detection.frameCount,

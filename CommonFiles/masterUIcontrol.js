@@ -16,6 +16,8 @@ var warnedInvalidSlide = {};
 var CONTENT_SEEK_LEAD_IN_SEC = 0.1;
 /** When skipping yellow intervals, land clearly after the detected end (seconds). */
 var YELLOW_RANGE_SKIP_EPS_SEC = 0.1;
+/** Keep video continuous; timeline rows are chapter/navigation anchors. */
+var CONTINUOUS_VIDEO_PLAYBACK = true;
 
 // Need to add 1 to lastSlide to account for extra click to return to menu at end
 
@@ -110,6 +112,10 @@ function initializePlayer(videoUrl, timelineArray) {
                     return;
                 }
             }
+        }
+
+        if (CONTINUOUS_VIDEO_PLAYBACK) {
+            return;
         }
 
         var cur = safeSrcSegmentAt(currentSlide);
