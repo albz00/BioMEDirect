@@ -27,7 +27,159 @@ var lastPlaybackTimeForMarkerCheck = null;
 var guidedPlaybackState = "idle"; // idle | playing_to_marker | paused_at_marker | completed
 var guidedTargetMarkerIdx = -1;
 
+/** Tensegrity-only: diagnostics for short yellow flashes vs coarse timeupdate (temporary). */
+var tensegrityDebugLastTimeupdateMs = 0;
+var tensegrityDebugLastRoutineWallMs = 0;
+var tensegrityDebugShortestMarkerSec = null;
+
 // Need to add 1 to lastSlide to account for extra click to return to menu at end
+
+function isTensegrityLessonPlayerDebug() {
+    try {
+        var p = (typeof location !== "undefined" && location.pathname) ? String(location.pathname).toLowerCase() : "";
+        if (p.indexOf("tensegrity") >= 0) return true;
+        var vu = (typeof window !== "undefined" && typeof window.videoUrl === "string") ? window.videoUrl.toLowerCase() : "";
+        if (vu.indexOf("tensegrity") >= 0) return true;
+    } catch (e) { /* ignore */ }
+    return false;
+}
+
+function tensegrityPlayerDebugLog(obj) {
+    if (!isTensegrityLessonPlayerDebug()) return;
+    try {
+        console.log("[tensegrity-player-debug]", JSON.stringify(obj));
+    } catch (e) {
+        console.log("[tensegrity-player-debug]", obj);
+    }
+}
+
+/**
+ * Classify whether a stop/seek time is still "on yellow" vs clearly past the window (for logging).
+ */
+function tensegrityClassifyStopTarget(stopTarget, mk) {
+    var st = Number(stopTarget);
+    var ys = mk && Number(mk.start);
+    var ye = mk && Number(mk.end);
+    var cs = mk && mk.contentStart != null ? Number(mk.contentStart) : null;
+    var eps = 0.012;
+    if (!isFinite(st) || !mk || !isFinite(ys) || !isFinite(ye)) return "invalid";
+    if (st + eps < ys) return "before_yellow_start";
+    if (st <= ye + eps) return "inside_yellow_span_or_edge";
+    if (cs != null && isFinite(cs) && st < cs - eps) return "after_yellow_before_reported_content_start";
+    return "post_yellow_resolved";
+}
+
+function tensegrityApproxFrame30(timeSec) {
+    if (!isFinite(Number(timeSec))) return null;
+    return Math.round(Number(timeSec) * 30);
+}
+
+function tensegrityDumpMarkersContext(reason) {
+    if (!isTensegrityLessonPlayerDebug()) return;
+    var rows = [];
+    var minDur = null;
+    for (var i = 0; i < yellowMarkers.length; i++) {
+        var m = yellowMarkers[i];
+        var dur = m.end - m.start;
+        if (minDur === null || dur < minDur) minDur = dur;
+        rows.push({
+            index: i,
+            yellowStart: Math.round(m.start * 1000) / 1000,
+            yellowEnd: Math.round(m.end * 1000) / 1000,
+            durationSec: Math.round(dur * 10000) / 10000,
+            contentStart: m.contentStart != null && isFinite(Number(m.contentStart)) ? Math.round(Number(m.contentStart) * 1000) / 1000 : null,
+            approxFrame30AtStart: tensegrityApproxFrame30(m.start),
+            approxFrame30AtEnd: tensegrityApproxFrame30(m.end),
+        });
+    }
+    tensegrityDebugShortestMarkerSec = minDur;
+    var rawLen = (typeof window !== "undefined" && Array.isArray(window.yellowScreenRanges)) ? window.yellowScreenRanges.length : 0;
+    tensegrityPlayerDebugLog({
+        event: "markers_context",
+        reason: reason || null,
+        markerCount: yellowMarkers.length,
+        rawYellowScreenRangesCount: rawLen,
+        shortestMarkerDurationSec: minDur != null ? Math.round(minDur * 10000) / 10000 : null,
+        markers: rows,
+        note: "Player uses marker.start (yellowStart) for crossing; pause seeks to resolved post-yellow time via resolvePostYellowStopTime.",
+    });
+}
+
+/**
+ * Tensegrity-only: correlate timeupdate jumps with guided marker targets + detect likely skips.
+ */
+function runTensegrityTimeupdateDiagnostics(videoEl, prev, curr, mk, crossedStart, pauseFired) {
+    if (!isTensegrityLessonPlayerDebug()) return;
+    var t = Number(curr);
+    var p = Number(prev);
+    var wallNow = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    var wallMsSincePrev = tensegrityDebugLastTimeupdateMs ? (wallNow - tensegrityDebugLastTimeupdateMs) : null;
+    tensegrityDebugLastTimeupdateMs = wallNow;
+    var dt = (isFinite(p) && isFinite(t)) ? Math.round((t - p) * 1000) / 1000 : null;
+    var playingGuide = guidedPlaybackState === "playing_to_marker";
+    var idx = guidedTargetMarkerIdx;
+    var paused = videoEl ? !!videoEl.paused : true;
+    var anomalies = [];
+    var eps = YELLOW_RANGE_SKIP_EPS_SEC;
+    var mkDur = (mk && isFinite(mk.start) && isFinite(mk.end)) ? (mk.end - mk.start) : null;
+
+    if (playingGuide && mk && isFinite(p) && isFinite(t) && !paused) {
+        if (p >= mk.start && t > mk.end + eps) {
+            anomalies.push("playing_past_resolved_marker_end_without_pause");
+        }
+        if (!crossedStart && t >= mk.start && t <= mk.end + eps && p >= mk.start) {
+            anomalies.push("samples_start_inside_yellow_no_prior_before_start_sample");
+        }
+        if (crossedStart && !pauseFired) {
+            anomalies.push("crossing_condition_true_but_pause_not_fired");
+        }
+    }
+    if (playingGuide && mk && dt != null && mkDur != null && mkDur > 0 && dt > mkDur * 1.5) {
+        anomalies.push("timeupdate_delta_exceeds_target_marker_duration");
+    }
+    if (playingGuide && mk && dt != null && tensegrityDebugShortestMarkerSec != null &&
+        tensegrityDebugShortestMarkerSec > 0 && dt > tensegrityDebugShortestMarkerSec * 2) {
+        anomalies.push("timeupdate_delta_much_larger_than_shortest_marker");
+    }
+
+    var shouldLog = anomalies.length > 0;
+    if (!shouldLog && playingGuide) {
+        if (wallNow - tensegrityDebugLastRoutineWallMs > 400) {
+            shouldLog = true;
+            tensegrityDebugLastRoutineWallMs = wallNow;
+        }
+    }
+    if (!shouldLog) return;
+
+    var payload = {
+        event: anomalies.length > 0 ? "marker_runtime_anomaly" : "guided_timeupdate_tick",
+        mode: guidedPlaybackState,
+        videoPaused: paused,
+        guidedTargetMarkerIdx: idx,
+        nextYellowMarkerCursor: nextYellowMarkerIdx,
+        pausedAtYellowMarkerIdx: pausedAtYellowMarkerIdx,
+        previousTime: isFinite(p) ? Math.round(p * 1000) / 1000 : null,
+        currentTime: isFinite(t) ? Math.round(t * 1000) / 1000 : null,
+        playbackJumpSec: dt,
+        wallMsSincePrevTimeupdate: wallMsSincePrev != null ? Math.round(wallMsSincePrev) : null,
+        crossedStartCondition: !!(mk && isFinite(p) && isFinite(t) && p < mk.start && t >= mk.start),
+        pauseFiredThisStep: !!pauseFired,
+        anomalies: anomalies.length > 0 ? anomalies : undefined,
+        runtimePrecisionNote: "If anomalies include timeupdate_delta_much_larger_than_shortest_marker, HTML5 timeupdate may skip sub-frame yellow without firing crossing from prev<start.",
+    };
+    if (mk && idx >= 0) {
+        payload.marker = {
+            index: idx,
+            yellowStart: Math.round(mk.start * 1000) / 1000,
+            yellowEnd: Math.round(mk.end * 1000) / 1000,
+            contentStart: mk.contentStart != null && isFinite(Number(mk.contentStart)) ? Math.round(Number(mk.contentStart) * 1000) / 1000 : null,
+            durationSec: mkDur != null ? Math.round(mkDur * 10000) / 10000 : null,
+            approxFrame30AtStart: tensegrityApproxFrame30(mk.start),
+            playerUsesTimeBasedCrossing: true,
+        };
+    }
+    tensegrityPlayerDebugLog(payload);
+}
 
 function isOpeningUIRow(seg) {
     if (!seg) return false;
@@ -97,9 +249,11 @@ function loadYellowMarkersFromWindow() {
     yellowMarkers = ranges
         .filter(function(r) { return r && typeof r.start === "number" && typeof r.end === "number" && r.end > r.start; })
         .map(function(r) {
+            var cs = r.contentStart != null && r.contentStart !== "" ? Number(r.contentStart) : null;
             return {
                 start: Number(r.start),
                 end: Number(r.end),
+                contentStart: isFinite(cs) ? cs : null,
             };
         })
         .sort(function(a, b) { return a.start - b.start; });
@@ -157,6 +311,19 @@ function resolvePostYellowStopTime(marker, markerIndex, logReason) {
         leapfrogAdjusted: leapfrogAdjusted,
         reason: logReason || null,
     }));
+    tensegrityPlayerDebugLog({
+        event: "resolve_post_yellow",
+        reason: logReason || null,
+        markerIndex: markerIndex,
+        yellowStart: Math.round(Number(marker.start) * 1000) / 1000,
+        yellowEnd: Math.round(Number(marker.end) * 1000) / 1000,
+        contentStart: marker.contentStart != null && isFinite(Number(marker.contentStart))
+            ? Math.round(Number(marker.contentStart) * 1000) / 1000 : null,
+        chosenSeekAfterYellowEndPlusEps: Math.round(base * 1000) / 1000,
+        resolvedPostYellowTarget: Math.round(Number(resolved) * 1000) / 1000,
+        resolvedKind: tensegrityClassifyStopTarget(resolved, marker),
+        leapfrogAdjusted: leapfrogAdjusted,
+    });
     return resolved;
 }
 
@@ -174,6 +341,9 @@ function initializePlayer(videoUrl, timelineArray) {
     // Pause all videos upon loading
     videoId.pause();
     loadYellowMarkersFromWindow();
+    tensegrityDebugLastTimeupdateMs = 0;
+    tensegrityDebugLastRoutineWallMs = 0;
+    tensegrityDumpMarkersContext("initialize_player");
     lastPlaybackTimeForMarkerCheck = null;
     if (typeof window !== "undefined" && typeof window.pauseAtYellowMarkersEnabled === "boolean") {
         PAUSE_AT_YELLOW_MARKERS = window.pauseAtYellowMarkersEnabled;
@@ -224,13 +394,17 @@ function initializePlayer(videoUrl, timelineArray) {
                 var prev = Number(lastPlaybackTimeForMarkerCheck);
                 if (!isFinite(prev)) prev = Number(t);
                 advanceMarkerCursorToTime(t);
+                var mkGuide = null;
+                var crossedStart = false;
+                var pauseFired = false;
                 if (guidedPlaybackState === "playing_to_marker" && guidedTargetMarkerIdx >= 0 && guidedTargetMarkerIdx < yellowMarkers.length) {
-                    var mk = yellowMarkers[guidedTargetMarkerIdx];
-                    var crossedStart = prev < mk.start && t >= mk.start;
+                    mkGuide = yellowMarkers[guidedTargetMarkerIdx];
+                    crossedStart = prev < mkGuide.start && t >= mkGuide.start;
                     if (crossedStart) {
-                        var resolvedStop = resolvePostYellowStopTime(mk, guidedTargetMarkerIdx, "marker_crossing_pause");
+                        pauseFired = true;
+                        var resolvedStop = resolvePostYellowStopTime(mkGuide, guidedTargetMarkerIdx, "marker_crossing_pause");
                         this.pause();
-                        var stopTarget = isFinite(Number(resolvedStop)) ? Number(resolvedStop) : (mk.end + YELLOW_RANGE_SKIP_EPS_SEC);
+                        var stopTarget = isFinite(Number(resolvedStop)) ? Number(resolvedStop) : (mkGuide.end + YELLOW_RANGE_SKIP_EPS_SEC);
                         this.currentTime = stopTarget;
                         pausedAtYellowMarkerIdx = guidedTargetMarkerIdx;
                         nextYellowMarkerIdx = guidedTargetMarkerIdx + 1;
@@ -241,13 +415,32 @@ function initializePlayer(videoUrl, timelineArray) {
                             mode: guidedPlaybackState,
                             currentTime: Math.round(Number(stopTarget) * 1000) / 1000,
                             nextMarkerIndex: nextYellowMarkerIdx,
-                            chosenSeekTarget: Math.round(Number(mk.start) * 1000) / 1000,
+                            chosenSeekTarget: Math.round(Number(mkGuide.start) * 1000) / 1000,
                             resolvedPostYellowTarget: Math.round(Number(stopTarget) * 1000) / 1000,
                         }));
+                        tensegrityPlayerDebugLog({
+                            event: "marker_pause_detail",
+                            mode: guidedPlaybackState,
+                            markerIndex: pausedAtYellowMarkerIdx,
+                            yellowStart: Math.round(Number(mkGuide.start) * 1000) / 1000,
+                            yellowEnd: Math.round(Number(mkGuide.end) * 1000) / 1000,
+                            contentStart: mkGuide.contentStart != null && isFinite(Number(mkGuide.contentStart))
+                                ? Math.round(Number(mkGuide.contentStart) * 1000) / 1000 : null,
+                            approxFrame30AtYellowStart: tensegrityApproxFrame30(mkGuide.start),
+                            previousTime: Math.round(prev * 1000) / 1000,
+                            currentTimeBeforePause: Math.round(Number(t) * 1000) / 1000,
+                            crossedStartCondition: true,
+                            pauseFired: true,
+                            actualStopTarget: Math.round(Number(stopTarget) * 1000) / 1000,
+                            stopTargetKind: tensegrityClassifyStopTarget(stopTarget, mkGuide),
+                            note: "stopTargetKind should not be inside_yellow_span_or_edge when leapfrog resolves correctly.",
+                        });
+                        runTensegrityTimeupdateDiagnostics(this, prev, t, mkGuide, true, true);
                         lastPlaybackTimeForMarkerCheck = Number(stopTarget);
                         return;
                     }
                 }
+                runTensegrityTimeupdateDiagnostics(this, prev, t, mkGuide, crossedStart, pauseFired);
             }
             lastPlaybackTimeForMarkerCheck = Number(t);
             return;
