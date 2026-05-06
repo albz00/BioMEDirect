@@ -116,7 +116,7 @@
                 <a href="AcknowledgementsT.html">Acknowledgements</a>
                 <a href="ResourcesCentralMenuT.html">Resources</a>
                 <a href="https://creativecommons.org/licenses/by-nc/3.0/legalcode" target="_blank" rel="noopener noreferrer">License, CC BY-NC</a>
-                <a id="footerLoginLink" href="../admin.html" class="footer-login-link hidden admin-hidden">Login</a>
+                <a id="footerLoginLink" href="../admin.html" class="footer-login-link admin-hidden">Login</a>
         </div>
     </div>
 </body>
@@ -139,17 +139,12 @@
     firebase.initializeApp(firebaseConfig);
     const auth = firebase.auth();
 
-    // Check if user is logged in and show a subtle Admin Panel link in the footer
+    // Footer link stays behind Ctrl/Cmd+` (.admin-hidden); label only changes with auth
     auth.onAuthStateChanged((user) => {
         const footerLoginLink = document.getElementById('footerLoginLink');
-        
         if (footerLoginLink) {
-            if (user) {
-                footerLoginLink.textContent = 'Admin Panel';
-                footerLoginLink.classList.remove('hidden');
-            } else {
-                footerLoginLink.classList.add('hidden');
-            }
+            footerLoginLink.textContent = user ? 'Admin Panel' : 'Login';
+            footerLoginLink.classList.remove('hidden');
         }
     });
 </script>
