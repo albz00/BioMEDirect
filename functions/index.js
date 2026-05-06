@@ -630,6 +630,10 @@ const YELLOW_ENTER_THRESHOLD = 0.115;
 const YELLOW_EXIT_THRESHOLD = 0.078;
 /** Temporary comparison: how many frames exceed this loose ratio (logged with calibration). */
 const YELLOW_DEBUG_LOOSE_ENTER = 0.04;
+/** One-frame carve-out must stay meaningfully brighter than hysteresis enter (fewer false positives). */
+const YELLOW_ULTRA_FLASH_SINGLE_PEAK_MIN = Math.max(0.128, YELLOW_ENTER_THRESHOLD + 0.013);
+/** Recover rejected candidates up to N frames without widening into near-normal title cards at 24–30fps. */
+const ULTRA_SUPPLEMENT_MAX_FRAMES = 3;
 
 function buildYellowEventsFromFrames(frameDetections, frameRate, minDurationSeconds = 0.06) {
   if (!frameDetections.length) {
@@ -789,6 +793,8 @@ function buildShortFlashFallbackEvents(rawCandidateSpans, frameRate) {
   const minPeakYellowRatio = YELLOW_ENTER_THRESHOLD;
   const minAverageYellowRatio = Math.max(0.072, YELLOW_EXIT_THRESHOLD);
   const minScore = Math.max(0.082, YELLOW_EXIT_THRESHOLD + 0.004);
+  /** Stricter blended score gate for ultra-narrow flashes; single-frame handled separately. */
+  const minScoreSingleFrame = Math.max(0.09, minScore + 0.006);
   const evaluated = [];
   const accepted = [];
   let lastAcceptedEndFrame = -Infinity;
@@ -806,11 +812,24 @@ function buildShortFlashFallbackEvents(rawCandidateSpans, frameRate) {
 
     const score = (avg * 0.65) + (peak * 0.35);
     let rejectionReason = "accepted_short_flash";
-    if (frames < minFrames) rejectionReason = "fallback_reject_too_few_frames";
-    else if (peak < minPeakYellowRatio) rejectionReason = "fallback_reject_peak_too_low";
-    else if (avg < minAverageYellowRatio) rejectionReason = "fallback_reject_avg_too_low";
-    else if (score < minScore) rejectionReason = "fallback_reject_score_too_low";
-    else if (startFrame - lastAcceptedEndFrame < minGapFrames) rejectionReason = "fallback_reject_not_separated";
+    if (frames < minFrames) {
+      rejectionReason = "fallback_reject_too_few_frames";
+    } else if (frames === 1) {
+      if (peak < YELLOW_ULTRA_FLASH_SINGLE_PEAK_MIN) {
+        rejectionReason = "fallback_reject_single_frame_peak_not_ultra_strong";
+      } else if (score < minScoreSingleFrame) {
+        rejectionReason = "fallback_reject_single_frame_score_too_low";
+      } else if (startFrame - lastAcceptedEndFrame < minGapFrames) {
+        rejectionReason = "fallback_reject_not_separated";
+      } else {
+        rejectionReason = "accepted_short_flash";
+      }
+    } else {
+      if (peak < minPeakYellowRatio) rejectionReason = "fallback_reject_peak_too_low";
+      else if (avg < minAverageYellowRatio) rejectionReason = "fallback_reject_avg_too_low";
+      else if (score < minScore) rejectionReason = "fallback_reject_score_too_low";
+      else if (startFrame - lastAcceptedEndFrame < minGapFrames) rejectionReason = "fallback_reject_not_separated";
+    }
 
     const acceptedThis = rejectionReason === "accepted_short_flash";
     evaluated.push({
@@ -851,11 +870,270 @@ function buildShortFlashFallbackEvents(rawCandidateSpans, frameRate) {
         minPeakYellowRatio,
         minAverageYellowRatio,
         minScore,
+        minScoreSingleFrame,
+        ultraSingleFramePeakMin: YELLOW_ULTRA_FLASH_SINGLE_PEAK_MIN,
       },
       acceptedShortFlashSpanCount: accepted.length,
       evaluatedCandidateCount: evaluated.length,
       evaluatedSpans: evaluated,
     },
+  };
+}
+
+function spanFrameRangesOverlap(a, b) {
+  if (!a || !b) return false;
+  const as = Number(a.startFrame);
+  const ae = Number(a.endFrame);
+  const bs = Number(b.startFrame);
+  const be = Number(b.endFrame);
+  if (!Number.isFinite(as) || !Number.isFinite(ae) || !Number.isFinite(bs) || !Number.isFinite(be)) return false;
+  return as <= be && ae >= bs;
+}
+
+function evaluateUltraShortSupplementAccept(span, frameInterval) {
+  const fi = frameInterval > 0 ? frameInterval : 1 / 30;
+  const frames = Number.isFinite(span.frames)
+    ? span.frames
+    : (Number.isFinite(span.startFrame) && Number.isFinite(span.endFrame) ? span.endFrame - span.startFrame + 1 : 0);
+  const avg = Number.isFinite(span.averageYellowRatio) ? span.averageYellowRatio : 0;
+  const peak = Number.isFinite(span.peakYellowRatio) ? span.peakYellowRatio : 0;
+  const score = (avg * 0.65) + (peak * 0.35);
+  const dur = Number.isFinite(span.duration) ? span.duration : (frames * fi);
+  const maxUltraDurSec = ULTRA_SUPPLEMENT_MAX_FRAMES * fi + 1e-4;
+
+  if (frames < 1 || frames > ULTRA_SUPPLEMENT_MAX_FRAMES) {
+    return {accepted: false, reason: "supplement_reject_span_wider_than_ultra_flash_cap", tier: null};
+  }
+  if (dur > maxUltraDurSec * 1.35) {
+    return {accepted: false, reason: "supplement_reject_duration_above_ultra_cap", tier: null};
+  }
+
+  if (frames === 1) {
+    if (peak < YELLOW_ULTRA_FLASH_SINGLE_PEAK_MIN) {
+      return {accepted: false, reason: "supplement_single_frame_peak_too_low", tier: null};
+    }
+    const minScr = Math.max(0.092, YELLOW_EXIT_THRESHOLD + 0.015);
+    if (score < minScr) {
+      return {accepted: false, reason: "supplement_single_frame_score_too_low", tier: null};
+    }
+    return {accepted: true, reason: null, tier: "single_frame_ultra_peak"};
+  }
+  if (frames === 2) {
+    if (peak < YELLOW_ENTER_THRESHOLD) {
+      return {accepted: false, reason: "supplement_two_frame_peak_too_low", tier: null};
+    }
+    if (avg < Math.max(0.074, YELLOW_EXIT_THRESHOLD - 0.004)) {
+      return {accepted: false, reason: "supplement_two_frame_avg_too_low", tier: null};
+    }
+    if (score < 0.086) {
+      return {accepted: false, reason: "supplement_two_frame_score_too_low", tier: null};
+    }
+    return {accepted: true, reason: null, tier: "two_frame_strong_flash"};
+  }
+  if (peak < YELLOW_ENTER_THRESHOLD + 0.004) {
+    return {accepted: false, reason: "supplement_three_frame_peak_too_low", tier: null};
+  }
+  if (avg < Math.max(0.076, YELLOW_EXIT_THRESHOLD - 0.002)) {
+    return {accepted: false, reason: "supplement_three_frame_avg_too_low", tier: null};
+  }
+  if (score < 0.088) {
+    return {accepted: false, reason: "supplement_three_frame_score_too_low", tier: null};
+  }
+  return {accepted: true, reason: null, tier: "three_frame_edge_recovery"};
+}
+
+/**
+ * When normal duration rules accept some title cards but drop other real ultra-short flashes,
+ * recover non-overlapping rejected candidates with strict evidence (does not replace fallback).
+ */
+function mergeUltraShortRejectedCandidates(rawCandidateSpans, baseEvents, frameRate, ctx = {}) {
+  const frameInterval = frameRate > 0 ? 1 / frameRate : 1 / 30;
+  const working = (baseEvents || []).map((e) => ({...e}));
+  working.sort((a, b) => (a.startFrame || 0) - (b.startFrame || 0));
+
+  const eligible = (rawCandidateSpans || [])
+    .filter((s) => s && s.rejected && s.rejectionReason === "below_min_duration_seconds")
+    .filter((s) => {
+      const fr = Number.isFinite(s.frames) ? s.frames : 0;
+      return fr >= 1 && fr <= ULTRA_SUPPLEMENT_MAX_FRAMES;
+    })
+    .sort((a, b) => (a.startFrame || 0) - (b.startFrame || 0));
+
+  const details = [];
+  let lastSupplementEnd = -Infinity;
+
+  for (const span of eligible) {
+    const key = `${span.startFrame}:${span.endFrame}`;
+    if (working.some((e) => spanFrameRangesOverlap(span, e))) {
+      details.push({spanKey: key, disposition: "supplement_skip_overlaps_base_event"});
+      continue;
+    }
+    if (Number(span.startFrame) <= lastSupplementEnd) {
+      details.push({spanKey: key, disposition: "supplement_skip_tighter_than_prior_supplement"});
+      continue;
+    }
+    const ev = evaluateUltraShortSupplementAccept(span, frameInterval);
+    if (!ev.accepted) {
+      details.push({spanKey: key, disposition: ev.reason});
+      continue;
+    }
+    const frames = span.frames;
+    const avgYellow = span.averageYellowRatio;
+    const peakYellow = span.peakYellowRatio;
+    const detectionConfidence = Math.round(clamp((avgYellow - YELLOW_EXIT_THRESHOLD) / 0.32, 0, 1) * 1000) / 1000;
+    working.push({
+      eventIndex: 0,
+      startFrame: span.startFrame,
+      endFrame: span.endFrame,
+      startTime: span.startTime,
+      endTime: span.endTime,
+      duration: span.duration,
+      detectionConfidence,
+      metrics: {
+        averageYellowRatio: Math.round(avgYellow * 1000) / 1000,
+        peakYellowRatio: Math.round(peakYellow * 1000) / 1000,
+        frames,
+      },
+      recoveredFromUltraShortCandidate: true,
+      ultraShortRecoveryTier: ev.tier,
+    });
+    lastSupplementEnd = Number(span.endFrame);
+    details.push({
+      spanKey: key,
+      disposition: "accepted_ultra_short_supplement",
+      tier: ev.tier,
+    });
+  }
+
+  working.sort((a, b) => (a.startFrame || 0) - (b.startFrame || 0));
+  working.forEach((e, idx) => {
+    e.eventIndex = idx + 1;
+  });
+
+  const tag =
+    (ctx.lessonId && String(ctx.lessonId).toLowerCase().includes("tensegrity")) ||
+    (ctx.videoBasename && String(ctx.videoBasename).toLowerCase().includes("tensegrity"))
+      ? "tensegrity_debug_target"
+      : null;
+
+  return {
+    mergedEvents: working,
+    supplementalRecoverySummary: {
+      debugTargetHint: tag,
+      eligibleRejectedShortSpanCount: eligible.length,
+      recoveredCount: details.filter((d) => d.disposition === "accepted_ultra_short_supplement").length,
+      detail: details,
+    },
+  };
+}
+
+function buildYellowFlashAudit({
+  lessonId,
+  videoBasename,
+  rawCandidateSpans,
+  finalGroupedEvents,
+  supplementalRecoverySummary,
+  shortFlashFallbackReport,
+  detectionModeUsed,
+  normalMinDurationSeconds,
+}) {
+  const spans = rawCandidateSpans || [];
+  const finalEvents = finalGroupedEvents || [];
+  const spanKeyFn = (s) => `${Number(s.startFrame)}:${Number(s.endFrame)}`;
+  const finalKeys = new Set(finalEvents.map((e) => spanKeyFn(e)));
+
+  const recoveredKeys = new Set(
+    (supplementalRecoverySummary && supplementalRecoverySummary.detail
+      ? supplementalRecoverySummary.detail.filter((d) => d.disposition === "accepted_ultra_short_supplement")
+      : []
+    ).map((d) => d.spanKey)
+  );
+
+  const fallbackEval = (shortFlashFallbackReport && shortFlashFallbackReport.evaluatedSpans) || [];
+  const fallbackAcceptedKeys = new Set(
+    fallbackEval.filter((x) => x.acceptedByShortFlashFallback).map(spanKeyFn)
+  );
+
+  const rejectionReasonSummary = {};
+  for (const s of spans) {
+    const r = s.rejectionReason || "unknown";
+    rejectionReasonSummary[r] = (rejectionReasonSummary[r] || 0) + 1;
+  }
+
+  const oneFrameCandidateCount = spans.filter((s) => Number(s.frames) === 1).length;
+  const rejectedCandidateCount = spans.filter((s) => s.rejected).length;
+
+  const ultraShortAcceptedCount = finalEvents.filter((e) => {
+    const fr = e.metrics && Number.isFinite(e.metrics.frames) ? Number(e.metrics.frames) : null;
+    const d = Number(e.duration);
+    if (fr != null && fr >= 1 && fr <= ULTRA_SUPPLEMENT_MAX_FRAMES) return true;
+    return Number.isFinite(d) && d <= 0.12;
+  }).length;
+
+  const ultraShortRejectedCount = spans.filter((s) => {
+    const fr = Number(s.frames);
+    if (fr < 1 || fr > ULTRA_SUPPLEMENT_MAX_FRAMES) return false;
+    if (!s.rejected) return false;
+    return !finalKeys.has(spanKeyFn(s));
+  }).length;
+
+  const candidateDisposition = spans.map((s) => {
+    const k = spanKeyFn(s);
+    let finalPath;
+    if (!s.rejected) {
+      finalPath = "accepted_normal_duration_rules";
+    } else if (recoveredKeys.has(k)) {
+      finalPath = "accepted_ultra_short_supplement";
+    } else if (fallbackAcceptedKeys.has(k)) {
+      finalPath = "accepted_short_flash_fallback";
+    } else if (finalKeys.has(k)) {
+      finalPath = "accepted_in_final_unexpected_state";
+    } else {
+      const fe = fallbackEval.find((x) => spanKeyFn(x) === k);
+      const fbReason = fe && fe.fallbackRejectionReason;
+      finalPath = fbReason ? `still_rejected:${fbReason}` : "still_rejected_after_all_paths";
+    }
+    return {
+      startFrame: s.startFrame,
+      endFrame: s.endFrame,
+      startTime: s.startTime,
+      endTime: s.endTime,
+      duration: s.duration,
+      frames: s.frames,
+      peakYellowRatio: s.peakYellowRatio,
+      averageYellowRatio: s.averageYellowRatio,
+      rawRejectionReason: s.rejectionReason,
+      rejectedInRawGrouping: !!s.rejected,
+      finalPath,
+    };
+  });
+
+  const debugTargetHint =
+    (lessonId && String(lessonId).toLowerCase().includes("tensegrity")) ||
+    (videoBasename && String(videoBasename).toLowerCase().includes("tensegrity"))
+      ? "tensegrity_debug_target"
+      : null;
+
+  const supplementRecoveredCount = supplementalRecoverySummary && Number.isFinite(supplementalRecoverySummary.recoveredCount)
+    ? supplementalRecoverySummary.recoveredCount
+    : 0;
+
+  return {
+    version: 1,
+    debugTargetHint,
+    detectionModeUsed: detectionModeUsed || "normal",
+    normalMinDurationSeconds: normalMinDurationSeconds != null ? normalMinDurationSeconds : null,
+    rawCandidateSpanCount: spans.length,
+    acceptedEventCount: finalEvents.length,
+    rejectedCandidateCount,
+    oneFrameCandidateCount,
+    ultraShortAcceptedCount,
+    ultraShortRejectedCount,
+    rejectionReasonSummary,
+    supplementRecoveredCount,
+    supplementalRecovery: supplementalRecoverySummary || null,
+    fallbackEvaluatedCount: fallbackEval.length,
+    candidateDisposition,
   };
 }
 
@@ -1644,6 +1922,30 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
           detectionModeUsed = "short_flash_fallback";
         }
       }
+
+      const supplementCtx = {
+        lessonId: options.lessonId || null,
+        videoBasename: path.basename(video),
+      };
+      const ultraShortSupplement = mergeUltraShortRejectedCandidates(
+        rawCandidateSpans,
+        groupedEventsForOutput,
+        frameRate,
+        supplementCtx,
+      );
+      groupedEventsForOutput = ultraShortSupplement.mergedEvents;
+
+      const yellowFlashAudit = buildYellowFlashAudit({
+        lessonId: options.lessonId || null,
+        videoBasename: path.basename(video),
+        rawCandidateSpans,
+        finalGroupedEvents: groupedEventsForOutput,
+        supplementalRecoverySummary: ultraShortSupplement.supplementalRecoverySummary,
+        shortFlashFallbackReport,
+        detectionModeUsed,
+        normalMinDurationSeconds: minDurationSeconds,
+      });
+
       const yellowEvents = attachContentStartsToEvents(frameDetections, frameRate, groupedEventsForOutput);
 
       if (yellowEvents.length > 0) {
@@ -1680,16 +1982,19 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
         if (built.stats.framesAtOrAboveEnter === 0) {
           return "no_frames_met_enter_threshold_color_may_not_match_yellow_card_rule";
         }
+        if (groupedEventsForOutput.length > 0) {
+          return null;
+        }
         if (rawGroupedEvents.length === 0 && built.stats.eventsRejectedTooShort > 0 && !shortFlashFallbackActivated) {
           return "yellow_candidates_found_but_all_shorter_than_min_duration_seconds_lower_min_segment_seconds";
         }
-        if (shortFlashFallbackActivated && groupedEventsForOutput.length === 0) {
+        if (shortFlashFallbackActivated) {
           return "short_flash_fallback_failed";
         }
         if (rawGroupedEvents.length === 0) {
           return "grouping_produced_zero_events";
         }
-        return null;
+        return "grouping_produced_zero_events_after_merge";
       })();
 
       let calibrationReport = null;
@@ -1741,6 +2046,16 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
         detectionModeUsed,
         shortFlashFallbackActivated,
         acceptedShortFlashSpanCount: shortFlashFallbackReport ? shortFlashFallbackReport.acceptedShortFlashSpanCount : 0,
+        ultraShortSupplementRecovered: yellowFlashAudit.supplementRecoveredCount || 0,
+        yellowFlashAuditSummary: {
+          rawCandidateSpanCount: yellowFlashAudit.rawCandidateSpanCount,
+          acceptedEventCount: yellowFlashAudit.acceptedEventCount,
+          rejectedCandidateCount: yellowFlashAudit.rejectedCandidateCount,
+          oneFrameCandidateCount: yellowFlashAudit.oneFrameCandidateCount,
+          ultraShortAcceptedCount: yellowFlashAudit.ultraShortAcceptedCount,
+          ultraShortRejectedCount: yellowFlashAudit.ultraShortRejectedCount,
+          rejectionReasonSummary: yellowFlashAudit.rejectionReasonSummary,
+        },
         shortFlashFallbackReport,
         shortFlashManual001Comparison,
         candidateSpanSummary,
@@ -1766,6 +2081,7 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
         acceptedShortFlashSpanCount: shortFlashFallbackReport ? shortFlashFallbackReport.acceptedShortFlashSpanCount : 0,
         shortFlashFallbackReport,
         shortFlashManual001Comparison,
+        yellowFlashAudit,
         rawGroupedEvents,
         groupingStats: built.stats,
         detectionSummary: {
@@ -2230,6 +2546,7 @@ async function runDeterministicYellowPipeline({
       acceptedShortFlashSpanCount: detection.acceptedShortFlashSpanCount || 0,
       shortFlashFallbackReport: detection.shortFlashFallbackReport || null,
       shortFlashManual001Comparison: detection.shortFlashManual001Comparison || null,
+      yellowFlashAudit: detection.yellowFlashAudit || null,
       events: yellowEvents,
       groupingStats: detection.groupingStats || null,
       frameCount: detection.frameCount,
