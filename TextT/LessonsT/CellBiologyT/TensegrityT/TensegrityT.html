@@ -87,6 +87,7 @@
     const db = firebase.firestore();
     window.shouldSkipYellow = false;
     window.yellowScreenRanges = [];
+    window.yellowStopMarkers = [];
 
         // Load srcArray from Firestore (timeline keyed by lessonId only)
     async function loadSrcArray(lessonId) {
@@ -95,6 +96,7 @@
             if (!lessonDoc.exists) return [];
             const data = lessonDoc.data() || {};
             if (Array.isArray(data.yellowScreenRanges)) window.yellowScreenRanges = data.yellowScreenRanges;
+            if (Array.isArray(data.yellowStopMarkers)) window.yellowStopMarkers = data.yellowStopMarkers;
             return data.srcArray || [];
         } catch (error) {
             console.error("Error loading srcArray:", error);
@@ -140,7 +142,10 @@
             const srcArray = await loadSrcArray(lessonId);
             const videoUrl = await loadVideoUrl(lessonId);
 
-            if (window.yellowScreenRanges && window.yellowScreenRanges.length > 0) window.shouldSkipYellow = true;
+            if ((window.yellowStopMarkers && window.yellowStopMarkers.length > 0) ||
+                (window.yellowScreenRanges && window.yellowScreenRanges.length > 0)) {
+                window.shouldSkipYellow = true;
+            }
 
             console.log("Loaded timing array:", srcArray);
             console.log("Loaded video URL:", videoUrl);

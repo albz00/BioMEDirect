@@ -94,11 +94,13 @@ function tensegrityDumpMarkersContext(reason) {
     }
     tensegrityDebugShortestMarkerSec = minDur;
     var rawLen = (typeof window !== "undefined" && Array.isArray(window.yellowScreenRanges)) ? window.yellowScreenRanges.length : 0;
+    var stopLen = (typeof window !== "undefined" && Array.isArray(window.yellowStopMarkers)) ? window.yellowStopMarkers.length : 0;
     tensegrityPlayerDebugLog({
         event: "markers_context",
         reason: reason || null,
         markerCount: yellowMarkers.length,
         rawYellowScreenRangesCount: rawLen,
+        yellowStopMarkersCount: stopLen,
         shortestMarkerDurationSec: minDur != null ? Math.round(minDur * 10000) / 10000 : null,
         markers: rows,
         note: "Player uses marker.start (yellowStart) for crossing; pause seeks to resolved post-yellow time via resolvePostYellowStopTime.",
@@ -243,9 +245,12 @@ function segmentContentEndTime(seg) {
 }
 
 function loadYellowMarkersFromWindow() {
-    var ranges = (typeof window !== "undefined" && Array.isArray(window.yellowScreenRanges))
-        ? window.yellowScreenRanges
-        : [];
+    var ranges = [];
+    if (typeof window !== "undefined" && Array.isArray(window.yellowStopMarkers) && window.yellowStopMarkers.length > 0) {
+        ranges = window.yellowStopMarkers;
+    } else if (typeof window !== "undefined" && Array.isArray(window.yellowScreenRanges)) {
+        ranges = window.yellowScreenRanges;
+    }
     yellowMarkers = ranges
         .filter(function(r) { return r && typeof r.start === "number" && typeof r.end === "number" && r.end > r.start; })
         .map(function(r) {

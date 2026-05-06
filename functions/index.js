@@ -151,6 +151,7 @@ exports.generateSrcArray = onObjectFinalized(
             srcArray,
             originalSrcArray: srcArray,
             yellowScreenRanges: pipeline.yellowRanges,
+            yellowStopMarkers: pipeline.yellowStopMarkers || pipeline.yellowRanges,
             yellowScreenEvents: pipeline.yellowEvents,
             yellowDetection: pipeline.yellowDetection,
             chapterTimeline: pipeline.chapterTimeline,
@@ -170,6 +171,7 @@ exports.generateSrcArray = onObjectFinalized(
             videoPath: filePath,
             srcArrayProposal: srcArray,
             yellowScreenRanges: pipeline.yellowRanges,
+            yellowStopMarkers: pipeline.yellowStopMarkers || pipeline.yellowRanges,
             yellowScreenEvents: pipeline.yellowEvents,
             yellowDetection: pipeline.yellowDetection,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -2104,6 +2106,20 @@ function deriveYellowRangesFromEvents(events) {
   return events.map((e) => ({
     start: Math.round((e.yellowStart != null ? e.yellowStart : e.startTime) * 1000) / 1000,
     end: Math.round((e.yellowEnd != null ? e.yellowEnd : e.endTime) * 1000) / 1000,
+    contentStart: e.contentStart != null ? Math.round(Number(e.contentStart) * 1000) / 1000 : null,
+  }));
+}
+
+/**
+ * Playback stop markers must include every accepted yellow event, independent of chapter row count.
+ */
+function buildYellowStopMarkers(events) {
+  return (events || []).map((e, idx) => ({
+    markerIndex: idx + 1,
+    start: Math.round((e.yellowStart != null ? e.yellowStart : e.startTime) * 1000) / 1000,
+    end: Math.round((e.yellowEnd != null ? e.yellowEnd : e.endTime) * 1000) / 1000,
+    contentStart: e.contentStart != null ? Math.round(Number(e.contentStart) * 1000) / 1000 : null,
+    detectionConfidence: e.detectionConfidence != null ? Math.round(Number(e.detectionConfidence) * 1000) / 1000 : null,
   }));
 }
 
@@ -2517,6 +2533,7 @@ async function runDeterministicYellowPipeline({
     });
     const yellowEvents = detection.yellowEvents;
     const yellowRanges = deriveYellowRangesFromEvents(yellowEvents);
+    const yellowStopMarkers = buildYellowStopMarkers(yellowEvents);
 
     const yellowDetection = {
       version: 2,
@@ -2635,6 +2652,7 @@ async function runDeterministicYellowPipeline({
     return {
       srcArray,
       yellowRanges,
+      yellowStopMarkers,
       yellowEvents,
       yellowDetection,
       hasYellowEvents: yellowEvents.length > 0,
@@ -2876,6 +2894,7 @@ exports.detectYellowScreen = onCall(
         srcArray,
         originalSrcArray: srcArray,
         yellowScreenRanges: pipeline.yellowRanges,
+        yellowStopMarkers: pipeline.yellowStopMarkers || pipeline.yellowRanges,
         yellowScreenEvents: pipeline.yellowEvents,
         yellowDetection: pipeline.yellowDetection,
         chapterTimeline: pipeline.chapterTimeline,
@@ -2995,6 +3014,7 @@ exports.generateSrcArrayWithYellowOptions = onCall(
           srcArray,
           originalSrcArray: srcArray,
           yellowScreenRanges: pipeline.yellowRanges,
+          yellowStopMarkers: pipeline.yellowStopMarkers || pipeline.yellowRanges,
           yellowScreenEvents: pipeline.yellowEvents,
           yellowDetection: pipeline.yellowDetection,
           chapterTimeline: pipeline.chapterTimeline,
@@ -3822,6 +3842,7 @@ exports.generateSrcArrayFromYellowScreens = onCall(
           srcArray: mergedSrc,
           originalSrcArray: mergedSrc,
           yellowScreenRanges: pipeline.yellowRanges,
+          yellowStopMarkers: pipeline.yellowStopMarkers || pipeline.yellowRanges,
           yellowScreenEvents: pipeline.yellowEvents,
           yellowDetection: pipeline.yellowDetection,
           chapterTimeline: pipeline.chapterTimeline,
