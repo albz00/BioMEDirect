@@ -114,6 +114,7 @@ exports.generateSrcArray = onObjectFinalized(
             {
               videoPath: filePath,
               yellowDetection: pipeline.yellowDetection,
+              greenDetection: pipeline.greenDetection || null,
               timelinePipeline: {
                 version: "yellow-content-v2",
                 source: "upload-trigger",
@@ -154,6 +155,7 @@ exports.generateSrcArray = onObjectFinalized(
             yellowStopMarkers: pipeline.yellowStopMarkers || pipeline.yellowRanges,
             yellowScreenEvents: pipeline.yellowEvents,
             yellowDetection: pipeline.yellowDetection,
+            greenDetection: pipeline.greenDetection || null,
             chapterTimeline: pipeline.chapterTimeline,
             timelineReview: pipeline.review,
             timelinePipeline: {
@@ -174,6 +176,7 @@ exports.generateSrcArray = onObjectFinalized(
             yellowStopMarkers: pipeline.yellowStopMarkers || pipeline.yellowRanges,
             yellowScreenEvents: pipeline.yellowEvents,
             yellowDetection: pipeline.yellowDetection,
+            greenDetection: pipeline.greenDetection || null,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             timelinePipeline: {
@@ -385,6 +388,7 @@ function clamp(v, min, max) {
  * Broad warm title-card band: yellow / gold / mustard / yellow-orange via HSV + loose RGB.
  */
 const COLOR_PIPELINE_LABEL = "title_card_v3_maroon_reject+coverage_gate+tighter_hsv46-64+structure24/19";
+const GREEN_COLOR_PIPELINE_LABEL = "freeze_green_v1_strict_hsv95-150+coverage_gate+flatness22/16";
 
 function pixelWarmTitleCard(r, g, b) {
   const maxc = Math.max(r, g, b);
@@ -432,6 +436,23 @@ function pixelStrictTitleYellow(r, g, b) {
   if (v < 0.32 || s < 0.42) return false;
   if (h >= 46 && h <= 64) return true;
   return false;
+}
+
+/**
+ * Deliberate freeze marker card: dominant saturated green with bright value.
+ * Kept independent from yellow logic so thresholds can evolve separately.
+ */
+function pixelStrictFreezeGreen(r, g, b) {
+  const maxc = Math.max(r, g, b);
+  if (maxc < 64) return false;
+  const hsv = convert.rgb.hsv([r, g, b]);
+  const h = hsv[0];
+  const s = hsv[1] / 100;
+  const v = hsv[2] / 100;
+  if (v < 0.46 || s < 0.5) return false;
+  if (h < 95 || h > 150) return false;
+  if (g < r + 18 || g < b + 14) return false;
+  return true;
 }
 
 /** Dark maroon / red content slides (high edge, complex) — must not count as yellow card pixels. */
@@ -577,6 +598,112 @@ function scoreTitleCardFrame(frameData, width, height, sampleStep = 4) {
   };
 }
 
+const GREEN_LUMA_STD_MAX = 22;
+const GREEN_EDGE_MEAN_MAX = 16;
+
+function greenStructureGateFromMetrics(lumaStd, edgeMean) {
+  const u = lumaStd <= GREEN_LUMA_STD_MAX
+    ? 1
+    : Math.max(0, 1 - (lumaStd - GREEN_LUMA_STD_MAX) / 40);
+  const e = edgeMean <= GREEN_EDGE_MEAN_MAX
+    ? 1
+    : Math.max(0, 1 - (edgeMean - GREEN_EDGE_MEAN_MAX) / 48);
+  return Math.min(1, u * e);
+}
+
+function scoreFreezeGreenFrame(frameData, width, height, sampleStep = 4) {
+  let strictFull = 0;
+  let samples = 0;
+  const lumas = [];
+  let satSum = 0;
+  let valSum = 0;
+
+  for (let y = 0; y < height; y += sampleStep) {
+    for (let x = 0; x < width; x += sampleStep) {
+      const offset = (y * width + x) * 3;
+      const r = frameData[offset];
+      const g = frameData[offset + 1];
+      const b = frameData[offset + 2];
+      if (r == null || g == null || b == null) continue;
+      samples++;
+      if (pixelStrictFreezeGreen(r, g, b)) strictFull++;
+      lumas.push(lumaAtOffset(frameData, offset));
+      const hsv = convert.rgb.hsv([r, g, b]);
+      satSum += hsv[1] / 100;
+      valSum += hsv[2] / 100;
+    }
+  }
+
+  const strictFullRatio = samples ? strictFull / samples : 0;
+  const avgSaturation = samples ? satSum / samples : 0;
+  const avgBrightness = samples ? valSum / samples : 0;
+
+  const x0 = Math.floor(width * 0.2);
+  const x1 = Math.floor(width * 0.8);
+  const y0 = Math.floor(height * 0.2);
+  const y1 = Math.floor(height * 0.8);
+  let strictCt = 0;
+  let sampC = 0;
+  for (let y = y0; y < y1; y += sampleStep) {
+    for (let x = x0; x < x1; x += sampleStep) {
+      const offset = (y * width + x) * 3;
+      const r = frameData[offset];
+      const g = frameData[offset + 1];
+      const b = frameData[offset + 2];
+      if (r == null || g == null || b == null) continue;
+      sampC++;
+      if (pixelStrictFreezeGreen(r, g, b)) strictCt++;
+    }
+  }
+  const strictCenterRatio = sampC ? strictCt / sampC : 0;
+  const strictCombined = Math.max(strictFullRatio, strictCenterRatio * 0.86 + strictFullRatio * 0.14);
+
+  const meanL = lumas.length ? lumas.reduce((a, b) => a + b, 0) / lumas.length : 0;
+  const varL = lumas.length
+    ? lumas.reduce((s, x) => s + (x - meanL) * (x - meanL), 0) / lumas.length
+    : 0;
+  const lumaStd = Math.sqrt(varL);
+
+  let edgeSum = 0;
+  let edgeN = 0;
+  for (let y = 0; y < height - sampleStep; y += sampleStep) {
+    for (let x = 0; x < width - sampleStep; x += sampleStep) {
+      const o = (y * width + x) * 3;
+      const ox = (y * width + x + sampleStep) * 3;
+      const oy = ((y + sampleStep) * width + x) * 3;
+      const l0 = lumaAtOffset(frameData, o);
+      const l1 = lumaAtOffset(frameData, ox);
+      const l2 = lumaAtOffset(frameData, oy);
+      edgeSum += Math.abs(l0 - l1) + Math.abs(l0 - l2);
+      edgeN++;
+    }
+  }
+  const edgeMean = edgeN ? edgeSum / edgeN : 0;
+  const structureGate = greenStructureGateFromMetrics(lumaStd, edgeMean);
+
+  const coverageOk = strictFullRatio >= 0.76 && strictCenterRatio >= 0.74;
+  const saturationOk = avgSaturation >= 0.48;
+  const brightnessOk = avgBrightness >= 0.46;
+  const coveragePenalty = coverageOk ? 1 : 0.4;
+  const satPenalty = saturationOk ? 1 : 0.55;
+  const brightPenalty = brightnessOk ? 1 : 0.6;
+  const greenRatio = strictCombined * structureGate * coveragePenalty * satPenalty * brightPenalty;
+
+  return {
+    greenRatio: Math.round(greenRatio * 10000) / 10000,
+    strictFullRatio: Math.round(strictFullRatio * 10000) / 10000,
+    strictCenterRatio: Math.round(strictCenterRatio * 10000) / 10000,
+    strictCombined: Math.round(strictCombined * 10000) / 10000,
+    avgSaturation: Math.round(avgSaturation * 10000) / 10000,
+    avgBrightness: Math.round(avgBrightness * 10000) / 10000,
+    lumaStd: Math.round(lumaStd * 1000) / 1000,
+    edgeMean: Math.round(edgeMean * 1000) / 1000,
+    structureGate: Math.round(structureGate * 1000) / 1000,
+    coveragePenalty: Math.round(coveragePenalty * 1000) / 1000,
+    samplePixels: samples,
+  };
+}
+
 function estimateYellowDominance(frameData, width, height, sampleStep = 4) {
   let yellowCount = 0;
   let brightCount = 0;
@@ -636,6 +763,10 @@ const YELLOW_DEBUG_LOOSE_ENTER = 0.04;
 const YELLOW_ULTRA_FLASH_SINGLE_PEAK_MIN = Math.max(0.128, YELLOW_ENTER_THRESHOLD + 0.013);
 /** Recover rejected candidates up to N frames without widening into near-normal title cards at 24–30fps. */
 const ULTRA_SUPPLEMENT_MAX_FRAMES = 3;
+const GREEN_ENTER_THRESHOLD = 0.72;
+const GREEN_EXIT_THRESHOLD = 0.62;
+const GREEN_EVENT_MIN_AVG_RATIO = 0.68;
+const GREEN_EVENT_MIN_PEAK_RATIO = 0.78;
 
 function buildYellowEventsFromFrames(frameDetections, frameRate, minDurationSeconds = 0.06) {
   if (!frameDetections.length) {
@@ -777,6 +908,192 @@ function buildYellowEventsFromFrames(frameDetections, frameRate, minDurationSeco
       minFramesRequired: minFrames,
       eventsEmitted: events.length,
       eventsRejectedTooShort,
+      enterThreshold,
+      exitThreshold,
+      minDurationSeconds,
+    },
+  };
+}
+
+function buildGreenEventsFromFrames(frameDetections, frameRate, minDurationSeconds = 0.06) {
+  if (!frameDetections.length) {
+    return {
+      events: [],
+      rawCandidateSpans: [],
+      rejectedSpans: [],
+      candidateSpanSummary: {
+        candidateSpanCount: 0,
+        acceptedEventCount: 0,
+        rejectedSpanCount: 0,
+        shortestCandidate: null,
+        longestCandidate: null,
+        minDurationSecondsUsed: minDurationSeconds,
+      },
+      stats: {
+        framesDecoded: 0,
+        framesAtOrAboveEnter: 0,
+        minFramesRequired: 0,
+        eventsAccepted: 0,
+        eventsRejected: 0,
+        enterThreshold: GREEN_ENTER_THRESHOLD,
+        exitThreshold: GREEN_EXIT_THRESHOLD,
+        minDurationSeconds,
+      },
+    };
+  }
+
+  const frameInterval = frameRate > 0 ? 1 / frameRate : 1 / 30;
+  const minFrames = Math.max(1, Math.ceil(minDurationSeconds / frameInterval));
+  const enterThreshold = GREEN_ENTER_THRESHOLD;
+  const exitThreshold = GREEN_EXIT_THRESHOLD;
+  const exitDebounceFrames = 1;
+
+  const framesAtOrAboveEnter = frameDetections.filter((f) => (f.greenRatio || 0) >= enterThreshold).length;
+
+  let inEvent = false;
+  let eventStartIdx = 0;
+  let lastGreenIdx = -1;
+  let belowCount = 0;
+  let peakGreen = 0;
+  let sumGreen = 0;
+  let sumSat = 0;
+  let sumBright = 0;
+  let metricFrames = 0;
+  const events = [];
+  const rawCandidateSpans = [];
+
+  const closeEvent = (endIdx) => {
+    const frames = endIdx - eventStartIdx + 1;
+    const avgGreen = metricFrames > 0 ? sumGreen / metricFrames : 0;
+    const avgSat = metricFrames > 0 ? sumSat / metricFrames : 0;
+    const avgBright = metricFrames > 0 ? sumBright / metricFrames : 0;
+    const startTime = eventStartIdx * frameInterval;
+    const endTime = (endIdx + 1) * frameInterval;
+    const duration = endTime - startTime;
+
+    let rejected = false;
+    let rejectionReason = "accepted";
+    if (frames < minFrames) {
+      rejected = true;
+      rejectionReason = "below_min_duration_seconds";
+    } else if (avgGreen < GREEN_EVENT_MIN_AVG_RATIO) {
+      rejected = true;
+      rejectionReason = "below_min_average_green_ratio";
+    } else if (peakGreen < GREEN_EVENT_MIN_PEAK_RATIO) {
+      rejected = true;
+      rejectionReason = "below_min_peak_green_ratio";
+    }
+
+    rawCandidateSpans.push({
+      startFrame: eventStartIdx,
+      endFrame: endIdx,
+      startTime: Math.round(startTime * 1000) / 1000,
+      endTime: Math.round(endTime * 1000) / 1000,
+      duration: Math.round(duration * 1000) / 1000,
+      averageGreenRatio: Math.round(avgGreen * 1000) / 1000,
+      peakGreenRatio: Math.round(peakGreen * 1000) / 1000,
+      averageSaturation: Math.round(avgSat * 1000) / 1000,
+      averageBrightness: Math.round(avgBright * 1000) / 1000,
+      minDurationSecondsUsed: minDurationSeconds,
+      minFramesRequired: minFrames,
+      frames,
+      rejected,
+      rejectionReason,
+    });
+
+    if (rejected) return;
+
+    const confidence = clamp(
+      ((avgGreen - GREEN_EVENT_MIN_AVG_RATIO) / 0.28) * 0.72 +
+      ((peakGreen - GREEN_EVENT_MIN_PEAK_RATIO) / 0.22) * 0.28,
+      0,
+      1,
+    );
+    const greenStart = Math.round(startTime * 1000) / 1000;
+    const greenEnd = Math.round(endTime * 1000) / 1000;
+    events.push({
+      eventIndex: events.length + 1,
+      startFrame: eventStartIdx,
+      endFrame: endIdx,
+      startTime: greenStart,
+      endTime: greenEnd,
+      duration: Math.round((greenEnd - greenStart) * 1000) / 1000,
+      greenStart,
+      greenEnd,
+      freezeTime: greenStart,
+      resumeTime: greenEnd,
+      detectionConfidence: Math.round(confidence * 1000) / 1000,
+      metrics: {
+        peakGreenRatio: Math.round(peakGreen * 1000) / 1000,
+        averageGreenRatio: Math.round(avgGreen * 1000) / 1000,
+        averageSaturation: Math.round(avgSat * 1000) / 1000,
+        averageBrightness: Math.round(avgBright * 1000) / 1000,
+        frames,
+      },
+    });
+  };
+
+  for (let i = 0; i < frameDetections.length; i++) {
+    const frame = frameDetections[i];
+    const ratio = frame.greenRatio || 0;
+
+    if (!inEvent) {
+      if (ratio >= enterThreshold) {
+        inEvent = true;
+        eventStartIdx = i;
+        lastGreenIdx = i;
+        belowCount = 0;
+        peakGreen = ratio;
+        sumGreen = ratio;
+        sumSat = Number.isFinite(frame.avgSaturation) ? frame.avgSaturation : 0;
+        sumBright = Number.isFinite(frame.avgBrightness) ? frame.avgBrightness : 0;
+        metricFrames = 1;
+      }
+      continue;
+    }
+
+    peakGreen = Math.max(peakGreen, ratio);
+    sumGreen += ratio;
+    sumSat += Number.isFinite(frame.avgSaturation) ? frame.avgSaturation : 0;
+    sumBright += Number.isFinite(frame.avgBrightness) ? frame.avgBrightness : 0;
+    metricFrames++;
+
+    if (ratio >= exitThreshold) {
+      lastGreenIdx = i;
+      belowCount = 0;
+    } else {
+      belowCount++;
+      if (belowCount >= exitDebounceFrames) {
+        closeEvent(lastGreenIdx);
+        inEvent = false;
+      }
+    }
+  }
+
+  if (inEvent) closeEvent(lastGreenIdx >= 0 ? lastGreenIdx : frameDetections.length - 1);
+  const rejectedSpans = rawCandidateSpans.filter((s) => s.rejected);
+  const durations = rawCandidateSpans.map((s) => s.duration).filter((d) => Number.isFinite(d));
+  const shortestCandidate = durations.length ? Math.min(...durations) : null;
+  const longestCandidate = durations.length ? Math.max(...durations) : null;
+
+  return {
+    events,
+    rawCandidateSpans,
+    rejectedSpans,
+    candidateSpanSummary: {
+      candidateSpanCount: rawCandidateSpans.length,
+      acceptedEventCount: events.length,
+      rejectedSpanCount: rejectedSpans.length,
+      shortestCandidate: shortestCandidate != null ? Math.round(shortestCandidate * 1000) / 1000 : null,
+      longestCandidate: longestCandidate != null ? Math.round(longestCandidate * 1000) / 1000 : null,
+      minDurationSecondsUsed: minDurationSeconds,
+    },
+    stats: {
+      framesDecoded: frameDetections.length,
+      framesAtOrAboveEnter,
+      minFramesRequired: minFrames,
+      eventsAccepted: events.length,
+      eventsRejected: rejectedSpans.length,
       enterThreshold,
       exitThreshold,
       minDurationSeconds,
@@ -2102,6 +2419,141 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
   });
 }
 
+function detectGreenEventsDense(video, streamInfo, options = {}) {
+  const minDurationSeconds = Number.isFinite(options.minDurationSeconds) && options.minDurationSeconds > 0
+    ? options.minDurationSeconds
+    : 0.06;
+
+  return new Promise((resolve, reject) => {
+    const sourceWidth = Number.isFinite(streamInfo.width) ? streamInfo.width : 1280;
+    const sourceHeight = Number.isFinite(streamInfo.height) ? streamInfo.height : 720;
+    const frameRate = Number.isFinite(streamInfo.frameRate) && streamInfo.frameRate > 0 ? streamInfo.frameRate : 30;
+
+    const targetWidth = Math.min(480, sourceWidth);
+    const targetHeight = Math.max(2, Math.floor((sourceHeight / sourceWidth) * targetWidth / 2) * 2);
+    const frameSize = targetWidth * targetHeight * 3;
+    let buffer = Buffer.alloc(0);
+    const frameDetections = [];
+    let stderrTail = "";
+
+    const proc = spawn(ffmpegPath, [
+      "-i", video,
+      "-vf", `scale=${targetWidth}:${targetHeight}:flags=fast_bilinear`,
+      "-f", "rawvideo",
+      "-pix_fmt", "rgb24",
+      "-vsync", "cfr",
+      "-an",
+      "-",
+    ]);
+
+    proc.stderr.on("data", (data) => {
+      const s = data.toString();
+      stderrTail = (stderrTail + s).slice(-4000);
+    });
+
+    proc.stdout.on("data", (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.length >= frameSize) {
+        const frameData = buffer.slice(0, frameSize);
+        buffer = buffer.slice(frameSize);
+        const scored = scoreFreezeGreenFrame(frameData, targetWidth, targetHeight, 4);
+        frameDetections.push({
+          greenRatio: scored.greenRatio,
+          strictFullRatio: scored.strictFullRatio,
+          strictCenterRatio: scored.strictCenterRatio,
+          strictCombined: scored.strictCombined,
+          avgSaturation: scored.avgSaturation,
+          avgBrightness: scored.avgBrightness,
+          lumaStd: scored.lumaStd,
+          edgeMean: scored.edgeMean,
+          structureGate: scored.structureGate,
+          coveragePenalty: scored.coveragePenalty,
+        });
+      }
+    });
+
+    proc.on("close", (code) => {
+      if (code !== 0 && code !== 1) {
+        console.error("[green-dense] ffmpeg failed code", code, stderrTail.slice(-800));
+        reject(new Error(`Dense green detection failed (ffmpeg code ${code})`));
+        return;
+      }
+
+      const built = buildGreenEventsFromFrames(frameDetections, frameRate, minDurationSeconds);
+      const greenEvents = built.events || [];
+      const rawCandidateSpans = built.rawCandidateSpans || [];
+      const rejectedSpans = built.rejectedSpans || [];
+      const rejectionReasonSummary = {};
+      for (const span of rejectedSpans) {
+        const reason = span.rejectionReason || "unknown";
+        rejectionReasonSummary[reason] = (rejectionReasonSummary[reason] || 0) + 1;
+      }
+      const zeroReason = (() => {
+        if (frameDetections.length === 0) return "no_frames_decoded_check_video_and_ffmpeg_stderr";
+        if ((built.stats && built.stats.framesAtOrAboveEnter) === 0) {
+          return "no_frames_met_green_enter_threshold_color_may_not_match_green_card_rule";
+        }
+        if (greenEvents.length > 0) return null;
+        if (rejectedSpans.length > 0) return "green_candidates_rejected_by_duration_or_confidence_rules";
+        return "grouping_produced_zero_green_events";
+      })();
+
+      const topRatioSnapshot = frameDetections
+        .map((f, i) => ({
+          frameIndex: i,
+          timeSec: Math.round((i / frameRate) * 1000) / 1000,
+          greenRatio: Math.round((f.greenRatio || 0) * 10000) / 10000,
+          passedEnter: (f.greenRatio || 0) >= GREEN_ENTER_THRESHOLD,
+          passedExit: (f.greenRatio || 0) >= GREEN_EXIT_THRESHOLD,
+        }))
+        .sort((a, b) => b.greenRatio - a.greenRatio)
+        .slice(0, 20);
+
+      console.log("[green-dense]", JSON.stringify({
+        video: path.basename(video),
+        frameRate,
+        frameCount: frameDetections.length,
+        minDurationSeconds,
+        colorPipeline: GREEN_COLOR_PIPELINE_LABEL,
+        thresholds: {
+          enter: GREEN_ENTER_THRESHOLD,
+          exit: GREEN_EXIT_THRESHOLD,
+          minAvg: GREEN_EVENT_MIN_AVG_RATIO,
+          minPeak: GREEN_EVENT_MIN_PEAK_RATIO,
+        },
+        candidateSpanCount: rawCandidateSpans.length,
+        acceptedEventCount: greenEvents.length,
+        rejectedSpanCount: rejectedSpans.length,
+        rejectionReasonSummary,
+        rawCandidateSpans,
+        acceptedEvents: greenEvents,
+        rejectedSpans,
+        candidateSpanSummary: built.candidateSpanSummary || null,
+        topFramesByRatio: topRatioSnapshot,
+        zeroReason,
+      }));
+
+      resolve({
+        frameRate,
+        frameCount: frameDetections.length,
+        greenEvents,
+        rawCandidateSpans,
+        rejectedSpans,
+        rejectionReasonSummary,
+        candidateSpanSummary: built.candidateSpanSummary || null,
+        groupingStats: built.stats || null,
+        detectionSummary: {
+          topFramesByRatio: topRatioSnapshot,
+          colorPipeline: GREEN_COLOR_PIPELINE_LABEL,
+        },
+        zeroReason,
+        stderrTail: frameDetections.length === 0 ? stderrTail.slice(-2000) : undefined,
+      });
+    });
+    proc.on("error", reject);
+  });
+}
+
 function deriveYellowRangesFromEvents(events) {
   return events.map((e) => ({
     start: Math.round((e.yellowStart != null ? e.yellowStart : e.startTime) * 1000) / 1000,
@@ -2531,6 +2983,11 @@ async function runDeterministicYellowPipeline({
       yellowDebugCalibration: yellowDebugCalibration === true,
       lessonId: lessonId || null,
     });
+    // Stage 2b: dense sequential green freeze-marker detection (separate pipeline/object).
+    const greenResult = await detectGreenEventsDense(prepared.preparedPath, prepared.info, {
+      minDurationSeconds: minSeg,
+      lessonId: lessonId || null,
+    });
     const yellowEvents = detection.yellowEvents;
     const yellowRanges = deriveYellowRangesFromEvents(yellowEvents);
     const yellowStopMarkers = buildYellowStopMarkers(yellowEvents);
@@ -2573,6 +3030,58 @@ async function runDeterministicYellowPipeline({
       zeroReason: detection.zeroReason || null,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
+    const greenEvents = Array.isArray(greenResult.greenEvents) ? greenResult.greenEvents : [];
+    const greenDetection = {
+      version: 1,
+      lessonId: lessonId || null,
+      sourceLabel: sourceLabel || "pipeline",
+      analyzedVideoBasename: path.basename(prepared.preparedPath),
+      durationSec: Math.round(analysisDuration * 1000) / 1000,
+      minDurationSeconds: minSeg,
+      normalization: {
+        usedTranscodedFile: prepared.cleanupPrepared === true,
+        streamWidth: prepared.info.width,
+        streamHeight: prepared.info.height,
+        streamFrameRate: prepared.info.frameRate,
+        streamCodec: prepared.info.codec,
+      },
+      thresholds: {
+        enter: GREEN_ENTER_THRESHOLD,
+        exit: GREEN_EXIT_THRESHOLD,
+        minAverageGreenRatio: GREEN_EVENT_MIN_AVG_RATIO,
+        minPeakGreenRatio: GREEN_EVENT_MIN_PEAK_RATIO,
+      },
+      colorPipeline: GREEN_COLOR_PIPELINE_LABEL,
+      rawCandidateSpans: greenResult.rawCandidateSpans || [],
+      rejectedSpans: greenResult.rejectedSpans || [],
+      rejectionReasonSummary: greenResult.rejectionReasonSummary || {},
+      candidateSpanSummary: greenResult.candidateSpanSummary || null,
+      candidateSpanCount: greenResult.candidateSpanSummary && Number.isFinite(greenResult.candidateSpanSummary.candidateSpanCount)
+        ? greenResult.candidateSpanSummary.candidateSpanCount
+        : (greenResult.rawCandidateSpans || []).length,
+      acceptedEventCount: greenEvents.length,
+      acceptedEvents: greenEvents,
+      events: greenEvents,
+      groupingStats: greenResult.groupingStats || null,
+      frameCount: greenResult.frameCount,
+      decodeFrameRate: greenResult.frameRate,
+      detectionSummary: greenResult.detectionSummary || null,
+      zeroReason: greenResult.zeroReason || null,
+      futureHooks: {
+        menuFreezeLinksReady: true,
+        aiTitleMappingReady: true,
+        notes: "Green freeze markers are persisted for future menu and AI title linkage.",
+      },
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    console.log("[green-pipeline] detection", JSON.stringify({
+      source: sourceLabel || "pipeline",
+      candidateSpanCount: greenDetection.candidateSpanCount,
+      acceptedEventCount: greenDetection.acceptedEventCount,
+      rejectedSpanCount: greenDetection.rejectedSpans.length,
+      rejectionReasonSummary: greenDetection.rejectionReasonSummary,
+      zeroReason: greenDetection.zeroReason,
+    }));
 
     // Stage 3: deterministic ordered chapter mapping (bootstrap strategy).
     const effectiveChapterTitles = (chapterTitles && chapterTitles.length > 0)
@@ -2655,6 +3164,7 @@ async function runDeterministicYellowPipeline({
       yellowStopMarkers,
       yellowEvents,
       yellowDetection,
+      greenDetection,
       hasYellowEvents: yellowEvents.length > 0,
       chapterTimeline: mapping.mappings,
       review,
@@ -2695,6 +3205,7 @@ async function persistLessonYellowDetectionFailure(lessonId, videoPath, sourceLa
   await db.collection("lessons").doc(lessonId).set(
     {
       yellowDetection: pipeline.yellowDetection,
+      greenDetection: pipeline.greenDetection || null,
       yellowScreenEvents: [],
       yellowScreenRanges: [],
       chapterTimeline: pipeline.chapterTimeline,
@@ -2897,6 +3408,7 @@ exports.detectYellowScreen = onCall(
         yellowStopMarkers: pipeline.yellowStopMarkers || pipeline.yellowRanges,
         yellowScreenEvents: pipeline.yellowEvents,
         yellowDetection: pipeline.yellowDetection,
+        greenDetection: pipeline.greenDetection || null,
         chapterTimeline: pipeline.chapterTimeline,
         timelineReview: pipeline.review,
         timelinePipeline: {
@@ -3017,6 +3529,7 @@ exports.generateSrcArrayWithYellowOptions = onCall(
           yellowStopMarkers: pipeline.yellowStopMarkers || pipeline.yellowRanges,
           yellowScreenEvents: pipeline.yellowEvents,
           yellowDetection: pipeline.yellowDetection,
+          greenDetection: pipeline.greenDetection || null,
           chapterTimeline: pipeline.chapterTimeline,
           timelineReview: pipeline.review,
           timelinePipeline: {
@@ -3845,6 +4358,7 @@ exports.generateSrcArrayFromYellowScreens = onCall(
           yellowStopMarkers: pipeline.yellowStopMarkers || pipeline.yellowRanges,
           yellowScreenEvents: pipeline.yellowEvents,
           yellowDetection: pipeline.yellowDetection,
+          greenDetection: pipeline.greenDetection || null,
           chapterTimeline: pipeline.chapterTimeline,
           timelineReview: pipeline.review,
           autoMapping: {
