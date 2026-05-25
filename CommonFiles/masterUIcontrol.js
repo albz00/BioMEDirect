@@ -1372,6 +1372,23 @@ function initializePlayer(videoUrl, timelineArray) {
     });
     setGuidedPlaybackState("idle", "initialize");
 
+    // Runtime-owned click wiring so in-video clicks always reach nextSlide()
+    // even when a lesson template's inline onclick path is missing/broken.
+    if (!videoId.__interactiveClickBound) {
+        videoId.addEventListener("click", function(evt) {
+            if (evt && typeof evt.stopPropagation === "function") evt.stopPropagation();
+            nextSlide(evt);
+        });
+        videoId.__interactiveClickBound = true;
+    }
+    var animContainer = document.getElementById("animation");
+    if (animContainer && !animContainer.__interactiveClickBound) {
+        animContainer.addEventListener("click", function(evt) {
+            nextSlide(evt);
+        });
+        animContainer.__interactiveClickBound = true;
+    }
+
     videoId.addEventListener("play", function() {
         if (!CONTINUOUS_VIDEO_PLAYBACK) return;
         if (pendingForcedLessonStartAtZero) {
@@ -1789,8 +1806,8 @@ function update(playVid){ // FindMe2
 }
 
 //Adds one to currentSlide, i.e. defines currentSlide as the next stop point
-function nextSlide(){ // FindMe1
-    var clickEvent = (typeof window !== "undefined" && window.event) ? window.event : null;
+function nextSlide(clickEvt){ // FindMe1
+    var clickEvent = clickEvt || ((typeof window !== "undefined" && window.event) ? window.event : null);
     var clickTarget = clickEvent && clickEvent.target
         ? (clickEvent.target.id || clickEvent.target.className || clickEvent.target.tagName || "unknown")
         : "unknown";
