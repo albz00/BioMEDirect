@@ -157,7 +157,7 @@ function recomputeMarkerRuntimeFromTime(t, reason) {
         }
     }
 
-    if (guidedPlaybackState !== "paused_at_freeze") {
+    if (guidedPlaybackState !== "paused_at_freeze" && guidedPlaybackState !== "playing_to_next_freeze") {
         currentFreezeFrameIdx = findPreviousFreezeMarkerIndexBeforeTime(time + 0.001);
     }
 
@@ -853,12 +853,12 @@ function findNextSegmentPlaybackEventIdx(t, targetFreezeIdx) {
     return -1;
 }
 
-/** Advance only past freeze boundaries already completed (never skip the next freeze stop). */
+/** Advance only past freeze boundaries strictly before the active segment (never skip target freeze). */
 function advancePastSkippedFreezeEventsInSegment(t) {
     if (segmentTargetFreezeIdx < 0) return;
     while (guidedTargetEventIdx >= 0 && guidedTargetEventIdx < playbackEvents.length) {
         var ev = playbackEvents[guidedTargetEventIdx];
-        if (ev.kind === "freeze" && ev.freezeMarkerIndex <= currentFreezeFrameIdx) {
+        if (ev.kind === "freeze" && ev.freezeMarkerIndex < currentFreezeFrameIdx) {
             if (Number(t) >= Number(ev.crossAt) - 1e-4) {
                 guidedTargetEventIdx++;
                 nextPlaybackEventIdx = guidedTargetEventIdx;
@@ -868,6 +868,30 @@ function advancePastSkippedFreezeEventsInSegment(t) {
         break;
     }
     syncLegacyYellowMarkerAliases();
+}
+
+/**
+ * Safety net: if playback crossed the segment target freeze between prev and t, stop there.
+ * Prevents playing through when guidedTargetEventIdx was advanced incorrectly.
+ */
+function tryHandleSegmentTargetFreezeCrossing(videoEl, prev, t) {
+    if (segmentTargetFreezeIdx < 0 || segmentTargetFreezeIdx >= freezeMarkers.length) return false;
+    if (!isFinite(Number(prev)) || !isFinite(Number(t))) return false;
+    var mk = freezeMarkers[segmentTargetFreezeIdx];
+    var crossAt = Number(mk.crossAt);
+    if (!isFinite(crossAt)) return false;
+    if (Number(prev) >= crossAt - 1e-4 || Number(t) < crossAt - 1e-4) return false;
+    logPlayerMarkerDebug({
+        event: "freeze_crossing_detected",
+        markerType: mk.markerType,
+        markerIndex: segmentTargetFreezeIdx,
+        previousTime: Math.round(Number(prev) * 1000) / 1000,
+        currentTime: Math.round(Number(t) * 1000) / 1000,
+        chosenStopPoint: Math.round(crossAt * 1000) / 1000,
+        segmentTargetFreezeIndex: segmentTargetFreezeIdx,
+    });
+    applyFreezeMarkerStopAtCrossing(videoEl, mk, segmentTargetFreezeIdx, prev, t, "segment_target_freeze_crossing");
+    return true;
 }
 
 /**
@@ -1049,7 +1073,10 @@ function applyFreezeMarkerStopAtCrossing(videoEl, mk, freezeIdx, prev, t, reason
     var resolvedStop = resolvePostFreezeStopTime(mk, freezeIdx, reason || "marker_crossing_pause");
     var stopTarget = isFinite(Number(resolvedStop)) ? Number(resolvedStop) : (mk.end + COLOR_CARD_RANGE_SKIP_EPS_SEC);
     videoEl.currentTime = stopTarget;
-    videoEl.pause();
+    try {
+        videoEl.pause();
+    } catch (pauseErr) { console.log(pauseErr); }
+    var pauseConfirmed = videoEl.paused === true;
     pausedAtFreezeMarkerIdx = freezeIdx;
     currentFreezeFrameIdx = freezeIdx;
     nextFreezeFrameIdx = -1;
@@ -1068,6 +1095,7 @@ function applyFreezeMarkerStopAtCrossing(videoEl, mk, freezeIdx, prev, t, reason
         chosenResumePoint: Math.round(Number(stopTarget) * 1000) / 1000,
         resolvedPostMarkerContentPoint: Math.round(Number(stopTarget) * 1000) / 1000,
         leapfrogHelperUsed: true,
+        pauseExecuted: pauseConfirmed,
         clickAction: "resume_past_freeze_card",
         previousFreezeMarkerIndex: null,
     });
@@ -1303,6 +1331,9 @@ function initializePlayer(videoUrl, timelineArray) {
                 if ((guidedPlaybackState === "playing_to_next_freeze" ||
                     guidedPlaybackState === "playing_to_event") &&
                     segmentTargetFreezeIdx >= 0) {
+                    if (tryHandleSegmentTargetFreezeCrossing(this, prev, t)) {
+                        return;
+                    }
                     advancePastSkippedFreezeEventsInSegment(t);
                 }
 
@@ -1585,12 +1616,29 @@ function update(playVid){ // FindMe2
     
     if (currentSlide > 0 && currentSlide < srcArray.length) {
     	if (playVid) {
-            if (clickedLink) { // Added this to go to end of last clip when menu link is clicked
+            var seg = safeSrcSegmentAt(currentSlide);
+            var forceZeroInteractiveEntry = shouldApplyForceZeroForSlide(seg, currentSlide);
+            if (clickedLink && !forceZeroInteractiveEntry) {
+                logPlayerMarkerDebug({
+                    event: "menu_lesson_entry",
+                    entryPath: "chapter_anchor_preview",
+                    currentSlide: currentSlide,
+                    clickAction: "menu_chapter_preview_end_frame",
+                });
                 updateVideoId(false);
                 clickedLink = false;
-            }
-            else {
-                updateVideoId(true); // Go to FindMe3
+            } else {
+                if (clickedLink) {
+                    logPlayerMarkerDebug({
+                        event: "menu_lesson_entry",
+                        entryPath: "interactive_force_zero_start",
+                        currentSlide: currentSlide,
+                        forceFirstChapterStartAtZero: true,
+                        clickAction: "skip_chapter_preview_use_video_start",
+                    });
+                    clickedLink = false;
+                }
+                updateVideoId(true);
             }
         }
         else {
@@ -1706,10 +1754,36 @@ function nextSlide(){ // FindMe1
         });
         return;
     }
+    var enteringFromMenu = currentSlide <= 0;
+    var nextSlideIdx = currentSlide + 1;
+    if (Array.isArray(srcArray) && nextSlideIdx > 0 && nextSlideIdx < srcArray.length) {
+        while (nextSlideIdx < srcArray.length && !isOpeningUIRow(safeSrcSegmentAt(nextSlideIdx)) &&
+            !isPlayableContentSegment(safeSrcSegmentAt(nextSlideIdx))) {
+            nextSlideIdx++;
+        }
+    }
+    var entrySeg = safeSrcSegmentAt(nextSlideIdx);
+    var forceZeroMenuEntry = shouldApplyForceZeroForSlide(entrySeg, nextSlideIdx);
+    if (forceZeroMenuEntry && CONTINUOUS_VIDEO_PLAYBACK && freezeMarkers.length > 0) {
+        currentSlide = nextSlideIdx;
+        $('#lessonMenuPage').css('display', 'none');
+        $('#lesson').css('display', 'block');
+        states.menu = false;
+        clickedLink = false;
+        logPlayerMarkerDebug({
+            event: "menu_lesson_entry",
+            entryPath: "interactive_force_zero_start",
+            currentSlide: currentSlide,
+            forceFirstChapterStartAtZero: true,
+            clickAction: "menu_direct_interactive_entry_at_zero",
+        });
+        updateVideoId(true);
+        return;
+    }
     logPlayerMarkerDebug({
         clickedElement: baseClickDebug.clickedElement,
         currentSlide: baseClickDebug.currentSlide,
-        clickAction: "advance_chapter_row_menu_navigation",
+        clickAction: enteringFromMenu ? "advance_chapter_row_menu_navigation" : "advance_chapter_row",
     });
 	currentSlide++;
     if (Array.isArray(srcArray) && currentSlide > 0 && currentSlide < srcArray.length) {
