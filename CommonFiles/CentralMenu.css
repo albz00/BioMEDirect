@@ -1,9 +1,21 @@
 body {
 	background-color: black;
+	margin: 0;
+}
+
+/* Full-viewport darker hex background behind the menu panel */
+body::before {
+	content: '';
+	position: fixed;
+	inset: 0;
+	background: url('Images/NewCentralMenuBackground.png') center center / cover no-repeat;
+	filter: brightness(0.28) saturate(0.85);
+	z-index: 0;
+	pointer-events: none;
 }
 
 .entireCentralMenu {
-	background: url('Images/CentralMenuBackground.jpg');
+	background: url('Images/NewCentralMenuBackground.png');
     background-repeat: no-repeat;
 	background-size: 100%;
 	width: 100vw;
@@ -18,6 +30,27 @@ body {
 	bottom: 0;
 	text-align: center;
     White-space: nowrap; /* Keeps Title on one line */
+	box-sizing: border-box;
+	z-index: 2;
+	border: 0.14vmin solid rgba(120, 255, 252, 0.95);
+	box-shadow:
+		inset 0 0 2vmin rgba(2, 232, 229, 0.95),
+		inset 0 0 4vmin rgba(2, 232, 229, 0.62),
+		inset 0 0 7vmin rgba(2, 232, 229, 0.3),
+		0 0 1.6vmin rgba(2, 232, 229, 0.95),
+		0 0 3.6vmin rgba(2, 232, 229, 0.58);
+}
+
+/* Cyan edge glow from legacy menu art (full frame — do not mask) */
+.entireCentralMenu::before {
+	content: '';
+	position: absolute;
+	inset: 0;
+	background: url('Images/CentralMenuBorderOverlay.jpg') no-repeat;
+	background-size: 100% 100%;
+	mix-blend-mode: screen;
+	pointer-events: none;
+	z-index: 1;
 }
 
 .centralMenu {
@@ -28,7 +61,7 @@ body {
 	align-content: flex-start;
 	gap: 1.5vmin 4vmin;
 	position: absolute;
-	top: 42%;
+	top: 48%;
 	left: 50%;
 	transform: translate(-50%, -50%);
 	width: 92%;
@@ -64,22 +97,22 @@ body {
 
 /* Lesson list drops below chapter title — does not cover other chapters */
 .chapterDropdown {
-	display: none;
+	display: block;
 	position: absolute;
 	top: 100%;
 	left: 50%;
-	transform: translateX(-50%);
-	margin-top: 0.5vmin;
+	transform: translateX(-50%) translateY(-0.5vmin);
+	margin-top: 0.25vmin;
 	z-index: 30;
 	min-width: 100%;
 	width: max-content;
 	max-width: 28vmin;
 	padding: 0.8vmin 1vmin 1vmin;
-	background: rgba(0, 0, 0, 0.92);
-	border: 0.15vmin solid rgba(2, 232, 229, 0.45);
-	border-radius: 1.2vmin;
-	box-shadow: 0 0.4vmin 2vmin rgba(2, 232, 229, 0.3);
-	max-height: 24vmin;
+	background: rgba(0, 0, 0, 0.94);
+	border: 0.12vmin solid rgba(2, 232, 229, 0.55);
+	border-radius: 0;
+	box-shadow: none;
+	max-height: 32vmin;
 	overflow-x: hidden;
 	overflow-y: auto;
 	-webkit-overflow-scrolling: touch;
@@ -87,6 +120,22 @@ body {
 	scrollbar-width: thin;
 	scrollbar-color: #02E8E5 rgba(2, 232, 229, 0.1);
 	text-align: center;
+	visibility: hidden;
+	opacity: 0;
+	pointer-events: none;
+	transition:
+		opacity 0.28s ease,
+		transform 0.28s ease,
+		visibility 0s linear 0.28s;
+}
+
+.chapterDropdown::before {
+	content: '';
+	position: absolute;
+	top: -0.55vmin;
+	left: 0;
+	right: 0;
+	height: 0.55vmin;
 }
 
 .chapterDropdown::-webkit-scrollbar {
@@ -94,13 +143,13 @@ body {
 }
 
 .chapterDropdown::-webkit-scrollbar-track {
-	background: rgba(2, 232, 229, 0.1);
-	border-radius: 4px;
+	background: rgba(2, 232, 229, 0.08);
+	border-radius: 0;
 }
 
 .chapterDropdown::-webkit-scrollbar-thumb {
 	background: #02E8E5;
-	border-radius: 4px;
+	border-radius: 0;
 }
 
 .chapterDropdown::-webkit-scrollbar-thumb:hover {
@@ -117,19 +166,38 @@ body {
 .menuLists:hover .chapterDropdown,
 .menuLists:focus-within .chapterDropdown,
 .menuLists.is-open .chapterDropdown {
-	display: block;
+	visibility: visible;
+	opacity: 1;
+	pointer-events: auto;
+	transform: translateX(-50%) translateY(0);
+	transition:
+		opacity 0.3s ease,
+		transform 0.3s ease,
+		visibility 0s;
 }
 
 /* Keep dropdown inside left/right columns */
 .group1 .chapterDropdown {
 	left: 0;
-	transform: none;
+	transform: translateY(-0.5vmin);
+}
+
+.group1 .menuLists:hover .chapterDropdown,
+.group1 .menuLists:focus-within .chapterDropdown,
+.group1 .menuLists.is-open .chapterDropdown {
+	transform: translateY(0);
 }
 
 .group4 .chapterDropdown {
 	left: auto;
 	right: 0;
-	transform: none;
+	transform: translateY(-0.5vmin);
+}
+
+.group4 .menuLists:hover .chapterDropdown,
+.group4 .menuLists:focus-within .chapterDropdown,
+.group4 .menuLists.is-open .chapterDropdown {
+	transform: translateY(0);
 }
 
 .menuLists > h1 {
@@ -142,7 +210,7 @@ body {
 	margin: 0;
 	padding: 0.8vmin 1.2vmin 0.2vmin;
 	cursor: default;
-	transition: color 0.2s ease;
+	transition: color 0.25s ease;
 	white-space: nowrap;
 }
 
@@ -156,6 +224,7 @@ body {
 	opacity: 0.7;
 	margin-top: 0.5vmin;
 	letter-spacing: 0.02em;
+	transition: opacity 0.22s ease;
 }
 
 @media (hover: none) {
@@ -196,7 +265,19 @@ h1 {
 	}
     
     .btnTogText {
-        padding-top: 18vmin !important;
+        padding-top: 2vmin !important;
+    }
+
+    .centralMenuHeader {
+        padding-top: 5vmin !important;
+    }
+
+    .centralMenu {
+        top: 47% !important;
+    }
+
+    .centralMenuTitle {
+        width: 85%;
     }
     
     .centralMenu > div {
@@ -273,6 +354,34 @@ button:focus {
 	z-index: 3;
 }
 
+.footerCredit {
+	display: block;
+	width: 100%;
+	margin: 1.2vmin 0 0;
+	padding: 0;
+	font-family: Arial, sans-serif;
+	font-size: 2vmin;
+	font-style: italic;
+	font-weight: normal;
+	color: #ffffff;
+	opacity: 0.92;
+	white-space: normal;
+	min-height: 1.2em;
+}
+
+.footerCredit.footerCredit--typing::after {
+	content: '|';
+	margin-left: 0.15em;
+	color: #02E8E5;
+	animation: footerCredit-caret 0.75s step-end infinite;
+}
+
+@keyframes footerCredit-caret {
+	50% {
+		opacity: 0;
+	}
+}
+
 .footerLinks > a:link {
 	color: #babdea;
     padding-left: 3vmin;
@@ -312,9 +421,26 @@ button:focus {
 	background-color: black;
 }
 
+.centralMenuHeader {
+	position: relative;
+	z-index: 3;
+	width: 100%;
+	text-align: center;
+	padding-top: 5.5vmin;
+}
+
+.centralMenuTitle {
+	display: inline-block;
+	width: 78%;
+	max-width: 100vmin;
+	height: auto;
+}
+
 .btnTogText {
 	display: block;
-	padding-top: 21vmin;
+	position: relative;
+	z-index: 3;
+	padding-top: 2vmin;
 }
 
 .btnToCentralMenuT{
@@ -348,5 +474,95 @@ button:focus {
 
 .centralMenu::-webkit-scrollbar-thumb:hover {
 	background: #9DFFFF;
+}
+
+/* ---- Page load + motion ---- */
+@keyframes biome-panel-fade-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+@keyframes biome-rise-in {
+	from {
+		opacity: 0;
+		transform: translateY(1vmin);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.entireCentralMenu {
+	animation: biome-panel-fade-in 0.7s ease-out both;
+}
+
+.centralMenuHeader,
+.btnTogText,
+.footerLinks {
+	opacity: 0;
+	animation: biome-rise-in 0.55s ease-out both;
+}
+
+.centralMenuHeader {
+	animation-delay: 0.12s;
+}
+
+.btnTogText {
+	animation-delay: 0.26s;
+}
+
+.centralMenu {
+	opacity: 0;
+	animation: biome-panel-fade-in 0.55s ease-out 0.4s both;
+}
+
+.footerLinks {
+	animation-delay: 0.54s;
+}
+
+.centralMenu > div {
+	opacity: 0;
+	animation: biome-rise-in 0.45s ease-out both;
+}
+
+.centralMenu > div:nth-child(1) { animation-delay: 0.48s; }
+.centralMenu > div:nth-child(2) { animation-delay: 0.54s; }
+.centralMenu > div:nth-child(3) { animation-delay: 0.6s; }
+.centralMenu > div:nth-child(4) { animation-delay: 0.66s; }
+
+button.linksLarge {
+	transition: color 0.2s ease, transform 0.2s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.entireCentralMenu,
+	.centralMenuHeader,
+	.btnTogText,
+	.centralMenu,
+	.footerLinks,
+	.centralMenu > div {
+		animation: none !important;
+		opacity: 1 !important;
+		transform: none;
+	}
+
+	.centralMenu {
+		transform: translate(-50%, -50%);
+	}
+
+	.chapterDropdown {
+		transition: none;
+	}
+
+	.menuLists:hover .chapterDropdown,
+	.menuLists:focus-within .chapterDropdown,
+	.menuLists.is-open .chapterDropdown {
+		transition: none;
+	}
 }
 

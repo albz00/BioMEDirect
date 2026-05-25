@@ -168,6 +168,7 @@ html {
     cursor: pointer;
     color: #b8c5d4;
     font-size: 0.9rem;
+    -webkit-user-select: none;
     user-select: none;
 }
 
@@ -263,9 +264,10 @@ html {
 
 .dashboard-header-logo {
     display: block;
-    height: 2.75rem;
+    height: auto;
+    max-height: 4.5rem;
     width: auto;
-    max-width: min(360px, 42vw);
+    max-width: min(420px, 48vw);
     object-fit: contain;
 }
 
@@ -881,6 +883,7 @@ html {
 .srcarray-editor-table details.srcarray-details summary {
     cursor: pointer;
     color: #64748b;
+    -webkit-user-select: none;
     user-select: none;
 }
 
@@ -2326,5 +2329,667 @@ html {
     #instructionsModal .instructions-body {
         max-height: none !important;
     }
+}
+
+/* ============================================================
+   BioME THEME — minimalistic, sharp, cyan-accented
+   Overrides the slate-blue dashboard look to match the rest of
+   the site (CentralMenu palette). Layered at the end so existing
+   rules remain intact; only color/border/glow tokens change.
+   ============================================================ */
+
+:root {
+    --biome-bg-deep:        #1a2330;
+    --biome-bg-panel:       #243447;
+    --biome-bg-panel-solid: #243447;
+    --biome-bg-hover:       rgba(2, 232, 229, 0.08);
+    --biome-bg-active:      rgba(2, 232, 229, 0.14);
+
+    --biome-line:           rgba(2, 232, 229, 0.22);
+    --biome-line-strong:    rgba(2, 232, 229, 0.5);
+
+    --biome-cyan:           #02E8E5;
+    --biome-cyan-soft:      #9DFFFF;
+    --biome-cyan-dim:       rgba(2, 232, 229, 0.65);
+
+    --biome-text:           #eef6f8;
+    --biome-text-muted:     #b8c5d4;
+    --biome-text-heading:   #d4fcff;
+
+    --biome-radius:         4px;
+    --biome-radius-lg:      6px;
+    --biome-glow-sm:        0 0 0.6vmin rgba(2, 232, 229, 0.35);
+    --biome-glow-md:        0 0 1.2vmin rgba(2, 232, 229, 0.55), inset 0 0 1.2vmin rgba(2, 232, 229, 0.12);
+}
+
+/* ---- Page chrome ---- */
+body {
+    background-color: var(--biome-bg-deep) !important;
+    background-image: url('CommonFiles/Images/CutBackground.png') !important;
+    background-size: cover !important;
+    background-position: center !important;
+    background-attachment: fixed !important;
+    color: var(--biome-text) !important;
+    font-family: 'Inter', 'Arial', sans-serif;
+}
+
+body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: rgba(26, 35, 50, 0.42);
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* Re-order backdrop-filter so -webkit- prefix precedes the standard property (also reused below). */
+
+#dashboardScreen,
+#loginScreen {
+    position: relative;
+    z-index: 1;
+}
+
+/* Scrollbars */
+#dashboardScreen,
+.sidebar-tree {
+    scrollbar-color: var(--biome-cyan) rgba(2, 232, 229, 0.08) !important;
+}
+#dashboardScreen::-webkit-scrollbar-track,
+.sidebar-tree::-webkit-scrollbar-track {
+    background: rgba(2, 232, 229, 0.06);
+}
+#dashboardScreen::-webkit-scrollbar-thumb,
+.sidebar-tree::-webkit-scrollbar-thumb {
+    background: var(--biome-cyan);
+    border-radius: 3px;
+}
+#dashboardScreen::-webkit-scrollbar-thumb:hover,
+.sidebar-tree::-webkit-scrollbar-thumb:hover {
+    background: var(--biome-cyan-soft);
+}
+
+/* ---- Login ---- */
+.login-container,
+.login-aside {
+    background: var(--biome-bg-panel) !important;
+    border: 1px solid var(--biome-line) !important;
+    border-radius: var(--biome-radius-lg) !important;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.login-container h1 {
+    font-family: 'Arial Rounded MT', 'Arial', sans-serif;
+    color: var(--biome-text-heading) !important;
+    font-size: 1.75rem !important;
+    letter-spacing: 0.04em;
+    text-shadow: 0 0 0.6rem rgba(2, 232, 229, 0.5);
+}
+
+.login-container h2,
+.login-aside-title {
+    color: var(--biome-text) !important;
+    font-weight: 500 !important;
+}
+
+.login-aside,
+.login-aside-list,
+.login-aside-note,
+.remember-me-label {
+    color: var(--biome-text-muted) !important;
+}
+
+.remember-me-label input[type="checkbox"] {
+    accent-color: var(--biome-cyan) !important;
+}
+
+.form-group label {
+    color: var(--biome-text-muted) !important;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 500 !important;
+}
+
+.form-group input,
+.metadata-row input[type="text"] {
+    background: #1e293b !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    border-radius: var(--biome-radius) !important;
+    color: var(--biome-text) !important;
+    transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.form-group input:focus,
+.metadata-row input[type="text"]:focus,
+.search-input:focus {
+    border-color: var(--biome-cyan) !important;
+    box-shadow: 0 0 0 1px rgba(2, 232, 229, 0.45) !important;
+    background: #334155 !important;
+}
+
+.error-message {
+    background: rgba(255, 90, 90, 0.08) !important;
+    border: 1px solid rgba(255, 90, 90, 0.55) !important;
+    border-radius: var(--biome-radius) !important;
+    color: #ffb3b3 !important;
+}
+
+/* ---- Dashboard header ---- */
+.dashboard-header {
+    background: #2a3a4f !important;
+    border-bottom: 1px solid var(--biome-line-strong) !important;
+    box-shadow: 0 0 0.6rem rgba(2, 232, 229, 0.15);
+}
+
+/* ---- Panels (cards, controls, sidebar, modals) ---- */
+.controls-section,
+.lessons-sidebar,
+.collapsible-card,
+.srcarray-editor-card,
+.lesson-item,
+.modal-content,
+.instructions-paper,
+.profile-modal-content,
+.changelog-modal-content {
+    background: var(--biome-bg-panel) !important;
+    border: 1px solid var(--biome-line) !important;
+    border-radius: var(--biome-radius-lg) !important;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2) !important;
+}
+
+.lessons-sidebar {
+    border-radius: var(--biome-radius-lg) 0 0 var(--biome-radius-lg) !important;
+}
+
+.sidebar-header,
+.sidebar-controls,
+.collapsible-card-body,
+.lesson-details,
+.lesson-assignment,
+.lesson-metadata-edit,
+.profile-actions,
+.instructions-header {
+    border-color: var(--biome-line) !important;
+}
+
+.sidebar-title,
+.collapsible-card-title,
+.srcarray-editor-title,
+.lesson-name,
+#instructionsTitle,
+#profileTitle,
+#changelogTitle {
+    color: var(--biome-text-heading) !important;
+    font-family: 'Arial Rounded MT', 'Arial', sans-serif;
+    letter-spacing: 0.02em;
+    text-shadow: 0 0 0.4rem rgba(2, 232, 229, 0.25);
+}
+
+/* ---- Buttons ---- */
+.btn {
+    border-radius: var(--biome-radius) !important;
+    letter-spacing: 0.04em;
+    text-transform: none;
+    transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, transform 0.12s ease !important;
+}
+
+.btn-primary {
+    background: rgba(2, 232, 229, 0.12) !important;
+    color: var(--biome-cyan) !important;
+    border: 1px solid var(--biome-cyan) !important;
+    box-shadow: var(--biome-glow-sm);
+}
+
+.btn-primary:hover {
+    background: rgba(2, 232, 229, 0.22) !important;
+    color: var(--biome-cyan-soft) !important;
+    border-color: var(--biome-cyan-soft) !important;
+    box-shadow: var(--biome-glow-md) !important;
+}
+
+.btn-primary:active {
+    transform: scale(0.98);
+    background: rgba(2, 232, 229, 0.28) !important;
+}
+
+.btn-secondary {
+    background: transparent !important;
+    color: var(--biome-text-muted) !important;
+    border: 1px solid var(--biome-line) !important;
+}
+
+.btn-secondary:hover {
+    background: var(--biome-bg-hover) !important;
+    color: var(--biome-cyan-soft) !important;
+    border-color: var(--biome-cyan-dim) !important;
+    box-shadow: var(--biome-glow-sm);
+}
+
+.header-buttons .btn {
+    color: #cbd5e1 !important;
+    border-color: rgba(255, 255, 255, 0.18) !important;
+}
+.header-buttons .btn:hover {
+    border-color: var(--biome-cyan-dim) !important;
+    color: var(--biome-cyan-soft) !important;
+    background: rgba(2, 232, 229, 0.08) !important;
+}
+
+.btn-metadata-save {
+    background: rgba(2, 232, 229, 0.12) !important;
+    color: var(--biome-cyan) !important;
+    border-color: var(--biome-cyan) !important;
+    border-radius: var(--biome-radius) !important;
+}
+.btn-metadata-save:hover {
+    background: rgba(2, 232, 229, 0.22) !important;
+    color: var(--biome-cyan-soft) !important;
+    border-color: var(--biome-cyan-soft) !important;
+}
+
+/* ---- Tabs ---- */
+.admin-tab {
+    background: transparent !important;
+    border: 1px solid var(--biome-line) !important;
+    border-radius: var(--biome-radius) !important;
+    color: var(--biome-text-muted) !important;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 0.75rem !important;
+    padding: 0.45rem 0.95rem !important;
+}
+
+.admin-tab.active {
+    background: rgba(2, 232, 229, 0.12) !important;
+    color: var(--biome-cyan) !important;
+    border-color: var(--biome-cyan) !important;
+    box-shadow: var(--biome-glow-sm);
+}
+
+/* ---- Status indicator ---- */
+.status-indicator {
+    background: #1e293b !important;
+    border: 1px solid var(--biome-line) !important;
+    border-radius: var(--biome-radius) !important;
+    color: var(--biome-text-muted) !important;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.72rem !important;
+}
+
+.status-indicator.scanning {
+    border-color: #fbbf24 !important;
+    color: #fcd34d !important;
+    background: rgba(251, 191, 36, 0.06) !important;
+    box-shadow: 0 0 0.6vmin rgba(251, 191, 36, 0.35);
+}
+
+.status-indicator.success {
+    border-color: #34d399 !important;
+    color: #6ee7b7 !important;
+    background: rgba(52, 211, 153, 0.06) !important;
+    box-shadow: 0 0 0.6vmin rgba(52, 211, 153, 0.35);
+}
+
+.status-indicator.error {
+    border-color: #f87171 !important;
+    color: #fecaca !important;
+    background: rgba(248, 113, 113, 0.06) !important;
+    box-shadow: 0 0 0.6vmin rgba(248, 113, 113, 0.35);
+}
+
+/* ---- Sidebar tree ---- */
+.tree-section-header {
+    background: transparent !important;
+    border-radius: var(--biome-radius) !important;
+}
+.tree-section-header:hover {
+    background: var(--biome-bg-hover) !important;
+}
+.tree-section-title {
+    color: var(--biome-cyan) !important;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 0.78rem !important;
+}
+.tree-section-children {
+    border-left: 1px solid var(--biome-line) !important;
+}
+.tree-lesson {
+    color: var(--biome-text) !important;
+    border-radius: var(--biome-radius) !important;
+}
+.tree-lesson:hover {
+    background: var(--biome-bg-hover) !important;
+}
+.tree-lesson.selected {
+    background: var(--biome-bg-active) !important;
+    border-left: 3px solid var(--biome-cyan) !important;
+    box-shadow: inset 0 0 0.8vmin rgba(2, 232, 229, 0.12);
+}
+.tree-lesson.selected:hover {
+    background: rgba(2, 232, 229, 0.18) !important;
+}
+.tree-lesson.missing .tree-lesson-status { color: #f87171 !important; }
+.tree-lesson.has-video .tree-lesson-status { color: #34d399 !important; }
+
+.sidebar-toggle {
+    background: transparent !important;
+    border: 1px solid var(--biome-line) !important;
+    border-radius: var(--biome-radius) !important;
+    color: var(--biome-text-muted) !important;
+}
+.sidebar-toggle:hover {
+    background: var(--biome-bg-hover) !important;
+    color: var(--biome-cyan-soft) !important;
+    border-color: var(--biome-cyan-dim) !important;
+}
+
+/* ---- Filter buttons ---- */
+.filter-btn {
+    background: transparent !important;
+    border: 1px solid var(--biome-line) !important;
+    border-radius: var(--biome-radius) !important;
+    color: var(--biome-text-muted) !important;
+}
+.filter-btn:hover {
+    color: var(--biome-cyan-soft) !important;
+    border-color: var(--biome-cyan-dim) !important;
+}
+.filter-btn.active {
+    background: rgba(2, 232, 229, 0.12) !important;
+    color: var(--biome-cyan) !important;
+    border-color: var(--biome-cyan) !important;
+    box-shadow: var(--biome-glow-sm);
+}
+
+/* ---- Lesson status pills ---- */
+.lesson-status {
+    border-radius: var(--biome-radius) !important;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 0.72rem !important;
+}
+.lesson-status.missing {
+    background: rgba(248, 113, 113, 0.1) !important;
+    color: #fca5a5 !important;
+    border-color: rgba(248, 113, 113, 0.6) !important;
+}
+.lesson-status.has-video {
+    background: rgba(52, 211, 153, 0.08) !important;
+    color: #6ee7b7 !important;
+    border-color: rgba(52, 211, 153, 0.55) !important;
+}
+
+/* ---- Modal backdrop ---- */
+.modal-backdrop {
+    background: rgba(15, 23, 32, 0.65) !important;
+}
+
+.modal-close {
+    color: var(--biome-text-muted) !important;
+}
+.modal-close:hover {
+    color: var(--biome-cyan-soft) !important;
+    text-shadow: 0 0 0.4rem rgba(2, 232, 229, 0.5);
+}
+
+/* ---- Instructions accent bars retuned to cyan family ---- */
+.inst-section {
+    background: #2d3f54 !important;
+    border: 1px solid var(--biome-line) !important;
+    border-left-width: 3px !important;
+}
+.inst-section h3 { color: var(--biome-text) !important; }
+.inst-num {
+    border-radius: var(--biome-radius) !important;
+    background: rgba(2, 232, 229, 0.15) !important;
+    color: var(--biome-cyan) !important;
+}
+.inst-section--login,
+.inst-section--workflow,
+.inst-section--controls,
+.inst-section--lessons,
+.inst-section--videos,
+.inst-section--status,
+.inst-section--safety {
+    border-left-color: var(--biome-cyan) !important;
+}
+.inst-section--login .inst-num,
+.inst-section--workflow .inst-num,
+.inst-section--controls .inst-num,
+.inst-section--lessons .inst-num,
+.inst-section--videos .inst-num,
+.inst-section--status .inst-num,
+.inst-section--safety .inst-num {
+    background: rgba(2, 232, 229, 0.15) !important;
+    color: var(--biome-cyan) !important;
+}
+
+/* ---- Code/mono samples ---- */
+.modal-body code,
+.instructions-body code {
+    background: rgba(2, 232, 229, 0.08) !important;
+    color: var(--biome-cyan-soft) !important;
+    border: 1px solid rgba(2, 232, 229, 0.18);
+}
+
+/* ---- Spinner ---- */
+.spinner {
+    border-color: rgba(2, 232, 229, 0.18) !important;
+    border-top-color: var(--biome-cyan) !important;
+}
+.btn-loading::after {
+    border-color: var(--biome-cyan) !important;
+    border-right-color: transparent !important;
+}
+
+/* ---- Profile ---- */
+.profile-label {
+    color: var(--biome-text-muted) !important;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 0.72rem !important;
+}
+.profile-value { color: var(--biome-text) !important; }
+.profile-value--mono { color: var(--biome-cyan-soft) !important; }
+
+/* ---- Admin theme refinements: lower glow, simpler selections, complete form coverage ---- */
+:root {
+    --biome-line:           rgba(2, 232, 229, 0.22);
+    --biome-line-strong:    rgba(2, 232, 229, 0.45);
+    --biome-bg-hover:       rgba(2, 232, 229, 0.08);
+    --biome-bg-active:      rgba(2, 232, 229, 0.12);
+    --biome-glow-sm:        0 0 0.25rem rgba(2, 232, 229, 0.16);
+    --biome-glow-md:        0 0 0.45rem rgba(2, 232, 229, 0.22);
+}
+
+.login-container,
+.login-aside,
+.controls-section,
+.lessons-sidebar,
+.collapsible-card,
+.srcarray-editor-card,
+.lesson-item,
+.modal-content,
+.instructions-paper,
+.profile-modal-content,
+.changelog-modal-content {
+    box-shadow:
+        0 0 0.45rem rgba(2, 232, 229, 0.08),
+        inset 0 0 0.35rem rgba(2, 232, 229, 0.03) !important;
+}
+
+.dashboard-header {
+    box-shadow: 0 0 0.5rem rgba(2, 232, 229, 0.12) !important;
+}
+
+.sidebar-title,
+.collapsible-card-title,
+.srcarray-editor-title,
+.lesson-name,
+#instructionsTitle,
+#profileTitle,
+#changelogTitle {
+    text-shadow: none !important;
+}
+
+.login-container h1 {
+    text-shadow: 0 0 0.35rem rgba(2, 232, 229, 0.28) !important;
+}
+
+.btn-primary,
+.btn-secondary:hover,
+.btn-metadata-save,
+.btn-section-save:hover,
+.chapter-row .btn-chapter-save:hover,
+.admin-tab.active,
+.filter-btn.active {
+    box-shadow: none !important;
+}
+
+.btn-primary:hover,
+.btn-metadata-save:hover,
+.btn-section-save:hover,
+.chapter-row .btn-chapter-save:hover {
+    box-shadow: 0 0 0.35rem rgba(2, 232, 229, 0.18) !important;
+}
+
+/* Search, selects, timeline, and chapter editor fields */
+.search-input,
+.section-index-input,
+.chapters-dropdown,
+.chapter-row .chapter-name-input,
+.chapter-index-input,
+.lesson-assignment select,
+.srcarray-editor-label input[type="number"],
+.srcarray-editor-table input,
+.metadata-row input[type="text"],
+.form-group input {
+    background: #1e293b !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    border-radius: var(--biome-radius) !important;
+    color: var(--biome-text) !important;
+}
+
+.search-input:focus,
+.section-index-input:focus,
+.chapters-dropdown:focus,
+.chapter-row .chapter-name-input:focus,
+.chapter-index-input:focus,
+.lesson-assignment select:focus,
+.srcarray-editor-label input[type="number"]:focus,
+.srcarray-editor-table input:focus,
+.metadata-row input[type="text"]:focus,
+.form-group input:focus {
+    border-color: var(--biome-cyan-dim) !important;
+    box-shadow: 0 0 0 1px rgba(2, 232, 229, 0.45) !important;
+    background: #334155 !important;
+}
+
+.search-input::placeholder {
+    color: #94a3b8 !important;
+}
+
+/* Save buttons: visible, clickable, aligned */
+.btn-metadata-save,
+.btn-section-save,
+.chapter-row .btn-chapter-save {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    min-height: 2rem;
+    padding: 0.42rem 0.75rem !important;
+    border-radius: var(--biome-radius) !important;
+    border: 1px solid var(--biome-line-strong) !important;
+    background: transparent !important;
+    color: var(--biome-cyan) !important;
+    cursor: pointer !important;
+    pointer-events: auto;
+    font-size: 0.78rem !important;
+    font-weight: 500;
+    line-height: 1.1;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+}
+
+.btn-metadata-save:hover,
+.btn-section-save:hover,
+.chapter-row .btn-chapter-save:hover {
+    background: rgba(2, 232, 229, 0.08) !important;
+    color: var(--biome-cyan-soft) !important;
+    border-color: var(--biome-cyan-dim) !important;
+}
+
+.lesson-metadata-edit {
+    display: grid;
+    gap: 0.65rem;
+}
+
+.metadata-row,
+.section-index-edit,
+.chapters-toolbar {
+    gap: 0.65rem !important;
+}
+
+.section-index-edit {
+    align-items: stretch;
+}
+
+/* Simpler lesson/chapter selection: outline only */
+.tree-lesson.selected {
+    background: transparent !important;
+    border-left: 0 !important;
+    outline: 1px solid var(--biome-cyan-dim);
+    outline-offset: -1px;
+    box-shadow: none !important;
+    color: var(--biome-cyan-soft) !important;
+}
+
+.tree-lesson.selected:hover {
+    background: rgba(2, 232, 229, 0.04) !important;
+}
+
+.tree-section-header:hover,
+.tree-lesson:hover {
+    background: rgba(2, 232, 229, 0.035) !important;
+}
+
+.chapter-row {
+    background: transparent !important;
+    border: 1px solid rgba(2, 232, 229, 0.1);
+    border-radius: var(--biome-radius);
+    padding: 0.55rem;
+}
+
+.chapter-row:hover {
+    border-color: rgba(2, 232, 229, 0.24);
+}
+
+/* Readability: tables, sidebar, secondary controls */
+.tree-section-title,
+.tree-lesson,
+.collapsible-card-header,
+.srcarray-editor-header,
+.srcarray-editor-table td {
+    color: var(--biome-text) !important;
+}
+
+.srcarray-editor-table th {
+    color: var(--biome-text-muted) !important;
+}
+
+.btn-secondary {
+    color: #cbd5e1 !important;
+}
+
+.admin-tab {
+    color: #b8c5d4 !important;
+}
+
+.collapsible-card-header:hover,
+.srcarray-editor-header:hover {
+    background: rgba(255, 255, 255, 0.05) !important;
 }
 
