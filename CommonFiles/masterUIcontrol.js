@@ -92,6 +92,35 @@ function applyLessonMarkerGlobalsFromFirestoreData(data) {
         window.shouldSkipColorCards = true;
         window.shouldSkipYellow = true;
     }
+    window.forceFirstChapterStartAtZero = data.forceFirstChapterStartAtZero === true;
+}
+
+function shouldForceFirstChapterStartAtZero() {
+    return typeof window !== "undefined" && window.forceFirstChapterStartAtZero === true;
+}
+
+/** First playable chapter row index in srcArray (after opening). */
+function getFirstPlayableChapterSlideIndex() {
+    if (!Array.isArray(srcArray)) return -1;
+    for (var i = 1; i < srcArray.length; i++) {
+        if (isPlayableContentSegment(srcArray[i])) return i;
+    }
+    return -1;
+}
+
+function isFirstPlayableChapterSlide(slideIdx) {
+    return slideIdx === getFirstPlayableChapterSlideIndex();
+}
+
+/**
+ * Chapter rows are navigation anchors only. When forceFirstChapterStartAtZero is set,
+ * chapter 1 play/seek uses 0.00 — not the first mapped yellow contentStart.
+ */
+function resolveChapterPlaybackSeekTime(seg, slideIdx) {
+    if (shouldForceFirstChapterStartAtZero() && isFirstPlayableChapterSlide(slideIdx)) {
+        return 0;
+    }
+    return segmentContentSeekTime(seg);
 }
 
 function logPlayerMarkerDebug(payload) {
@@ -472,6 +501,15 @@ function findPreviousFreezeMarkerIndexBeforeTime(t) {
     return best;
 }
 
+/** Next freeze boundary strictly after playhead time (forward-only segment target). */
+function findFirstFreezeMarkerIndexAfterTime(t) {
+    if (!isFinite(Number(t))) return -1;
+    for (var i = 0; i < freezeMarkers.length; i++) {
+        if (Number(freezeMarkers[i].crossAt) > Number(t) + 1e-4) return i;
+    }
+    return -1;
+}
+
 function buildUnifiedPlaybackEvents() {
     var events = [];
     for (var fi = 0; fi < freezeMarkers.length; fi++) {
@@ -723,13 +761,11 @@ function beginPlayToNextFreezeFrame(reason) {
     }
     var t = Number(videoId.currentTime);
     if (!isFinite(t)) t = 0;
-    var fromIdx = pausedAtFreezeMarkerIdx >= 0
-        ? pausedAtFreezeMarkerIdx
-        : (currentFreezeFrameIdx >= 0 ? currentFreezeFrameIdx : findFreezeFrameIndexAtTime(t));
+    var fromIdx = pausedAtFreezeMarkerIdx >= 0 ? pausedAtFreezeMarkerIdx : -1;
     if (fromIdx < 0) {
         fromIdx = findPreviousFreezeMarkerIndexBeforeTime(t + 0.001);
     }
-    var nextIdx = fromIdx + 1;
+    var nextIdx = fromIdx < 0 ? findFirstFreezeMarkerIndexAfterTime(t) : (fromIdx + 1);
     currentFreezeFrameIdx = fromIdx;
     pausedAtFreezeMarkerIdx = -1;
     syncLegacyYellowMarkerAliases();
@@ -809,10 +845,25 @@ function nearestPlaybackEventInfoAtTime(t) {
 function resolvePostFreezeStopTime(marker, markerIndex, logReason) {
     if (!marker) return null;
     var base = Number(marker.end) + COLOR_CARD_RANGE_SKIP_EPS_SEC;
-    if (marker.contentStart != null && isFinite(Number(marker.contentStart)) && Number(marker.contentStart) > marker.end) {
+    if (marker.markerType === "green") {
+        if (marker.resumeTime != null && isFinite(Number(marker.resumeTime)) &&
+            Number(marker.resumeTime) >= marker.end) {
+            base = Number(marker.resumeTime) + COLOR_CARD_RANGE_SKIP_EPS_SEC;
+        }
+        if (marker.contentStart != null && isFinite(Number(marker.contentStart)) &&
+            Number(marker.contentStart) > base) {
+            base = Number(marker.contentStart);
+        }
+    } else if (marker.contentStart != null && isFinite(Number(marker.contentStart)) &&
+        Number(marker.contentStart) > marker.end) {
         base = Number(marker.contentStart);
     }
     var resolved = ensureSeekPastColorCardRanges(base);
+    if (marker.markerType === "green" && isFinite(Number(marker.start)) && isFinite(Number(marker.end))) {
+        var pastGreenSpan = Number(marker.end) + COLOR_CARD_RANGE_SKIP_EPS_SEC;
+        if (resolved < pastGreenSpan) resolved = pastGreenSpan;
+        resolved = ensureSeekPastColorCardRanges(resolved);
+    }
     var leapfrogAdjusted = Math.abs(resolved - base) > 1e-6;
     logPlayerMarkerDebug({
         event: "resolved_post_freeze_target",
@@ -1288,12 +1339,12 @@ function updateVideoId(play=true){ // FindMe3
             }
             return;
         }
-        var startTime = segmentContentSeekTime(seg);
+        var forcedZeroStart = shouldForceFirstChapterStartAtZero() && isFirstPlayableChapterSlide(currentSlide);
+        var startTime = resolveChapterPlaybackSeekTime(seg, currentSlide);
         if (startTime == null || !isFinite(startTime)) startTime = Number(seg.src_start);
-            // If yellowScreenRanges are defined globally (from Firestore), and we are
-            // supposed to skip them, move the start just past any yellow block.
-            if ((typeof window.shouldSkipColorCards !== "undefined" && window.shouldSkipColorCards) ||
-                (typeof window.shouldSkipYellow !== "undefined" && window.shouldSkipYellow)) {
+            if (!forcedZeroStart &&
+                ((typeof window.shouldSkipColorCards !== "undefined" && window.shouldSkipColorCards) ||
+                (typeof window.shouldSkipYellow !== "undefined" && window.shouldSkipYellow))) {
                 var navRanges = getColorCardRangesFromWindow();
                 var epsNav = COLOR_CARD_RANGE_SKIP_EPS_SEC;
                 for (var ni = 0; ni < navRanges.length; ni++) {
@@ -1303,21 +1354,33 @@ function updateVideoId(play=true){ // FindMe3
                     }
                 }
             }
-            startTime = ensureSeekPastColorCardRanges(startTime);
+            if (!forcedZeroStart) {
+                startTime = ensureSeekPastColorCardRanges(startTime);
+            }
             startTime += CONTENT_SEEK_LEAD_IN_SEC;
+            if (forcedZeroStart) startTime = 0;
             var segEnd = Number(seg.src_end);
             if (isFinite(segEnd) && startTime > segEnd - 0.02) {
                 startTime = segEnd - 0.035;
             }
             videoId.currentTime = startTime;
             if (CONTINUOUS_VIDEO_PLAYBACK) {
-                beginPlayToNextEvent("chapter_jump_play");
+                if (forcedZeroStart) {
+                    currentFreezeFrameIdx = -1;
+                    pausedAtFreezeMarkerIdx = -1;
+                    segmentTargetFreezeIdx = -1;
+                    nextFreezeFrameIdx = -1;
+                    advanceMarkerCursorToTime(0);
+                    lastPlaybackTimeForMarkerCheck = 0;
+                }
+                beginPlayToNextFreezeFrame("chapter_jump_play");
                 logPlayerMarkerDebug({
                     event: "chapter_seek_target",
                     reason: "chapter_jump_play",
+                    forcedFirstChapterAtZero: forcedZeroStart,
                     chosenResumePoint: Math.round(Number(startTime) * 1000) / 1000,
                     resolvedPostMarkerContentPoint: Math.round(Number(startTime) * 1000) / 1000,
-                    leapfrogHelperUsed: true,
+                    leapfrogHelperUsed: !forcedZeroStart,
                 });
                 try { videoId.play(); } catch (err) { console.log(err); }
             }

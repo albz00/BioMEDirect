@@ -1151,7 +1151,7 @@ function renderSidebarTree() {
     treeEl.innerHTML = html;
 }
 
-function displaySelectedLesson() {
+async function displaySelectedLesson() {
     const panel = document.getElementById('lessonDetail');
     if (!panel) return;
     if (!selectedLessonId) {
@@ -1163,12 +1163,23 @@ function displaySelectedLesson() {
         panel.innerHTML = '<p class="placeholder">Lesson not found</p>';
         return;
     }
-    panel.innerHTML = getLessonCardHTML(lesson);
+    let forceFirstChapterStartAtZero = false;
+    try {
+        const lessonDoc = await db.collection('lessons').doc(selectedLessonId).get();
+        if (lessonDoc.exists) {
+            forceFirstChapterStartAtZero = lessonDoc.data().forceFirstChapterStartAtZero === true;
+        }
+    } catch (err) {
+        console.warn('Could not load lesson playback settings:', err);
+    }
+    panel.innerHTML = getLessonCardHTML(lesson, { forceFirstChapterStartAtZero });
 }
 
-function getLessonCardHTML(lesson) {
+function getLessonCardHTML(lesson, playbackOpts) {
     const statusClass = lesson.hasVideo ? 'has-video' : 'missing';
     const statusText = lesson.hasVideo ? 'Has Video' : 'Missing';
+    const forceAtZero = playbackOpts && playbackOpts.forceFirstChapterStartAtZero === true;
+    const forceAtZeroChecked = forceAtZero ? ' checked' : '';
     const videoOptions = availableVideos.map(video => {
         const selected = lesson.currentPath === `videos/${video}` ? 'selected' : '';
         return `<option value="${video}" ${selected}>${video}</option>`;
@@ -1212,6 +1223,15 @@ function getLessonCardHTML(lesson) {
                     <button class="assign-btn" onclick="assignVideo('${escId}', this)" id="assign-btn-${lesson.lessonId}">${lesson.hasVideo ? 'Update' : 'Assign'}</button>
                     <button type="button" class="btn btn-secondary btn-sm" onclick="resetLessonAssignment('${escId}', this)"><span class="btn-label">Reset</span></button>
                     <!-- Regenerate-from-yellow disabled now that generation handles yellow in a single path -->
+                </div>
+                <div class="lesson-playback-settings">
+                    <h4 class="lesson-playback-settings-title">Playback (temporary)</h4>
+                    <label class="lesson-playback-settings-label">
+                        <input type="checkbox" id="forceChapterStartZero-${lesson.lessonId}"${forceAtZeroChecked}>
+                        Force first chapter to start at 0:00 (use video start; ignore mapped first yellow contentStart)
+                    </label>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="saveLessonPlaybackSettings('${escId}', this)"><span class="btn-label">Save playback settings</span></button>
+                    <p class="lesson-playback-settings-hint">Freeze markers (yellow/green) still control stop/resume. This only fixes lesson entry when title mapping is not ready.</p>
                 </div>
                 <div class="lesson-chapters-block">
                     <button type="button" class="btn btn-secondary btn-chapters" onclick="showChaptersForLesson('${escId}')"><span class="btn-label">Show chapters</span></button>
@@ -2951,6 +2971,37 @@ window.saveChapterDisplayName = saveChapterDisplayName;
 window.adjustChapterIndexSequence = adjustChapterIndexSequence;
 window.saveAllChapters = saveAllChapters;
 window.resetLessonAssignment = resetLessonAssignment;
+async function saveLessonPlaybackSettings(lessonId, btn) {
+    try {
+        requireAuth();
+    } catch (error) {
+        alert('Authentication required. Please log in again.');
+        return;
+    }
+    const cb = document.getElementById(`forceChapterStartZero-${lessonId}`);
+    const enabled = !!(cb && cb.checked);
+    if (btn) setButtonLoading(btn, true);
+    try {
+        await db.collection('lessons').doc(lessonId).set(
+            { forceFirstChapterStartAtZero: enabled },
+            { merge: true }
+        );
+        setStatus(
+            enabled
+                ? 'First chapter will start at 0:00 for this lesson'
+                : 'First chapter uses mapped timeline start again',
+            'success'
+        );
+        setTimeout(() => setStatus('Ready'), 2500);
+    } catch (err) {
+        console.error('saveLessonPlaybackSettings failed:', err);
+        setStatus('Failed to save playback settings: ' + err.message, 'error');
+    } finally {
+        if (btn) setButtonLoading(btn, false);
+    }
+}
+
+window.saveLessonPlaybackSettings = saveLessonPlaybackSettings;
 window.regenerateSrcArrayFromYellow = regenerateSrcArrayFromYellow;
 window.saveSectionDisplayName = async function saveSectionDisplayName(originalSection, btn) {
     try {
