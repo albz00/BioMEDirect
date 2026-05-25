@@ -35,8 +35,14 @@ var nextFreezeMarkerIdx = 0;
 var nextPlaybackEventIdx = 0;
 var pausedAtFreezeMarkerIdx = -1;
 var lastPlaybackTimeForMarkerCheck = null;
-var guidedPlaybackState = "idle"; // idle | playing_to_event | paused_at_freeze | looping_at_red | completed
+var guidedPlaybackState = "idle"; // idle | playing_to_next_freeze | paused_at_freeze | looping_at_red | completed | playing_to_end
 var guidedTargetEventIdx = -1;
+/** Freeze frame we are stopped on (segment start). */
+var currentFreezeFrameIdx = -1;
+/** Freeze frame we are playing toward (segment end stop). */
+var nextFreezeFrameIdx = -1;
+/** Alias for nextFreezeFrameIdx while a segment is active (survives red loop). */
+var segmentTargetFreezeIdx = -1;
 var activeRedLoopEventIdx = -1;
 var activeRedLoopReturnTime = null;
 var activeRedLoopPreviousFreezeIdx = -1;
@@ -364,7 +370,9 @@ function getColorCardRangesFromWindow() {
  */
 function applyInvisibleLeapfrogDuringGuidedPlay(videoEl, t) {
     if (!videoEl || !isFinite(Number(t))) return t;
-    if (guidedPlaybackState !== "playing_to_event" && guidedPlaybackState !== "looping_at_red") return t;
+    if (guidedPlaybackState !== "playing_to_next_freeze" &&
+        guidedPlaybackState !== "playing_to_event" &&
+        guidedPlaybackState !== "looping_at_red") return t;
     var past = ensureSeekPastColorCardRanges(Number(t));
     if (Math.abs(past - Number(t)) > 1e-5) {
         videoEl.currentTime = past;
@@ -543,6 +551,9 @@ function loadPlaybackMarkersFromWindow() {
     nextFreezeMarkerIdx = 0;
     nextPlaybackEventIdx = 0;
     pausedAtFreezeMarkerIdx = -1;
+    currentFreezeFrameIdx = -1;
+    nextFreezeFrameIdx = -1;
+    segmentTargetFreezeIdx = -1;
     guidedTargetEventIdx = -1;
     activeRedLoopEventIdx = -1;
     activeRedLoopReturnTime = null;
@@ -613,6 +624,9 @@ function logMarkerRuntimeInventory(reason) {
         nextTargetMarkerType: nextEv && nextEv.marker ? nextEv.marker.markerType : null,
         nextTargetCrossAt: nextEv && isFinite(Number(nextEv.crossAt))
             ? Math.round(Number(nextEv.crossAt) * 1000) / 1000 : null,
+        currentFreezeFrameIndex: currentFreezeFrameIdx,
+        nextFreezeFrameIndex: nextFreezeFrameIdx,
+        segmentTargetFreezeIndex: segmentTargetFreezeIdx,
         guidedPlaybackState: guidedPlaybackState,
     };
     if (typeof window !== "undefined") window.__playerMarkerRuntimeSnapshot = snapshot;
@@ -638,33 +652,129 @@ function advanceMarkerCursorToTime(t) {
 
 function setGuidedPlaybackState(nextState, reason) {
     guidedPlaybackState = nextState;
-    logPlayerMarkerDebug({ event: "state", reason: reason || null });
+    logPlayerMarkerDebug({
+        event: "state",
+        reason: reason || null,
+        currentFreezeFrameIndex: currentFreezeFrameIdx,
+        nextFreezeFrameIndex: nextFreezeFrameIdx,
+        segmentTargetFreezeIndex: segmentTargetFreezeIdx,
+    });
 }
 
-function beginPlayToNextEvent(reason) {
+/**
+ * Which freeze boundary the playhead is on (post-freeze content), not a chapter row.
+ */
+function findFreezeFrameIndexAtTime(t) {
+    if (!isFinite(Number(t)) || freezeMarkers.length === 0) return -1;
+    var best = -1;
+    var bestPost = -Infinity;
+    for (var i = 0; i < freezeMarkers.length; i++) {
+        var post = resolvePostFreezeStopTime(freezeMarkers[i], i, "locate_freeze_at_time");
+        if (!isFinite(Number(post))) continue;
+        if (Number(post) <= Number(t) + 0.25 && Number(post) >= bestPost) {
+            bestPost = Number(post);
+            best = i;
+        }
+    }
+    return best;
+}
+
+function findNextSegmentPlaybackEventIdx(t, targetFreezeIdx) {
+    if (targetFreezeIdx < 0 || targetFreezeIdx >= freezeMarkers.length) return -1;
+    var targetCross = Number(freezeMarkers[targetFreezeIdx].crossAt);
+    if (!isFinite(targetCross)) return -1;
+    advanceMarkerCursorToTime(t);
+    for (var i = nextPlaybackEventIdx; i < playbackEvents.length; i++) {
+        var ev = playbackEvents[i];
+        var cross = Number(ev.crossAt);
+        if (!isFinite(cross) || cross < Number(t) - 1e-4) continue;
+        if (cross > targetCross + 1e-4) break;
+        if (ev.kind === "loop") return i;
+        if (ev.kind === "freeze" && ev.freezeMarkerIndex === targetFreezeIdx) return i;
+    }
+    return -1;
+}
+
+function advancePastSkippedFreezeEventsInSegment(t) {
+    if (segmentTargetFreezeIdx < 0) return;
+    while (guidedTargetEventIdx >= 0 && guidedTargetEventIdx < playbackEvents.length) {
+        var ev = playbackEvents[guidedTargetEventIdx];
+        if (ev.kind === "freeze" && ev.freezeMarkerIndex !== segmentTargetFreezeIdx) {
+            if (Number(t) >= Number(ev.crossAt) - 1e-4) {
+                guidedTargetEventIdx++;
+                nextPlaybackEventIdx = guidedTargetEventIdx;
+                continue;
+            }
+        }
+        break;
+    }
+    syncLegacyYellowMarkerAliases();
+}
+
+/**
+ * CLICK semantics: play from current freeze-frame boundary to the next freeze-frame boundary.
+ * Red markers in between trigger loop-back; they are not segment endpoints.
+ */
+function beginPlayToNextFreezeFrame(reason) {
     if (!CONTINUOUS_VIDEO_PLAYBACK) return;
+    if (freezeMarkers.length === 0) {
+        setGuidedPlaybackState("playing_to_end", reason || "no_freeze_markers");
+        return;
+    }
     var t = Number(videoId.currentTime);
     if (!isFinite(t)) t = 0;
-    advanceMarkerCursorToTime(t);
-    guidedTargetEventIdx = nextPlaybackEventIdx < playbackEvents.length ? nextPlaybackEventIdx : -1;
+    var fromIdx = pausedAtFreezeMarkerIdx >= 0
+        ? pausedAtFreezeMarkerIdx
+        : (currentFreezeFrameIdx >= 0 ? currentFreezeFrameIdx : findFreezeFrameIndexAtTime(t));
+    if (fromIdx < 0) {
+        fromIdx = findPreviousFreezeMarkerIndexBeforeTime(t + 0.001);
+    }
+    var nextIdx = fromIdx + 1;
+    currentFreezeFrameIdx = fromIdx;
+    pausedAtFreezeMarkerIdx = -1;
+    syncLegacyYellowMarkerAliases();
+
+    if (nextIdx >= freezeMarkers.length) {
+        segmentTargetFreezeIdx = -1;
+        nextFreezeFrameIdx = -1;
+        guidedTargetEventIdx = -1;
+        activeRedLoopEventIdx = -1;
+        activeRedLoopReturnTime = null;
+        activeRedLoopPreviousFreezeIdx = -1;
+        setGuidedPlaybackState("playing_to_end", reason || "play_past_last_freeze");
+        logPlayerMarkerDebug({
+            event: "play_segment_no_next_freeze",
+            reason: reason || null,
+            currentFreezeFrameIndex: currentFreezeFrameIdx,
+        });
+        return;
+    }
+
+    segmentTargetFreezeIdx = nextIdx;
+    nextFreezeFrameIdx = nextIdx;
     activeRedLoopEventIdx = -1;
     activeRedLoopReturnTime = null;
     activeRedLoopPreviousFreezeIdx = -1;
-    setGuidedPlaybackState("playing_to_event", reason || "play_to_next_event");
-    var target = guidedTargetEventIdx >= 0 ? playbackEvents[guidedTargetEventIdx] : null;
+    guidedTargetEventIdx = findNextSegmentPlaybackEventIdx(t, nextIdx);
+    setGuidedPlaybackState("playing_to_next_freeze", reason || "play_to_next_freeze");
+    var targetMk = freezeMarkers[nextIdx];
     logPlayerMarkerDebug({
-        event: "play_to_event_start",
+        event: "play_segment_start",
         reason: reason || null,
-        markerType: target && target.marker ? target.marker.markerType : null,
-        markerSemantics: target ? target.kind : null,
-        markerIndex: target && target.kind === "freeze" ? target.freezeMarkerIndex
-            : (target && target.kind === "loop" ? target.loopMarkerIndex : null),
-        isFreeze: target ? target.kind === "freeze" : null,
-        isLoop: target ? target.kind === "loop" : null,
-        chosenStopPoint: target ? Math.round(target.crossAt * 1000) / 1000 : null,
-        clickAction: "wait_for_marker_or_advance",
+        currentFreezeFrameIndex: currentFreezeFrameIdx,
+        nextFreezeFrameIndex: nextFreezeFrameIdx,
+        segmentTargetFreezeIndex: segmentTargetFreezeIdx,
+        markerType: targetMk ? targetMk.markerType : null,
+        markerSemantics: "freeze",
+        chosenStopPoint: targetMk ? Math.round(Number(targetMk.crossAt) * 1000) / 1000 : null,
+        guidedTargetEventIndex: guidedTargetEventIdx,
+        clickAction: "play_current_freeze_to_next_freeze",
     });
     syncLegacyYellowMarkerAliases();
+}
+
+function beginPlayToNextEvent(reason) {
+    beginPlayToNextFreezeFrame(reason);
 }
 
 /** @deprecated — use beginPlayToNextEvent */
@@ -765,6 +875,9 @@ function handleFreezeMarkerCrossing(videoEl, mk, freezeIdx, prev, t) {
     videoEl.currentTime = stopTarget;
     videoEl.pause();
     pausedAtFreezeMarkerIdx = freezeIdx;
+    currentFreezeFrameIdx = freezeIdx;
+    nextFreezeFrameIdx = -1;
+    segmentTargetFreezeIdx = -1;
     nextFreezeMarkerIdx = freezeIdx + 1;
     nextPlaybackEventIdx = (guidedTargetEventIdx >= 0) ? guidedTargetEventIdx + 1 : nextPlaybackEventIdx;
     guidedTargetEventIdx = -1;
@@ -864,13 +977,21 @@ function breakRedLoopAndResumePastRed(reason) {
     }
     var loopMk = loopMarkers[activeRedLoopEventIdx];
     var resumeTarget = ensureSeekPastColorCardRanges(loopMk.end + COLOR_CARD_RANGE_SKIP_EPS_SEC);
+    var savedSegmentTarget = segmentTargetFreezeIdx;
     videoId.currentTime = Number(resumeTarget);
     activeRedLoopEventIdx = -1;
     activeRedLoopReturnTime = null;
     activeRedLoopPreviousFreezeIdx = -1;
     advanceMarkerCursorToTime(Number(resumeTarget));
     lastPlaybackTimeForMarkerCheck = Number(resumeTarget);
-    beginPlayToNextEvent(reason || "break_red_loop");
+    if (savedSegmentTarget >= 0 && savedSegmentTarget < freezeMarkers.length) {
+        segmentTargetFreezeIdx = savedSegmentTarget;
+        nextFreezeFrameIdx = savedSegmentTarget;
+        guidedTargetEventIdx = findNextSegmentPlaybackEventIdx(Number(resumeTarget), savedSegmentTarget);
+        setGuidedPlaybackState("playing_to_next_freeze", reason || "break_red_loop");
+    } else {
+        beginPlayToNextFreezeFrame(reason || "break_red_loop");
+    }
     logPlayerMarkerDebug({
         event: "red_loop_broken",
         markerType: "red",
@@ -931,7 +1052,7 @@ function initializePlayer(videoUrl, timelineArray) {
             syncLegacyYellowMarkerAliases();
             advanceMarkerCursorToTime(this.currentTime);
             lastPlaybackTimeForMarkerCheck = Number(this.currentTime);
-            beginPlayToNextEvent("resume_after_freeze");
+            beginPlayToNextFreezeFrame("resume_after_freeze");
             logPlayerMarkerDebug({
                 event: "resume_fired",
                 reason: "resume_after_freeze",
@@ -939,12 +1060,14 @@ function initializePlayer(videoUrl, timelineArray) {
                 markerSemantics: "freeze",
                 markerIndex: resumedMarkerIdx,
                 chosenResumePoint: Math.round(Number(this.currentTime) * 1000) / 1000,
-                clickAction: "resume_past_freeze_card",
+                clickAction: "play_current_freeze_to_next_freeze",
             });
             return;
         }
-        if (guidedPlaybackState !== "playing_to_event" && guidedPlaybackState !== "looping_at_red") {
-            beginPlayToNextEvent("play_event");
+        if (guidedPlaybackState !== "playing_to_next_freeze" &&
+            guidedPlaybackState !== "playing_to_event" &&
+            guidedPlaybackState !== "looping_at_red") {
+            beginPlayToNextFreezeFrame("play_event");
         }
         lastPlaybackTimeForMarkerCheck = Number(this.currentTime);
     });
@@ -993,10 +1116,24 @@ function initializePlayer(videoUrl, timelineArray) {
                     }
                 }
 
-                if (guidedPlaybackState === "playing_to_event" && guidedTargetEventIdx >= 0 &&
+                if ((guidedPlaybackState === "playing_to_next_freeze" ||
+                    guidedPlaybackState === "playing_to_event") &&
+                    segmentTargetFreezeIdx >= 0) {
+                    advancePastSkippedFreezeEventsInSegment(t);
+                }
+
+                if ((guidedPlaybackState === "playing_to_next_freeze" ||
+                    guidedPlaybackState === "playing_to_event") &&
+                    guidedTargetEventIdx >= 0 &&
                     guidedTargetEventIdx < playbackEvents.length) {
                     var ev = playbackEvents[guidedTargetEventIdx];
                     mkGuide = ev.marker;
+                    if (ev.kind === "freeze" && segmentTargetFreezeIdx >= 0 &&
+                        ev.freezeMarkerIndex !== segmentTargetFreezeIdx) {
+                        advancePastSkippedFreezeEventsInSegment(t);
+                        ev = guidedTargetEventIdx >= 0 && guidedTargetEventIdx < playbackEvents.length
+                            ? playbackEvents[guidedTargetEventIdx] : ev;
+                    }
                     var trigger = classifyGuidedEventTrigger(ev, prev, t);
                     crossedStart = trigger.shouldFire;
                     if (trigger.shouldFire) {
@@ -1010,11 +1147,15 @@ function initializePlayer(videoUrl, timelineArray) {
                             previousTime: isFinite(prev) ? Math.round(prev * 1000) / 1000 : null,
                             currentTime: isFinite(Number(t)) ? Math.round(Number(t) * 1000) / 1000 : null,
                             chosenStopPoint: isFinite(Number(ev.crossAt)) ? Math.round(Number(ev.crossAt) * 1000) / 1000 : null,
+                            segmentTargetFreezeIndex: segmentTargetFreezeIdx,
                         });
                         if (ev.kind === "freeze") {
-                            pauseFired = true;
-                            handleFreezeMarkerCrossing(this, ev.marker, ev.freezeMarkerIndex, prev, t);
-                            return;
+                            if (segmentTargetFreezeIdx < 0 ||
+                                ev.freezeMarkerIndex === segmentTargetFreezeIdx) {
+                                pauseFired = true;
+                                handleFreezeMarkerCrossing(this, ev.marker, ev.freezeMarkerIndex, prev, t);
+                                return;
+                            }
                         }
                         if (ev.kind === "loop") {
                             handleRedLoopMarkerCrossing(this, ev.marker, ev.loopMarkerIndex, prev, t);
@@ -1030,8 +1171,10 @@ function initializePlayer(videoUrl, timelineArray) {
                             triggerReason: trigger.reason,
                             previousTime: isFinite(prev) ? Math.round(prev * 1000) / 1000 : null,
                             currentTime: isFinite(Number(t)) ? Math.round(Number(t) * 1000) / 1000 : null,
+                            segmentTargetFreezeIndex: segmentTargetFreezeIdx,
                         });
-                        if (ev.kind === "freeze") {
+                        if (ev.kind === "freeze" &&
+                            (segmentTargetFreezeIdx < 0 || ev.freezeMarkerIndex === segmentTargetFreezeIdx)) {
                             pauseFired = true;
                             handleFreezeMarkerCrossing(this, ev.marker, ev.freezeMarkerIndex, prev, t);
                             return;
@@ -1040,6 +1183,7 @@ function initializePlayer(videoUrl, timelineArray) {
                             handleRedLoopMarkerCrossing(this, ev.marker, ev.loopMarkerIndex, prev, t);
                             return;
                         }
+                        advancePastSkippedFreezeEventsInSegment(t);
                     }
                 }
                 runTensegrityTimeupdateDiagnostics(this, prev, t, mkGuide, crossedStart, pauseFired);
@@ -1287,30 +1431,28 @@ function nextSlide(){ // FindMe1
     };
 
     if (CONTINUOUS_VIDEO_PLAYBACK && guidedPlaybackState === "paused_at_freeze") {
-        var pausedMk = pausedAtFreezeMarkerIdx >= 0 ? freezeMarkers[pausedAtFreezeMarkerIdx] : null;
+        var pausedIdx = pausedAtFreezeMarkerIdx;
+        var pausedMk = pausedIdx >= 0 ? freezeMarkers[pausedIdx] : null;
         var resumeFromFreeze = pausedMk
-            ? resolvePostFreezeStopTime(pausedMk, pausedAtFreezeMarkerIdx, "click_resume_from_freeze")
+            ? resolvePostFreezeStopTime(pausedMk, pausedIdx, "click_resume_from_freeze")
             : null;
         if (isFinite(Number(resumeFromFreeze))) {
             videoId.currentTime = Number(resumeFromFreeze);
         }
+        currentFreezeFrameIdx = pausedIdx >= 0 ? pausedIdx : currentFreezeFrameIdx;
         pausedAtFreezeMarkerIdx = -1;
         syncLegacyYellowMarkerAliases();
         advanceMarkerCursorToTime(Number(videoId.currentTime));
         lastPlaybackTimeForMarkerCheck = Number(videoId.currentTime);
-        beginPlayToNextEvent("click_resume_from_freeze");
+        beginPlayToNextFreezeFrame("click_play_segment_to_next_freeze");
         logPlayerMarkerDebug({
-            event: "click_resume_from_freeze",
+            event: "click_play_segment_to_next_freeze",
             clickedElement: baseClickDebug.clickedElement,
-            currentSlide: baseClickDebug.currentSlide,
-            nearestMarkerEventIndex: baseClickDebug.nearestMarkerEventIndex,
-            nearestMarkerIndex: baseClickDebug.nearestMarkerIndex,
-            nearestMarkerType: baseClickDebug.nearestMarkerType,
-            nearestMarkerSemantics: baseClickDebug.nearestMarkerSemantics,
-            nearestMarkerDeltaSec: baseClickDebug.nearestMarkerDeltaSec,
+            currentFreezeFrameIndex: currentFreezeFrameIdx,
+            nextFreezeFrameIndex: nextFreezeFrameIdx,
+            segmentTargetFreezeIndex: segmentTargetFreezeIdx,
             markerType: pausedMk ? pausedMk.markerType : null,
-            markerSemantics: "freeze",
-            clickAction: "resume_past_freeze_card",
+            clickAction: "play_current_freeze_to_next_freeze",
             chosenResumePoint: isFinite(Number(resumeFromFreeze))
                 ? Math.round(Number(resumeFromFreeze) * 1000) / 1000 : null,
         });
@@ -1331,39 +1473,39 @@ function nextSlide(){ // FindMe1
         breakRedLoopAndResumePastRed("click_break_red_loop");
         return;
     }
-    if (CONTINUOUS_VIDEO_PLAYBACK &&
-        videoId && videoId.paused &&
-        currentSlide > 0 &&
-        !states.menu &&
-        (guidedPlaybackState === "playing_to_event" ||
+    if (CONTINUOUS_VIDEO_PLAYBACK && freezeMarkers.length > 0 && !states.menu && currentSlide > 0) {
+        if (guidedPlaybackState === "playing_to_next_freeze" ||
+            guidedPlaybackState === "playing_to_event" ||
             guidedPlaybackState === "playing_to_marker" ||
-            guidedPlaybackState === "idle" ||
-            guidedPlaybackState === "completed")) {
-        logPlayerMarkerDebug({
-            clickedElement: baseClickDebug.clickedElement,
-            currentSlide: baseClickDebug.currentSlide,
-            nearestMarkerEventIndex: baseClickDebug.nearestMarkerEventIndex,
-            nearestMarkerIndex: baseClickDebug.nearestMarkerIndex,
-            nearestMarkerType: baseClickDebug.nearestMarkerType,
-            nearestMarkerSemantics: baseClickDebug.nearestMarkerSemantics,
-            nearestMarkerDeltaSec: baseClickDebug.nearestMarkerDeltaSec,
-            clickAction: "resume_paused_playback",
-            resumeReason: "state_mismatch_or_manual_pause",
-        });
-        beginPlayToNextEvent("click_resume_paused_playback");
-        try { videoId.play(); } catch (errResume) { console.log(errResume); }
-        return;
+            guidedPlaybackState === "looping_at_red") {
+            logPlayerMarkerDebug({
+                clickedElement: baseClickDebug.clickedElement,
+                clickAction: "ignored_already_playing_segment",
+                currentFreezeFrameIndex: currentFreezeFrameIdx,
+                segmentTargetFreezeIndex: segmentTargetFreezeIdx,
+            });
+            return;
+        }
+        if (videoId && videoId.paused) {
+            logPlayerMarkerDebug({
+                event: "click_play_segment_to_next_freeze",
+                clickedElement: baseClickDebug.clickedElement,
+                clickAction: "play_current_freeze_to_next_freeze",
+                currentFreezeFrameIndex: currentFreezeFrameIdx,
+            });
+            beginPlayToNextFreezeFrame("click_play_segment_to_next_freeze");
+            try { videoId.play(); } catch (errResume) { console.log(errResume); }
+            return;
+        }
     }
-    if (CONTINUOUS_VIDEO_PLAYBACK && (guidedPlaybackState === "playing_to_event" || guidedPlaybackState === "playing_to_marker")) {
+    if (CONTINUOUS_VIDEO_PLAYBACK &&
+        (guidedPlaybackState === "playing_to_next_freeze" ||
+            guidedPlaybackState === "playing_to_event" ||
+            guidedPlaybackState === "playing_to_marker" ||
+            guidedPlaybackState === "looping_at_red")) {
         logPlayerMarkerDebug({
             clickedElement: baseClickDebug.clickedElement,
-            currentSlide: baseClickDebug.currentSlide,
-            nearestMarkerEventIndex: baseClickDebug.nearestMarkerEventIndex,
-            nearestMarkerIndex: baseClickDebug.nearestMarkerIndex,
-            nearestMarkerType: baseClickDebug.nearestMarkerType,
-            nearestMarkerSemantics: baseClickDebug.nearestMarkerSemantics,
-            nearestMarkerDeltaSec: baseClickDebug.nearestMarkerDeltaSec,
-            clickAction: "ignored_already_playing_to_event",
+            clickAction: "ignored_already_playing_segment",
         });
         return;
     }
