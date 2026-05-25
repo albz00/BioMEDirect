@@ -358,6 +358,28 @@ function getColorCardRangesFromWindow() {
  * Playback should never sit inside a persisted color-card interval. After computing a seek time,
  * advance to just past any overlapping yellow/green (and red) card spans (leapfrog safety net).
  */
+/**
+ * While guided playback is active, never render inside persisted color-card spans.
+ * Leapfrog runs on every timeupdate before marker-crossing logic.
+ */
+function applyInvisibleLeapfrogDuringGuidedPlay(videoEl, t) {
+    if (!videoEl || !isFinite(Number(t))) return t;
+    if (guidedPlaybackState !== "playing_to_event" && guidedPlaybackState !== "looping_at_red") return t;
+    var past = ensureSeekPastColorCardRanges(Number(t));
+    if (Math.abs(past - Number(t)) > 1e-5) {
+        videoEl.currentTime = past;
+        advanceMarkerCursorToTime(past);
+        logPlayerMarkerDebug({
+            event: "invisible_leapfrog_during_play",
+            leapfrogHelperUsed: true,
+            chosenResumePoint: Math.round(past * 1000) / 1000,
+            previousTime: Math.round(Number(t) * 1000) / 1000,
+        });
+        return past;
+    }
+    return t;
+}
+
 function ensureSeekPastColorCardRanges(t) {
     var eps = COLOR_CARD_RANGE_SKIP_EPS_SEC;
     var cur = Number(t);
@@ -526,6 +548,75 @@ function loadPlaybackMarkersFromWindow() {
     activeRedLoopReturnTime = null;
     activeRedLoopPreviousFreezeIdx = -1;
     syncLegacyYellowMarkerAliases();
+    logMarkerRuntimeInventory("load_playback_markers");
+}
+
+function logMarkerRuntimeInventory(reason) {
+    var w = typeof window !== "undefined" ? window : null;
+    var yellowSource = "none";
+    var greenSource = "none";
+    var redSource = "none";
+    var yellowRaw = 0;
+    var greenRaw = 0;
+    var redRaw = 0;
+    if (w) {
+        if (Array.isArray(w.yellowStopMarkers) && w.yellowStopMarkers.length > 0) {
+            yellowSource = "yellowStopMarkers";
+            yellowRaw = w.yellowStopMarkers.length;
+        } else if (Array.isArray(w.yellowScreenRanges) && w.yellowScreenRanges.length > 0) {
+            yellowSource = "yellowScreenRanges";
+            yellowRaw = w.yellowScreenRanges.length;
+        }
+        if (Array.isArray(w.greenStopMarkers) && w.greenStopMarkers.length > 0) {
+            greenSource = "greenStopMarkers";
+            greenRaw = w.greenStopMarkers.length;
+        } else if (Array.isArray(w.greenScreenRanges) && w.greenScreenRanges.length > 0) {
+            greenSource = "greenScreenRanges";
+            greenRaw = w.greenScreenRanges.length;
+        } else if (w.greenDetection && Array.isArray(w.greenDetection.events)) {
+            greenSource = "greenDetection.events";
+            greenRaw = w.greenDetection.events.length;
+        }
+        if (Array.isArray(w.redStopMarkers) && w.redStopMarkers.length > 0) {
+            redSource = "redStopMarkers";
+            redRaw = w.redStopMarkers.length;
+        } else if (w.redDetection && Array.isArray(w.redDetection.events) && w.redDetection.events.length > 0) {
+            redSource = "redDetection.events";
+            redRaw = w.redDetection.events.length;
+        }
+    }
+    var yellowFreeze = 0;
+    var greenFreeze = 0;
+    for (var fi = 0; fi < freezeMarkers.length; fi++) {
+        if (freezeMarkers[fi].markerType === "yellow") yellowFreeze++;
+        if (freezeMarkers[fi].markerType === "green") greenFreeze++;
+    }
+    var nextEv = guidedTargetEventIdx >= 0 && guidedTargetEventIdx < playbackEvents.length
+        ? playbackEvents[guidedTargetEventIdx] : (nextPlaybackEventIdx >= 0 && nextPlaybackEventIdx < playbackEvents.length
+            ? playbackEvents[nextPlaybackEventIdx] : null);
+    var snapshot = {
+        reason: reason || null,
+        chapterRowCount: Array.isArray(srcArray) ? srcArray.length : 0,
+        windowYellowSource: yellowSource,
+        windowYellowRawCount: yellowRaw,
+        windowGreenSource: greenSource,
+        windowGreenRawCount: greenRaw,
+        windowRedSource: redSource,
+        windowRedRawCount: redRaw,
+        runtimeFreezeMarkerCount: freezeMarkers.length,
+        runtimeYellowFreezeCount: yellowFreeze,
+        runtimeGreenFreezeCount: greenFreeze,
+        runtimeLoopMarkerCount: loopMarkers.length,
+        runtimePlaybackEventCount: playbackEvents.length,
+        nextTargetEventIndex: guidedTargetEventIdx >= 0 ? guidedTargetEventIdx : nextPlaybackEventIdx,
+        nextTargetKind: nextEv ? nextEv.kind : null,
+        nextTargetMarkerType: nextEv && nextEv.marker ? nextEv.marker.markerType : null,
+        nextTargetCrossAt: nextEv && isFinite(Number(nextEv.crossAt))
+            ? Math.round(Number(nextEv.crossAt) * 1000) / 1000 : null,
+        guidedPlaybackState: guidedPlaybackState,
+    };
+    if (typeof window !== "undefined") window.__playerMarkerRuntimeSnapshot = snapshot;
+    logPlayerMarkerDebug({ event: "marker_runtime_inventory", inventory: snapshot });
 }
 
 /** @deprecated — use loadPlaybackMarkersFromWindow */
@@ -670,9 +761,9 @@ function getLoopReturnTimeForRedMarker(loopMarker) {
 
 function handleFreezeMarkerCrossing(videoEl, mk, freezeIdx, prev, t) {
     var resolvedStop = resolvePostFreezeStopTime(mk, freezeIdx, "marker_crossing_pause");
-    videoEl.pause();
     var stopTarget = isFinite(Number(resolvedStop)) ? Number(resolvedStop) : (mk.end + COLOR_CARD_RANGE_SKIP_EPS_SEC);
     videoEl.currentTime = stopTarget;
+    videoEl.pause();
     pausedAtFreezeMarkerIdx = freezeIdx;
     nextFreezeMarkerIdx = freezeIdx + 1;
     nextPlaybackEventIdx = (guidedTargetEventIdx >= 0) ? guidedTargetEventIdx + 1 : nextPlaybackEventIdx;
@@ -740,6 +831,30 @@ function handleRedLoopMarkerCrossing(videoEl, loopMk, loopIdx, prev, t) {
     nextPlaybackEventIdx = guidedTargetEventIdx;
     lastPlaybackTimeForMarkerCheck = Number(returnTime);
     syncLegacyYellowMarkerAliases();
+}
+
+function classifyGuidedEventTrigger(ev, prev, t) {
+    if (!ev || !isFinite(Number(t))) return { shouldFire: false, reason: "invalid_event_or_time" };
+    var crossAt = Number(ev.crossAt);
+    if (!isFinite(crossAt)) return { shouldFire: false, reason: "invalid_cross_at" };
+    if (Number(t) < crossAt) return { shouldFire: false, reason: "before_cross_at" };
+
+    var eps = COLOR_CARD_RANGE_SKIP_EPS_SEC;
+    var mk = ev.marker || null;
+    var mkEnd = mk && isFinite(Number(mk.end)) ? Number(mk.end) : crossAt;
+    var prevNum = Number(prev);
+    var hasPrev = isFinite(prevNum);
+    var crossedByPrev = hasPrev && prevNum < crossAt && Number(t) >= crossAt;
+    if (crossedByPrev) return { shouldFire: true, reason: "crossed_by_prev_sample" };
+
+    // If no prior sample or coarse sampling landed us on/near marker zone, still fire.
+    if (!hasPrev) return { shouldFire: true, reason: "no_prev_sample_at_or_past_cross_at" };
+    if (prevNum <= mkEnd + eps && Number(t) >= crossAt) {
+        return { shouldFire: true, reason: "reached_marker_without_clean_prev_cross_sample" };
+    }
+
+    // Target is stale (we are already clearly past this marker from prior ticks).
+    return { shouldFire: false, reason: "stale_target_already_past_marker" };
 }
 
 function breakRedLoopAndResumePastRed(reason) {
@@ -850,6 +965,11 @@ function initializePlayer(videoUrl, timelineArray) {
                 var prev = Number(lastPlaybackTimeForMarkerCheck);
                 if (!isFinite(prev)) prev = Number(t);
                 advanceMarkerCursorToTime(t);
+                t = applyInvisibleLeapfrogDuringGuidedPlay(this, t);
+                if (Math.abs(Number(this.currentTime) - Number(t)) > 1e-5) {
+                    lastPlaybackTimeForMarkerCheck = Number(this.currentTime);
+                    return;
+                }
                 var mkGuide = null;
                 var crossedStart = false;
                 var pauseFired = false;
@@ -877,8 +997,40 @@ function initializePlayer(videoUrl, timelineArray) {
                     guidedTargetEventIdx < playbackEvents.length) {
                     var ev = playbackEvents[guidedTargetEventIdx];
                     mkGuide = ev.marker;
-                    crossedStart = prev < ev.crossAt && t >= ev.crossAt;
-                    if (crossedStart) {
+                    var trigger = classifyGuidedEventTrigger(ev, prev, t);
+                    crossedStart = trigger.shouldFire;
+                    if (trigger.shouldFire) {
+                        logPlayerMarkerDebug({
+                            event: "guided_event_trigger",
+                            markerType: ev.marker && ev.marker.markerType ? ev.marker.markerType : null,
+                            markerSemantics: ev.kind,
+                            markerIndex: ev.kind === "freeze" ? ev.freezeMarkerIndex
+                                : (ev.kind === "loop" ? ev.loopMarkerIndex : null),
+                            triggerReason: trigger.reason,
+                            previousTime: isFinite(prev) ? Math.round(prev * 1000) / 1000 : null,
+                            currentTime: isFinite(Number(t)) ? Math.round(Number(t) * 1000) / 1000 : null,
+                            chosenStopPoint: isFinite(Number(ev.crossAt)) ? Math.round(Number(ev.crossAt) * 1000) / 1000 : null,
+                        });
+                        if (ev.kind === "freeze") {
+                            pauseFired = true;
+                            handleFreezeMarkerCrossing(this, ev.marker, ev.freezeMarkerIndex, prev, t);
+                            return;
+                        }
+                        if (ev.kind === "loop") {
+                            handleRedLoopMarkerCrossing(this, ev.marker, ev.loopMarkerIndex, prev, t);
+                            return;
+                        }
+                    } else if (trigger.reason === "stale_target_already_past_marker") {
+                        logPlayerMarkerDebug({
+                            event: "guided_event_stale_target_recover",
+                            markerType: ev.marker && ev.marker.markerType ? ev.marker.markerType : null,
+                            markerSemantics: ev.kind,
+                            markerIndex: ev.kind === "freeze" ? ev.freezeMarkerIndex
+                                : (ev.kind === "loop" ? ev.loopMarkerIndex : null),
+                            triggerReason: trigger.reason,
+                            previousTime: isFinite(prev) ? Math.round(prev * 1000) / 1000 : null,
+                            currentTime: isFinite(Number(t)) ? Math.round(Number(t) * 1000) / 1000 : null,
+                        });
                         if (ev.kind === "freeze") {
                             pauseFired = true;
                             handleFreezeMarkerCrossing(this, ev.marker, ev.freezeMarkerIndex, prev, t);
@@ -1136,14 +1288,19 @@ function nextSlide(){ // FindMe1
 
     if (CONTINUOUS_VIDEO_PLAYBACK && guidedPlaybackState === "paused_at_freeze") {
         var pausedMk = pausedAtFreezeMarkerIdx >= 0 ? freezeMarkers[pausedAtFreezeMarkerIdx] : null;
+        var resumeFromFreeze = pausedMk
+            ? resolvePostFreezeStopTime(pausedMk, pausedAtFreezeMarkerIdx, "click_resume_from_freeze")
+            : null;
+        if (isFinite(Number(resumeFromFreeze))) {
+            videoId.currentTime = Number(resumeFromFreeze);
+        }
+        pausedAtFreezeMarkerIdx = -1;
+        syncLegacyYellowMarkerAliases();
+        advanceMarkerCursorToTime(Number(videoId.currentTime));
+        lastPlaybackTimeForMarkerCheck = Number(videoId.currentTime);
+        beginPlayToNextEvent("click_resume_from_freeze");
         logPlayerMarkerDebug({
             event: "click_resume_from_freeze",
-            markerType: pausedMk ? pausedMk.markerType : null,
-            markerSemantics: "freeze",
-            markerIndex: pausedAtFreezeMarkerIdx,
-            clickAction: "resume_past_freeze_card",
-        });
-        logPlayerMarkerDebug({
             clickedElement: baseClickDebug.clickedElement,
             currentSlide: baseClickDebug.currentSlide,
             nearestMarkerEventIndex: baseClickDebug.nearestMarkerEventIndex,
@@ -1151,7 +1308,11 @@ function nextSlide(){ // FindMe1
             nearestMarkerType: baseClickDebug.nearestMarkerType,
             nearestMarkerSemantics: baseClickDebug.nearestMarkerSemantics,
             nearestMarkerDeltaSec: baseClickDebug.nearestMarkerDeltaSec,
-            clickAction: "resume_from_paused_at_freeze",
+            markerType: pausedMk ? pausedMk.markerType : null,
+            markerSemantics: "freeze",
+            clickAction: "resume_past_freeze_card",
+            chosenResumePoint: isFinite(Number(resumeFromFreeze))
+                ? Math.round(Number(resumeFromFreeze) * 1000) / 1000 : null,
         });
         try { videoId.play(); } catch (err) { console.log(err); }
         return;

@@ -240,6 +240,7 @@ exports.generateSrcArray = onObjectFinalized(
             yellowScreenEvents: pipeline.yellowEvents,
             yellowDetection: pipeline.yellowDetection,
             greenDetection: pipeline.greenDetection || null,
+            greenStopMarkers: pipeline.greenStopMarkers || null,
             redDetection: pipeline.redDetection || null,
             markerModelContext: pipeline.markerModelContext || buildMarkerModelContext("upload-trigger"),
             chapterTimeline: pipeline.chapterTimeline,
@@ -263,6 +264,7 @@ exports.generateSrcArray = onObjectFinalized(
             yellowScreenEvents: pipeline.yellowEvents,
             yellowDetection: pipeline.yellowDetection,
             greenDetection: pipeline.greenDetection || null,
+            greenStopMarkers: pipeline.greenStopMarkers || null,
             redDetection: pipeline.redDetection || null,
             markerModelContext: pipeline.markerModelContext || buildMarkerModelContext("upload-trigger"),
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -2658,6 +2660,21 @@ function buildYellowStopMarkers(events) {
     markerIndex: idx + 1,
     start: Math.round((e.yellowStart != null ? e.yellowStart : e.startTime) * 1000) / 1000,
     end: Math.round((e.yellowEnd != null ? e.yellowEnd : e.endTime) * 1000) / 1000,
+    freezeTime: Math.round((e.yellowStart != null ? e.yellowStart : e.startTime) * 1000) / 1000,
+    contentStart: e.contentStart != null ? Math.round(Number(e.contentStart) * 1000) / 1000 : null,
+    detectionConfidence: e.detectionConfidence != null ? Math.round(Number(e.detectionConfidence) * 1000) / 1000 : null,
+  }));
+}
+
+/** Green freeze markers for player runtime (independent of chapter row count). */
+function buildGreenStopMarkers(events) {
+  return (events || []).map((e, idx) => ({
+    markerIndex: idx + 1,
+    start: Math.round((e.greenStart != null ? e.greenStart : e.startTime) * 1000) / 1000,
+    end: Math.round((e.greenEnd != null ? e.greenEnd : e.endTime) * 1000) / 1000,
+    freezeTime: e.freezeTime != null
+      ? Math.round(Number(e.freezeTime) * 1000) / 1000
+      : Math.round((e.greenStart != null ? e.greenStart : e.startTime) * 1000) / 1000,
     contentStart: e.contentStart != null ? Math.round(Number(e.contentStart) * 1000) / 1000 : null,
     detectionConfidence: e.detectionConfidence != null ? Math.round(Number(e.detectionConfidence) * 1000) / 1000 : null,
   }));
@@ -3081,6 +3098,7 @@ async function runDeterministicYellowPipeline({
     const yellowEvents = detection.yellowEvents;
     const yellowRanges = deriveYellowRangesFromEvents(yellowEvents);
     const yellowStopMarkers = buildYellowStopMarkers(yellowEvents);
+    const greenStopMarkers = buildGreenStopMarkers(greenEvents);
 
     const yellowDetection = {
       version: 2,
@@ -3264,6 +3282,7 @@ async function runDeterministicYellowPipeline({
       yellowEvents,
       yellowDetection,
       greenDetection,
+      greenStopMarkers,
       redDetection,
       markerModelContext,
       hasYellowEvents: yellowEvents.length > 0,
@@ -3535,6 +3554,7 @@ exports.detectYellowScreen = onCall(
         yellowScreenEvents: pipeline.yellowEvents,
         yellowDetection: pipeline.yellowDetection,
         greenDetection: pipeline.greenDetection || null,
+        greenStopMarkers: pipeline.greenStopMarkers || null,
         redDetection: pipeline.redDetection || buildRedDetectionScaffold({ lessonId, sourceLabel: "manual-yellow-regenerate" }),
         markerModelContext: pipeline.markerModelContext || buildMarkerModelContext("manual-yellow-regenerate"),
         chapterTimeline: pipeline.chapterTimeline,
@@ -3661,6 +3681,7 @@ exports.generateSrcArrayWithYellowOptions = onCall(
           yellowScreenEvents: pipeline.yellowEvents,
           yellowDetection: pipeline.yellowDetection,
           greenDetection: pipeline.greenDetection || null,
+          greenStopMarkers: pipeline.greenStopMarkers || null,
           redDetection: pipeline.redDetection || buildRedDetectionScaffold({ lessonId, sourceLabel: "manual-editor" }),
           markerModelContext: pipeline.markerModelContext || buildMarkerModelContext("manual-editor"),
           chapterTimeline: pipeline.chapterTimeline,
@@ -4495,6 +4516,7 @@ exports.generateSrcArrayFromYellowScreens = onCall(
           yellowScreenEvents: pipeline.yellowEvents,
           yellowDetection: pipeline.yellowDetection,
           greenDetection: pipeline.greenDetection || null,
+          greenStopMarkers: pipeline.greenStopMarkers || null,
           redDetection: pipeline.redDetection || buildRedDetectionScaffold({ lessonId, sourceLabel: "manual-generate-from-yellow" }),
           markerModelContext: pipeline.markerModelContext || buildMarkerModelContext("manual-generate-from-yellow"),
           chapterTimeline: pipeline.chapterTimeline,
