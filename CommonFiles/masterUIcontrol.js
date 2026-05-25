@@ -46,6 +46,8 @@ var segmentTargetFreezeIdx = -1;
 var activeRedLoopEventIdx = -1;
 var activeRedLoopReturnTime = null;
 var activeRedLoopPreviousFreezeIdx = -1;
+/** Set when first-chapter entry must re-assert 0.00 on the next play() (guards against overrides). */
+var pendingForcedLessonStartAtZero = false;
 
 /** Tensegrity-only: diagnostics for short yellow flashes vs coarse timeupdate (temporary). */
 var tensegrityDebugLastTimeupdateMs = 0;
@@ -112,15 +114,51 @@ function isFirstPlayableChapterSlide(slideIdx) {
     return slideIdx === getFirstPlayableChapterSlideIndex();
 }
 
+function isFirstChapterSegment(seg) {
+    if (!seg) return false;
+    var ci = seg.chapterIndex;
+    return ci === 1 || ci === "1";
+}
+
+function shouldApplyForceZeroForSlide(seg, slideIdx) {
+    if (!shouldForceFirstChapterStartAtZero()) return false;
+    if (isFirstPlayableChapterSlide(slideIdx)) return true;
+    if (isFirstChapterSegment(seg)) return true;
+    return false;
+}
+
 /**
  * Chapter rows are navigation anchors only. When forceFirstChapterStartAtZero is set,
  * chapter 1 play/seek uses 0.00 — not the first mapped yellow contentStart.
  */
 function resolveChapterPlaybackSeekTime(seg, slideIdx) {
-    if (shouldForceFirstChapterStartAtZero() && isFirstPlayableChapterSlide(slideIdx)) {
-        return 0;
-    }
+    if (shouldApplyForceZeroForSlide(seg, slideIdx)) return 0;
     return segmentContentSeekTime(seg);
+}
+
+/**
+ * Hard anchor for lesson entry: true video start at 0.00 (not mapped src_start).
+ */
+function enforceLessonStartAtZero(videoEl, slideIdx, reason) {
+    var seg = safeSrcSegmentAt(slideIdx);
+    if (!videoEl || !shouldApplyForceZeroForSlide(seg, slideIdx)) return false;
+    videoEl.currentTime = 0;
+    lastPlaybackTimeForMarkerCheck = 0;
+    advanceMarkerCursorToTime(0);
+    currentFreezeFrameIdx = -1;
+    pausedAtFreezeMarkerIdx = -1;
+    segmentTargetFreezeIdx = -1;
+    nextFreezeFrameIdx = -1;
+    guidedTargetEventIdx = -1;
+    syncLegacyYellowMarkerAliases();
+    logPlayerMarkerDebug({
+        event: "forced_lesson_start_at_zero",
+        reason: reason || null,
+        currentSlide: slideIdx,
+        chosenResumePoint: 0,
+        forceFirstChapterStartAtZero: true,
+    });
+    return true;
 }
 
 function logPlayerMarkerDebug(payload) {
@@ -393,16 +431,52 @@ function getColorCardRangesFromWindow() {
  * Playback should never sit inside a persisted color-card interval. After computing a seek time,
  * advance to just past any overlapping yellow/green (and red) card spans (leapfrog safety net).
  */
+function isTimeInsideFreezeMarkerCardSpan(t) {
+    if (!isFinite(Number(t))) return false;
+    for (var i = 0; i < freezeMarkers.length; i++) {
+        var m = freezeMarkers[i];
+        if (Number(t) >= m.start - 1e-4 && Number(t) < m.end + COLOR_CARD_RANGE_SKIP_EPS_SEC) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/** Leapfrog red control cards only — yellow/green freeze spans use freeze-crossing + resolvePostFreezeStopTime. */
+function ensureSeekPastRedCardRangesOnly(t) {
+    var eps = COLOR_CARD_RANGE_SKIP_EPS_SEC;
+    var cur = Number(t);
+    if (!isFinite(cur)) return t;
+    var ranges = getColorCardRangesFromWindow();
+    var guard = 0;
+    while (guard < 48) {
+        guard++;
+        var moved = false;
+        for (var i = 0; i < ranges.length; i++) {
+            var r = ranges[i];
+            if (r.markerType !== "red") continue;
+            if (cur >= r.start - 1e-4 && cur < r.end + eps) {
+                cur = r.end + eps;
+                moved = true;
+                break;
+            }
+        }
+        if (!moved) break;
+    }
+    return cur;
+}
+
 /**
- * While guided playback is active, never render inside persisted color-card spans.
- * Leapfrog runs on every timeupdate before marker-crossing logic.
+ * During guided play, do not leapfrog yellow/green freeze spans (autoplay must hit the same
+ * resolve+pause path as click/resume). Red cards may still be skipped invisibly.
  */
 function applyInvisibleLeapfrogDuringGuidedPlay(videoEl, t) {
     if (!videoEl || !isFinite(Number(t))) return t;
     if (guidedPlaybackState !== "playing_to_next_freeze" &&
         guidedPlaybackState !== "playing_to_event" &&
         guidedPlaybackState !== "looping_at_red") return t;
-    var past = ensureSeekPastColorCardRanges(Number(t));
+    if (isTimeInsideFreezeMarkerCardSpan(t)) return t;
+    var past = ensureSeekPastRedCardRangesOnly(Number(t));
     if (Math.abs(past - Number(t)) > 1e-5) {
         videoEl.currentTime = past;
         advanceMarkerCursorToTime(past);
@@ -411,6 +485,7 @@ function applyInvisibleLeapfrogDuringGuidedPlay(videoEl, t) {
             leapfrogHelperUsed: true,
             chosenResumePoint: Math.round(past * 1000) / 1000,
             previousTime: Math.round(Number(t) * 1000) / 1000,
+            markerType: "red",
         });
         return past;
     }
@@ -728,16 +803,17 @@ function findNextSegmentPlaybackEventIdx(t, targetFreezeIdx) {
         if (!isFinite(cross) || cross < Number(t) - 1e-4) continue;
         if (cross > targetCross + 1e-4) break;
         if (ev.kind === "loop") return i;
-        if (ev.kind === "freeze" && ev.freezeMarkerIndex === targetFreezeIdx) return i;
+        if (ev.kind === "freeze") return i;
     }
     return -1;
 }
 
+/** Advance only past freeze boundaries already completed (never skip the next freeze stop). */
 function advancePastSkippedFreezeEventsInSegment(t) {
     if (segmentTargetFreezeIdx < 0) return;
     while (guidedTargetEventIdx >= 0 && guidedTargetEventIdx < playbackEvents.length) {
         var ev = playbackEvents[guidedTargetEventIdx];
-        if (ev.kind === "freeze" && ev.freezeMarkerIndex !== segmentTargetFreezeIdx) {
+        if (ev.kind === "freeze" && ev.freezeMarkerIndex <= currentFreezeFrameIdx) {
             if (Number(t) >= Number(ev.crossAt) - 1e-4) {
                 guidedTargetEventIdx++;
                 nextPlaybackEventIdx = guidedTargetEventIdx;
@@ -920,8 +996,11 @@ function getLoopReturnTimeForRedMarker(loopMarker) {
     return resolvePostFreezeStopTime(freezeMarkers[prevIdx], prevIdx, "red_loop_return");
 }
 
-function handleFreezeMarkerCrossing(videoEl, mk, freezeIdx, prev, t) {
-    var resolvedStop = resolvePostFreezeStopTime(mk, freezeIdx, "marker_crossing_pause");
+/**
+ * Single freeze stop path for autoplay and click/resume (resolve post-marker, seek, pause).
+ */
+function applyFreezeMarkerStopAtCrossing(videoEl, mk, freezeIdx, prev, t, reason) {
+    var resolvedStop = resolvePostFreezeStopTime(mk, freezeIdx, reason || "marker_crossing_pause");
     var stopTarget = isFinite(Number(resolvedStop)) ? Number(resolvedStop) : (mk.end + COLOR_CARD_RANGE_SKIP_EPS_SEC);
     videoEl.currentTime = stopTarget;
     videoEl.pause();
@@ -935,6 +1014,7 @@ function handleFreezeMarkerCrossing(videoEl, mk, freezeIdx, prev, t) {
     setGuidedPlaybackState("paused_at_freeze", "freeze_marker_reached");
     logPlayerMarkerDebug({
         event: "marker_pause_fired",
+        reason: reason || null,
         markerType: mk.markerType,
         markerSemantics: "freeze",
         markerIndex: freezeIdx,
@@ -966,6 +1046,10 @@ function handleFreezeMarkerCrossing(videoEl, mk, freezeIdx, prev, t) {
     runTensegrityTimeupdateDiagnostics(videoEl, prev, t, mk, true, true);
     lastPlaybackTimeForMarkerCheck = Number(stopTarget);
     syncLegacyYellowMarkerAliases();
+}
+
+function handleFreezeMarkerCrossing(videoEl, mk, freezeIdx, prev, t) {
+    applyFreezeMarkerStopAtCrossing(videoEl, mk, freezeIdx, prev, t, "marker_crossing_pause");
 }
 
 function handleRedLoopMarkerCrossing(videoEl, loopMk, loopIdx, prev, t) {
@@ -1087,11 +1171,16 @@ function initializePlayer(videoUrl, timelineArray) {
         freezeMarkerCount: freezeMarkers.length,
         loopMarkerCount: loopMarkers.length,
         playbackEventCount: playbackEvents.length,
+        forceFirstChapterStartAtZero: shouldForceFirstChapterStartAtZero(),
     });
     setGuidedPlaybackState("idle", "initialize");
 
     videoId.addEventListener("play", function() {
         if (!CONTINUOUS_VIDEO_PLAYBACK) return;
+        if (pendingForcedLessonStartAtZero) {
+            pendingForcedLessonStartAtZero = false;
+            enforceLessonStartAtZero(this, currentSlide, "play_listener_force_zero_guard");
+        }
         if (pausedAtFreezeMarkerIdx >= 0 && pausedAtFreezeMarkerIdx < freezeMarkers.length) {
             var resumedMarkerIdx = pausedAtFreezeMarkerIdx;
             var mk = freezeMarkers[resumedMarkerIdx];
@@ -1100,6 +1189,7 @@ function initializePlayer(videoUrl, timelineArray) {
                 this.currentTime = Number(resumeTarget);
             }
             pausedAtFreezeMarkerIdx = -1;
+            currentFreezeFrameIdx = resumedMarkerIdx;
             syncLegacyYellowMarkerAliases();
             advanceMarkerCursorToTime(this.currentTime);
             lastPlaybackTimeForMarkerCheck = Number(this.currentTime);
@@ -1179,12 +1269,6 @@ function initializePlayer(videoUrl, timelineArray) {
                     guidedTargetEventIdx < playbackEvents.length) {
                     var ev = playbackEvents[guidedTargetEventIdx];
                     mkGuide = ev.marker;
-                    if (ev.kind === "freeze" && segmentTargetFreezeIdx >= 0 &&
-                        ev.freezeMarkerIndex !== segmentTargetFreezeIdx) {
-                        advancePastSkippedFreezeEventsInSegment(t);
-                        ev = guidedTargetEventIdx >= 0 && guidedTargetEventIdx < playbackEvents.length
-                            ? playbackEvents[guidedTargetEventIdx] : ev;
-                    }
                     var trigger = classifyGuidedEventTrigger(ev, prev, t);
                     crossedStart = trigger.shouldFire;
                     if (trigger.shouldFire) {
@@ -1201,12 +1285,9 @@ function initializePlayer(videoUrl, timelineArray) {
                             segmentTargetFreezeIndex: segmentTargetFreezeIdx,
                         });
                         if (ev.kind === "freeze") {
-                            if (segmentTargetFreezeIdx < 0 ||
-                                ev.freezeMarkerIndex === segmentTargetFreezeIdx) {
-                                pauseFired = true;
-                                handleFreezeMarkerCrossing(this, ev.marker, ev.freezeMarkerIndex, prev, t);
-                                return;
-                            }
+                            pauseFired = true;
+                            applyFreezeMarkerStopAtCrossing(this, ev.marker, ev.freezeMarkerIndex, prev, t, "autoplay_freeze_crossing");
+                            return;
                         }
                         if (ev.kind === "loop") {
                             handleRedLoopMarkerCrossing(this, ev.marker, ev.loopMarkerIndex, prev, t);
@@ -1224,10 +1305,9 @@ function initializePlayer(videoUrl, timelineArray) {
                             currentTime: isFinite(Number(t)) ? Math.round(Number(t) * 1000) / 1000 : null,
                             segmentTargetFreezeIndex: segmentTargetFreezeIdx,
                         });
-                        if (ev.kind === "freeze" &&
-                            (segmentTargetFreezeIdx < 0 || ev.freezeMarkerIndex === segmentTargetFreezeIdx)) {
+                        if (ev.kind === "freeze") {
                             pauseFired = true;
-                            handleFreezeMarkerCrossing(this, ev.marker, ev.freezeMarkerIndex, prev, t);
+                            applyFreezeMarkerStopAtCrossing(this, ev.marker, ev.freezeMarkerIndex, prev, t, "autoplay_freeze_stale_recover");
                             return;
                         }
                         if (ev.kind === "loop") {
@@ -1339,8 +1419,8 @@ function updateVideoId(play=true){ // FindMe3
             }
             return;
         }
-        var forcedZeroStart = shouldForceFirstChapterStartAtZero() && isFirstPlayableChapterSlide(currentSlide);
-        var startTime = resolveChapterPlaybackSeekTime(seg, currentSlide);
+        var forcedZeroStart = shouldApplyForceZeroForSlide(seg, currentSlide);
+        var startTime = forcedZeroStart ? 0 : resolveChapterPlaybackSeekTime(seg, currentSlide);
         if (startTime == null || !isFinite(startTime)) startTime = Number(seg.src_start);
             if (!forcedZeroStart &&
                 ((typeof window.shouldSkipColorCards !== "undefined" && window.shouldSkipColorCards) ||
@@ -1356,30 +1436,28 @@ function updateVideoId(play=true){ // FindMe3
             }
             if (!forcedZeroStart) {
                 startTime = ensureSeekPastColorCardRanges(startTime);
+                startTime += CONTENT_SEEK_LEAD_IN_SEC;
+            } else {
+                startTime = 0;
             }
-            startTime += CONTENT_SEEK_LEAD_IN_SEC;
-            if (forcedZeroStart) startTime = 0;
             var segEnd = Number(seg.src_end);
-            if (isFinite(segEnd) && startTime > segEnd - 0.02) {
+            if (!forcedZeroStart && isFinite(segEnd) && startTime > segEnd - 0.02) {
                 startTime = segEnd - 0.035;
             }
-            videoId.currentTime = startTime;
+            if (forcedZeroStart) {
+                pendingForcedLessonStartAtZero = true;
+                enforceLessonStartAtZero(videoId, currentSlide, "chapter_entry_seek");
+            } else {
+                videoId.currentTime = startTime;
+            }
             if (CONTINUOUS_VIDEO_PLAYBACK) {
-                if (forcedZeroStart) {
-                    currentFreezeFrameIdx = -1;
-                    pausedAtFreezeMarkerIdx = -1;
-                    segmentTargetFreezeIdx = -1;
-                    nextFreezeFrameIdx = -1;
-                    advanceMarkerCursorToTime(0);
-                    lastPlaybackTimeForMarkerCheck = 0;
-                }
                 beginPlayToNextFreezeFrame("chapter_jump_play");
                 logPlayerMarkerDebug({
                     event: "chapter_seek_target",
                     reason: "chapter_jump_play",
                     forcedFirstChapterAtZero: forcedZeroStart,
-                    chosenResumePoint: Math.round(Number(startTime) * 1000) / 1000,
-                    resolvedPostMarkerContentPoint: Math.round(Number(startTime) * 1000) / 1000,
+                    chosenResumePoint: Math.round(Number(videoId.currentTime) * 1000) / 1000,
+                    resolvedPostMarkerContentPoint: Math.round(Number(videoId.currentTime) * 1000) / 1000,
                     leapfrogHelperUsed: !forcedZeroStart,
                 });
                 try { videoId.play(); } catch (err) { console.log(err); }
