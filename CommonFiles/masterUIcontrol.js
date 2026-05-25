@@ -227,6 +227,7 @@ function isPlayingSegmentForward() {
 function getInteractiveControlSnapshot() {
     var inLesson = isInLessonVideoClickContext();
     var videoPaused = (typeof videoId !== "undefined" && videoId) ? !!videoId.paused : true;
+    var hasActiveSegmentTarget = segmentTargetFreezeIdx >= 0 && segmentTargetFreezeIdx < freezeMarkers.length;
     var inVideoClickAllowed = false;
     var clickIgnoreReason = null;
     if (inLesson) {
@@ -234,7 +235,7 @@ function getInteractiveControlSnapshot() {
             inVideoClickAllowed = true;
         } else if (videoPaused) {
             inVideoClickAllowed = true;
-        } else if (isPlayingSegmentForward()) {
+        } else if (isPlayingSegmentForward() && hasActiveSegmentTarget) {
             inVideoClickAllowed = false;
             clickIgnoreReason = "segment_already_playing";
         } else {
@@ -245,7 +246,7 @@ function getInteractiveControlSnapshot() {
         inVideoClickAllowed: inVideoClickAllowed,
         menuNavigationAllowed: true,
         controlsEnabled: { inVideoClick: inVideoClickAllowed, menuNavigation: true },
-        controlsDisabled: (!inVideoClickAllowed && inLesson && isPlayingSegmentForward())
+        controlsDisabled: (!inVideoClickAllowed && inLesson && isPlayingSegmentForward() && hasActiveSegmentTarget)
             ? ["in_video_click_while_playing"] : [],
         clickIgnoreReason: clickIgnoreReason,
     };
@@ -1352,6 +1353,14 @@ function initializePlayer(videoUrl, timelineArray) {
     } else {
         PAUSE_AT_FREEZE_MARKERS = true;
     }
+    // Interactive marker runtime always requires freeze stops when marker data is present.
+    if (CONTINUOUS_VIDEO_PLAYBACK && playbackEvents.length > 0 && !PAUSE_AT_FREEZE_MARKERS) {
+        PAUSE_AT_FREEZE_MARKERS = true;
+        logPlayerMarkerDebug({
+            event: "freeze_pause_forced_on",
+            reason: "interactive_marker_runtime",
+        });
+    }
     PAUSE_AT_YELLOW_MARKERS = PAUSE_AT_FREEZE_MARKERS;
     logPlayerMarkerDebug({
         event: "markers_loaded",
@@ -1413,6 +1422,11 @@ function initializePlayer(videoUrl, timelineArray) {
         var t = this.currentTime;
 
         if (CONTINUOUS_VIDEO_PLAYBACK) {
+            if (guidedPlaybackState === "playing_to_next_freeze" &&
+                (segmentTargetFreezeIdx < 0 || segmentTargetFreezeIdx >= freezeMarkers.length) &&
+                freezeMarkers.length > 0) {
+                beginPlayToNextFreezeFrame("missing_segment_target_rearm");
+            }
             if (PAUSE_AT_FREEZE_MARKERS && playbackEvents.length > 0) {
                 var prev = Number(lastPlaybackTimeForMarkerCheck);
                 if (!isFinite(prev)) prev = Number(t);
@@ -1874,7 +1888,8 @@ function nextSlide(){ // FindMe1
             try { videoId.play(); } catch (errResume2) { console.log(errResume2); }
             return;
         }
-        if (videoId && !videoId.paused && isPlayingSegmentForward()) {
+        if (videoId && !videoId.paused && isPlayingSegmentForward() &&
+            segmentTargetFreezeIdx >= 0 && segmentTargetFreezeIdx < freezeMarkers.length) {
             var ctrlSnap = getInteractiveControlSnapshot();
             logPlayerMarkerDebug({
                 clickedElement: baseClickDebug.clickedElement,
@@ -1886,11 +1901,22 @@ function nextSlide(){ // FindMe1
             return;
         }
     }
-    if (CONTINUOUS_VIDEO_PLAYBACK && videoId && !videoId.paused && isPlayingSegmentForward()) {
+    if (CONTINUOUS_VIDEO_PLAYBACK && videoId && !videoId.paused && isPlayingSegmentForward() &&
+        segmentTargetFreezeIdx >= 0 && segmentTargetFreezeIdx < freezeMarkers.length) {
         logPlayerMarkerDebug({
             clickedElement: baseClickDebug.clickedElement,
             clickAction: "ignored_already_playing_segment",
             clickIgnoredReason: "segment_already_playing",
+        });
+        return;
+    }
+    if (CONTINUOUS_VIDEO_PLAYBACK && videoId && !videoId.paused && isPlayingSegmentForward() &&
+        (segmentTargetFreezeIdx < 0 || segmentTargetFreezeIdx >= freezeMarkers.length)) {
+        beginPlayToNextFreezeFrame("click_rearm_missing_segment_target");
+        logPlayerMarkerDebug({
+            clickedElement: baseClickDebug.clickedElement,
+            clickAction: "rearm_missing_segment_target",
+            clickIgnoredReason: "missing_segment_target",
         });
         return;
     }
