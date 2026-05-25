@@ -581,6 +581,30 @@ function beginPlayToNextMarker(reason) {
     beginPlayToNextEvent(reason);
 }
 
+function nearestPlaybackEventInfoAtTime(t) {
+    if (!Array.isArray(playbackEvents) || playbackEvents.length === 0 || !isFinite(Number(t))) return null;
+    var bestIdx = -1;
+    var bestDist = Infinity;
+    for (var i = 0; i < playbackEvents.length; i++) {
+        var ev = playbackEvents[i];
+        var d = Math.abs(Number(ev.crossAt) - Number(t));
+        if (d < bestDist) {
+            bestDist = d;
+            bestIdx = i;
+        }
+    }
+    if (bestIdx < 0) return null;
+    var best = playbackEvents[bestIdx];
+    return {
+        eventIndex: best.eventIndex,
+        semantics: best.kind,
+        markerType: best.marker && best.marker.markerType ? best.marker.markerType : null,
+        markerIndex: best.kind === "freeze" ? best.freezeMarkerIndex : (best.kind === "loop" ? best.loopMarkerIndex : null),
+        crossAt: isFinite(Number(best.crossAt)) ? Math.round(Number(best.crossAt) * 1000) / 1000 : null,
+        deltaSec: isFinite(Number(bestDist)) ? Math.round(Number(bestDist) * 1000) / 1000 : null,
+    };
+}
+
 function resolvePostFreezeStopTime(marker, markerIndex, logReason) {
     if (!marker) return null;
     var base = Number(marker.end) + COLOR_CARD_RANGE_SKIP_EPS_SEC;
@@ -1089,6 +1113,27 @@ function update(playVid){ // FindMe2
 
 //Adds one to currentSlide, i.e. defines currentSlide as the next stop point
 function nextSlide(){ // FindMe1
+    var clickEvent = (typeof window !== "undefined" && window.event) ? window.event : null;
+    var clickTarget = clickEvent && clickEvent.target
+        ? (clickEvent.target.id || clickEvent.target.className || clickEvent.target.tagName || "unknown")
+        : "unknown";
+    var nowTime = (typeof videoId !== "undefined" && videoId && isFinite(Number(videoId.currentTime)))
+        ? Number(videoId.currentTime) : null;
+    var nearest = nearestPlaybackEventInfoAtTime(nowTime);
+    var baseClickDebug = {
+        event: "click_intent",
+        clickedElement: clickTarget,
+        mode: guidedPlaybackState,
+        currentTime: nowTime != null ? Math.round(nowTime * 1000) / 1000 : null,
+        currentSlide: currentSlide,
+        nearestMarkerEventIndex: nearest ? nearest.eventIndex : null,
+        nearestMarkerIndex: nearest ? nearest.markerIndex : null,
+        nearestMarkerType: nearest ? nearest.markerType : null,
+        nearestMarkerSemantics: nearest ? nearest.semantics : null,
+        nearestMarkerCrossAt: nearest ? nearest.crossAt : null,
+        nearestMarkerDeltaSec: nearest ? nearest.deltaSec : null,
+    };
+
     if (CONTINUOUS_VIDEO_PLAYBACK && guidedPlaybackState === "paused_at_freeze") {
         var pausedMk = pausedAtFreezeMarkerIdx >= 0 ? freezeMarkers[pausedAtFreezeMarkerIdx] : null;
         logPlayerMarkerDebug({
@@ -1098,16 +1143,79 @@ function nextSlide(){ // FindMe1
             markerIndex: pausedAtFreezeMarkerIdx,
             clickAction: "resume_past_freeze_card",
         });
+        logPlayerMarkerDebug({
+            clickedElement: baseClickDebug.clickedElement,
+            currentSlide: baseClickDebug.currentSlide,
+            nearestMarkerEventIndex: baseClickDebug.nearestMarkerEventIndex,
+            nearestMarkerIndex: baseClickDebug.nearestMarkerIndex,
+            nearestMarkerType: baseClickDebug.nearestMarkerType,
+            nearestMarkerSemantics: baseClickDebug.nearestMarkerSemantics,
+            nearestMarkerDeltaSec: baseClickDebug.nearestMarkerDeltaSec,
+            clickAction: "resume_from_paused_at_freeze",
+        });
         try { videoId.play(); } catch (err) { console.log(err); }
         return;
     }
     if (CONTINUOUS_VIDEO_PLAYBACK && guidedPlaybackState === "looping_at_red") {
+        logPlayerMarkerDebug({
+            clickedElement: baseClickDebug.clickedElement,
+            currentSlide: baseClickDebug.currentSlide,
+            nearestMarkerEventIndex: baseClickDebug.nearestMarkerEventIndex,
+            nearestMarkerIndex: baseClickDebug.nearestMarkerIndex,
+            nearestMarkerType: baseClickDebug.nearestMarkerType,
+            nearestMarkerSemantics: baseClickDebug.nearestMarkerSemantics,
+            nearestMarkerDeltaSec: baseClickDebug.nearestMarkerDeltaSec,
+            clickAction: "break_red_loop",
+        });
         breakRedLoopAndResumePastRed("click_break_red_loop");
         return;
     }
-    if (CONTINUOUS_VIDEO_PLAYBACK && (guidedPlaybackState === "playing_to_event" || guidedPlaybackState === "playing_to_marker")) {
+    if (CONTINUOUS_VIDEO_PLAYBACK &&
+        videoId && videoId.paused &&
+        currentSlide > 0 &&
+        !states.menu &&
+        (guidedPlaybackState === "playing_to_event" ||
+            guidedPlaybackState === "playing_to_marker" ||
+            guidedPlaybackState === "idle" ||
+            guidedPlaybackState === "completed")) {
+        logPlayerMarkerDebug({
+            clickedElement: baseClickDebug.clickedElement,
+            currentSlide: baseClickDebug.currentSlide,
+            nearestMarkerEventIndex: baseClickDebug.nearestMarkerEventIndex,
+            nearestMarkerIndex: baseClickDebug.nearestMarkerIndex,
+            nearestMarkerType: baseClickDebug.nearestMarkerType,
+            nearestMarkerSemantics: baseClickDebug.nearestMarkerSemantics,
+            nearestMarkerDeltaSec: baseClickDebug.nearestMarkerDeltaSec,
+            clickAction: "resume_paused_playback",
+            resumeReason: "state_mismatch_or_manual_pause",
+        });
+        beginPlayToNextEvent("click_resume_paused_playback");
+        try { videoId.play(); } catch (errResume) { console.log(errResume); }
         return;
     }
+    if (CONTINUOUS_VIDEO_PLAYBACK && (guidedPlaybackState === "playing_to_event" || guidedPlaybackState === "playing_to_marker")) {
+        logPlayerMarkerDebug({
+            clickedElement: baseClickDebug.clickedElement,
+            currentSlide: baseClickDebug.currentSlide,
+            nearestMarkerEventIndex: baseClickDebug.nearestMarkerEventIndex,
+            nearestMarkerIndex: baseClickDebug.nearestMarkerIndex,
+            nearestMarkerType: baseClickDebug.nearestMarkerType,
+            nearestMarkerSemantics: baseClickDebug.nearestMarkerSemantics,
+            nearestMarkerDeltaSec: baseClickDebug.nearestMarkerDeltaSec,
+            clickAction: "ignored_already_playing_to_event",
+        });
+        return;
+    }
+    logPlayerMarkerDebug({
+        clickedElement: baseClickDebug.clickedElement,
+        currentSlide: baseClickDebug.currentSlide,
+        nearestMarkerEventIndex: baseClickDebug.nearestMarkerEventIndex,
+        nearestMarkerIndex: baseClickDebug.nearestMarkerIndex,
+        nearestMarkerType: baseClickDebug.nearestMarkerType,
+        nearestMarkerSemantics: baseClickDebug.nearestMarkerSemantics,
+        nearestMarkerDeltaSec: baseClickDebug.nearestMarkerDeltaSec,
+        clickAction: "advance_chapter_row",
+    });
 	currentSlide++;
     if (Array.isArray(srcArray) && currentSlide > 0 && currentSlide < srcArray.length) {
         while (currentSlide < srcArray.length && !isOpeningUIRow(safeSrcSegmentAt(currentSlide)) && !isPlayableContentSegment(safeSrcSegmentAt(currentSlide))) {
