@@ -1374,9 +1374,19 @@ function initializePlayer(videoUrl, timelineArray) {
 
     // Runtime-owned click wiring so in-video clicks always reach nextSlide()
     // even when a lesson template's inline onclick path is missing/broken.
+    function isActionableInVideoClick() {
+        if (!CONTINUOUS_VIDEO_PLAYBACK) return true;
+        if (!videoId) return false;
+        if (guidedPlaybackState === "paused_at_freeze") return true;
+        if (guidedPlaybackState === "looping_at_red") return true;
+        if (videoId.paused) return true;
+        return false;
+    }
+
     if (!videoId.__interactiveClickBound) {
         videoId.addEventListener("click", function(evt) {
             if (evt && typeof evt.stopPropagation === "function") evt.stopPropagation();
+            if (!isActionableInVideoClick()) return;
             nextSlide(evt);
         });
         videoId.__interactiveClickBound = true;
@@ -1384,6 +1394,7 @@ function initializePlayer(videoUrl, timelineArray) {
     var animContainer = document.getElementById("animation");
     if (animContainer && !animContainer.__interactiveClickBound) {
         animContainer.addEventListener("click", function(evt) {
+            if (!isActionableInVideoClick()) return;
             nextSlide(evt);
         });
         animContainer.__interactiveClickBound = true;
