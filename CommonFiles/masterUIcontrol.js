@@ -188,18 +188,23 @@ function syncVideoSeekWithMarkerState(videoEl, t, reason) {
 
 /**
  * Hard anchor for lesson entry: true video start at 0.00 (not mapped src_start).
+ * @param {object} [options] preserveActiveSegment: keep segmentTarget/guided targets (play() guard)
  */
-function enforceLessonStartAtZero(videoEl, slideIdx, reason) {
+function enforceLessonStartAtZero(videoEl, slideIdx, reason, options) {
     var seg = safeSrcSegmentAt(slideIdx);
     if (!videoEl || !shouldApplyForceZeroForSlide(seg, slideIdx)) return false;
-    pausedAtFreezeMarkerIdx = -1;
-    currentFreezeFrameIdx = -1;
-    segmentTargetFreezeIdx = -1;
-    nextFreezeFrameIdx = -1;
-    guidedTargetEventIdx = -1;
-    activeRedLoopEventIdx = -1;
-    activeRedLoopReturnTime = null;
-    activeRedLoopPreviousFreezeIdx = -1;
+    options = options || {};
+    var preserveSegment = options.preserveActiveSegment === true;
+    if (!preserveSegment) {
+        pausedAtFreezeMarkerIdx = -1;
+        currentFreezeFrameIdx = -1;
+        segmentTargetFreezeIdx = -1;
+        nextFreezeFrameIdx = -1;
+        guidedTargetEventIdx = -1;
+        activeRedLoopEventIdx = -1;
+        activeRedLoopReturnTime = null;
+        activeRedLoopPreviousFreezeIdx = -1;
+    }
     syncVideoSeekWithMarkerState(videoEl, 0, reason || "forced_lesson_start_at_zero");
     logPlayerMarkerDebug({
         event: "forced_lesson_start_at_zero",
@@ -927,15 +932,41 @@ function advancePastSkippedFreezeEventsInSegment(t) {
     syncLegacyYellowMarkerAliases();
 }
 
+/** Resolve segment target freeze when play() guard cleared segmentTargetFreezeIdx. */
+function resolveActiveSegmentTargetFreezeIdx(prev, t) {
+    if (segmentTargetFreezeIdx >= 0 && segmentTargetFreezeIdx < freezeMarkers.length) {
+        return segmentTargetFreezeIdx;
+    }
+    if (guidedPlaybackState !== "playing_to_next_freeze") return -1;
+    var fromTime = isFinite(Number(prev)) ? Number(prev) : (isFinite(Number(t)) ? Number(t) : 0);
+    var idx = findFirstFreezeMarkerIndexAfterTime(fromTime);
+    if (idx < 0 && nextFreezeMarkerIdx >= 0 && nextFreezeMarkerIdx < freezeMarkers.length) {
+        idx = nextFreezeMarkerIdx;
+    }
+    return idx;
+}
+
 /**
  * Segment runtime: reaching the target freeze control span (yellow or green) ends the segment
  * immediately — resolve post-marker instructional frame and pause (leapfrog, not play-through).
  */
 function tryCommitSegmentTargetFreezeStop(videoEl, prev, t) {
     if (guidedPlaybackState !== "playing_to_next_freeze") return false;
-    if (segmentTargetFreezeIdx < 0 || segmentTargetFreezeIdx >= freezeMarkers.length) return false;
     if (!videoEl || !isFinite(Number(prev)) || !isFinite(Number(t))) return false;
-    var idx = segmentTargetFreezeIdx;
+    var idx = resolveActiveSegmentTargetFreezeIdx(prev, t);
+    if (idx < 0 || idx >= freezeMarkers.length) return false;
+    if (segmentTargetFreezeIdx < 0) {
+        segmentTargetFreezeIdx = idx;
+        nextFreezeFrameIdx = idx;
+        guidedTargetEventIdx = findNextSegmentPlaybackEventIdx(Number(prev), idx);
+        syncLegacyYellowMarkerAliases();
+        logPlayerMarkerDebug({
+            event: "segment_target_recovered",
+            segmentTargetFreezeIndex: idx,
+            guidedTargetEventIndex: guidedTargetEventIdx,
+            reason: "missing_segment_target_during_play",
+        });
+    }
     var mk = freezeMarkers[idx];
     if (!mk) return false;
     var p = Number(prev);
@@ -1336,8 +1367,10 @@ function initializePlayer(videoUrl, timelineArray) {
         if (!CONTINUOUS_VIDEO_PLAYBACK) return;
         if (pendingForcedLessonStartAtZero) {
             pendingForcedLessonStartAtZero = false;
-            enforceLessonStartAtZero(this, currentSlide, "play_listener_force_zero_guard");
-            if (guidedPlaybackState !== "playing_to_next_freeze") {
+            enforceLessonStartAtZero(this, currentSlide, "play_listener_force_zero_guard", {
+                preserveActiveSegment: true,
+            });
+            if (segmentTargetFreezeIdx < 0) {
                 beginPlayToNextFreezeFrame("play_listener_force_zero_guard");
             }
         }
@@ -1388,7 +1421,7 @@ function initializePlayer(videoUrl, timelineArray) {
                 var crossedStart = false;
                 var pauseFired = false;
 
-                if (guidedPlaybackState === "playing_to_next_freeze" && segmentTargetFreezeIdx >= 0) {
+                if (guidedPlaybackState === "playing_to_next_freeze") {
                     if (tryCommitSegmentTargetFreezeStop(this, prev, t)) {
                         return;
                     }
@@ -1419,7 +1452,16 @@ function initializePlayer(videoUrl, timelineArray) {
                     }
                 }
 
-                if (guidedPlaybackState === "playing_to_next_freeze" && segmentTargetFreezeIdx >= 0) {
+                if (guidedPlaybackState === "playing_to_next_freeze") {
+                    if (segmentTargetFreezeIdx < 0) {
+                        var recoveredIdx = resolveActiveSegmentTargetFreezeIdx(prev, t);
+                        if (recoveredIdx >= 0) {
+                            segmentTargetFreezeIdx = recoveredIdx;
+                            nextFreezeFrameIdx = recoveredIdx;
+                            guidedTargetEventIdx = findNextSegmentPlaybackEventIdx(t, recoveredIdx);
+                            syncLegacyYellowMarkerAliases();
+                        }
+                    }
                     advancePastSkippedFreezeEventsInSegment(t);
                 }
 
