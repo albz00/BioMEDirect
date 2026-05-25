@@ -48,6 +48,8 @@ var activeRedLoopReturnTime = null;
 var activeRedLoopPreviousFreezeIdx = -1;
 /** Set when first-chapter entry must re-assert 0.00 on the next play() (guards against overrides). */
 var pendingForcedLessonStartAtZero = false;
+/** Emergency per-lesson override: use legacy chapter stepping player runtime. */
+var legacyChapterPlayerOverride = false;
 
 /** Tensegrity-only: diagnostics for short yellow flashes vs coarse timeupdate (temporary). */
 var tensegrityDebugLastTimeupdateMs = 0;
@@ -99,6 +101,15 @@ function applyLessonMarkerGlobalsFromFirestoreData(data) {
 
 function shouldForceFirstChapterStartAtZero() {
     return typeof window !== "undefined" && window.forceFirstChapterStartAtZero === true;
+}
+
+function shouldUseLegacyChapterPlayerOverride() {
+    if (typeof window !== "undefined" && window.useLegacyChapterPlayerOverride === true) return true;
+    try {
+        var p = (typeof location !== "undefined" && location.pathname) ? String(location.pathname).toLowerCase() : "";
+        if (p.indexOf("/cleavagestaget/") >= 0 && p.indexOf("cleavagestaget.html") >= 0) return true;
+    } catch (e) { /* ignore */ }
+    return false;
 }
 
 /** First playable chapter row index in srcArray (after opening). */
@@ -1470,6 +1481,17 @@ function initializePlayer(videoUrl, timelineArray) {
     // Pause all videos upon loading
     videoId.pause();
     loadPlaybackMarkersFromWindow();
+    legacyChapterPlayerOverride = shouldUseLegacyChapterPlayerOverride();
+    if (legacyChapterPlayerOverride) {
+        CONTINUOUS_VIDEO_PLAYBACK = false;
+        PAUSE_AT_FREEZE_MARKERS = false;
+        PAUSE_AT_YELLOW_MARKERS = false;
+        logPlayerMarkerDebug({
+            event: "legacy_chapter_player_override_enabled",
+            reason: "lesson_specific_override",
+            lessonPath: (typeof location !== "undefined" && location.pathname) ? location.pathname : null,
+        });
+    }
     tensegrityDebugLastTimeupdateMs = 0;
     tensegrityDebugLastRoutineWallMs = 0;
     tensegrityDumpMarkersContext("initialize_player");
