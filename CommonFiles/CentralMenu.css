@@ -21,45 +21,159 @@ body {
 }
 
 .centralMenu {
-	display: grid;
-	grid-template-columns: auto auto auto;
-	grid-gap: 2vmin;
+	display: flex;
+	flex-wrap: wrap;
 	justify-content: center;
-	max-height: min(calc(72.72vw - 30vmin), calc(100vmin - 30vmin)); /* Account for header and footer space */
-	overflow-y: auto;
-	overflow-x: hidden;
-	padding: 1vmin 2vmin 5vmin 2vmin; /* Extra bottom padding to prevent footer overlap */
-	scrollbar-width: thin;
-	scrollbar-color: #02E8E5 rgba(2, 232, 229, 0.1);
+	align-items: flex-start;
+	align-content: flex-start;
+	gap: 1.5vmin 4vmin;
+	position: absolute;
+	top: 42%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	width: 92%;
+	max-width: 120vmin;
+	max-height: min(calc(72.72vw - 30vmin), calc(100vmin - 30vmin));
+	overflow: visible;
+	padding: 0 3vmin;
+	z-index: 3;
 }
 
 .centralMenu > div {
 	line-height: 2.8vmin;
+	position: relative;
+	z-index: 1;
+	flex: 0 0 auto;
+	overflow: visible;
 }
 
-/* grid-row-start / grid-column-start / grid-row-end / grid-column-end */
-
-.group1 {
-	grid-area: 1 / 1 / 3;
-}
-
-.group2 {
-	grid-area: 1 / 2;
-}
-
-.group3 {
-	grid-area: 1 / 3;
-}
-
-.group4 {
-	grid-area: 1 / 4;
+.centralMenu > div:has(.menuLists:hover),
+.centralMenu > div:has(.menuLists:focus-within),
+.centralMenu > div:has(.menuLists.is-open) {
+	z-index: 25;
 }
 
 .menuLists {
 	position: relative;
-	padding: 0vmin 0vmin 2vmin 0vmin; /* Bottom padding for spacing */
+	display: inline-block;
+	padding: 0.5vmin 1vmin;
 	list-style-type: none;
-	align-content: center;
+	text-align: center;
+	vertical-align: top;
+}
+
+/* Lesson list drops below chapter title — does not cover other chapters */
+.chapterDropdown {
+	display: none;
+	position: absolute;
+	top: 100%;
+	left: 50%;
+	transform: translateX(-50%);
+	margin-top: 0.5vmin;
+	z-index: 30;
+	min-width: 100%;
+	width: max-content;
+	max-width: 28vmin;
+	padding: 0.8vmin 1vmin 1vmin;
+	background: rgba(0, 0, 0, 0.92);
+	border: 0.15vmin solid rgba(2, 232, 229, 0.45);
+	border-radius: 1.2vmin;
+	box-shadow: 0 0.4vmin 2vmin rgba(2, 232, 229, 0.3);
+	max-height: 24vmin;
+	overflow-x: hidden;
+	overflow-y: auto;
+	-webkit-overflow-scrolling: touch;
+	overscroll-behavior: contain;
+	scrollbar-width: thin;
+	scrollbar-color: #02E8E5 rgba(2, 232, 229, 0.1);
+	text-align: center;
+}
+
+.chapterDropdown::-webkit-scrollbar {
+	width: 8px;
+}
+
+.chapterDropdown::-webkit-scrollbar-track {
+	background: rgba(2, 232, 229, 0.1);
+	border-radius: 4px;
+}
+
+.chapterDropdown::-webkit-scrollbar-thumb {
+	background: #02E8E5;
+	border-radius: 4px;
+}
+
+.chapterDropdown::-webkit-scrollbar-thumb:hover {
+	background: #9DFFFF;
+}
+
+.chapterDropdown li {
+	display: block;
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.menuLists:hover .chapterDropdown,
+.menuLists:focus-within .chapterDropdown,
+.menuLists.is-open .chapterDropdown {
+	display: block;
+}
+
+/* Keep dropdown inside left/right columns */
+.group1 .chapterDropdown {
+	left: 0;
+	transform: none;
+}
+
+.group4 .chapterDropdown {
+	left: auto;
+	right: 0;
+	transform: none;
+}
+
+.menuLists > h1 {
+	font-family: Arial Rounded MT, san-serif;
+	color: #9BFFFF;
+	background: transparent;
+	border: none;
+	font-weight: bold;
+	font-size: 3.6vmin;
+	margin: 0;
+	padding: 0.8vmin 1.2vmin 0.2vmin;
+	cursor: default;
+	transition: color 0.2s ease;
+	white-space: nowrap;
+}
+
+.menuLists > h1::after {
+	content: 'hover for lessons';
+	display: block;
+	font-family: Arial, sans-serif;
+	font-size: 1.5vmin;
+	font-weight: normal;
+	color: #02E8E5;
+	opacity: 0.7;
+	margin-top: 0.5vmin;
+	letter-spacing: 0.02em;
+}
+
+@media (hover: none) {
+	.menuLists > h1::after {
+		content: 'tap for lessons';
+	}
+}
+
+.menuLists:hover > h1,
+.menuLists:focus-within > h1,
+.menuLists.is-open > h1 {
+	color: #9DFFFF;
+}
+
+.menuLists:hover > h1::after,
+.menuLists:focus-within > h1::after,
+.menuLists.is-open > h1::after {
+	display: none;
 }
 
 h1 {
@@ -156,6 +270,7 @@ button:focus {
 	text-align: center;
 	align-content: center;
 	bottom: 7vmin;
+	z-index: 3;
 }
 
 .footerLinks > a:link {

@@ -104,6 +104,7 @@ html<!DOCTYPE html>
             const lessonDoc = await db.collection("lessons").doc(lessonId).get();
             if (!lessonDoc.exists) return [];
             const data = lessonDoc.data() || {};
+            applyLessonMarkerGlobalsFromFirestoreData(data);
             const srcArray = data.srcArray || [];
             if (Array.isArray(data.yellowScreenRanges)) {
                 window.yellowScreenRanges = data.yellowScreenRanges;

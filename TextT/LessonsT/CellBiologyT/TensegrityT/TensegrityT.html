@@ -51,7 +51,7 @@
 
             <!-- Footer -->
             <div class="footerLinks" >
-                <!-- Citations button removed -->
+                                <a onclick='executeClick("CitationsTensegrityT.html")'><span class="sr-only">Citations</span>Citations</a>
             </div>
         </div>
 
@@ -95,8 +95,7 @@
             const lessonDoc = await db.collection("lessons").doc(lessonId).get();
             if (!lessonDoc.exists) return [];
             const data = lessonDoc.data() || {};
-            if (Array.isArray(data.yellowScreenRanges)) window.yellowScreenRanges = data.yellowScreenRanges;
-            if (Array.isArray(data.yellowStopMarkers)) window.yellowStopMarkers = data.yellowStopMarkers;
+            applyLessonMarkerGlobalsFromFirestoreData(data);
             return data.srcArray || [];
         } catch (error) {
             console.error("Error loading srcArray:", error);
@@ -142,8 +141,11 @@
             const srcArray = await loadSrcArray(lessonId);
             const videoUrl = await loadVideoUrl(lessonId);
 
-            if ((window.yellowStopMarkers && window.yellowStopMarkers.length > 0) ||
+            if (window.shouldSkipColorCards || window.shouldSkipYellow) {
+                /* set by applyLessonMarkerGlobalsFromFirestoreData */
+            } else if ((window.yellowStopMarkers && window.yellowStopMarkers.length > 0) ||
                 (window.yellowScreenRanges && window.yellowScreenRanges.length > 0)) {
+                window.shouldSkipColorCards = true;
                 window.shouldSkipYellow = true;
             }
 

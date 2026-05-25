@@ -105,7 +105,7 @@ html<!DOCTYPE html>
             const lessonDoc = await db.collection("lessons").doc(lessonId).get();
             if (!lessonDoc.exists) return [];
             const data = lessonDoc.data() || {};
-            if (Array.isArray(data.yellowScreenRanges)) window.yellowScreenRanges = data.yellowScreenRanges;
+            applyLessonMarkerGlobalsFromFirestoreData(data);
             return data.srcArray || [];
         } catch (error) {
             console.error("Error loading srcArray:", error);
@@ -151,7 +151,12 @@ html<!DOCTYPE html>
             const srcArray = await loadSrcArray(lessonId);
             const videoUrl = await loadVideoUrl(lessonId);
 
-            if (window.yellowScreenRanges && window.yellowScreenRanges.length > 0) window.shouldSkipYellow = true;
+            if (!window.shouldSkipColorCards && !window.shouldSkipYellow &&
+                ((window.yellowScreenRanges && window.yellowScreenRanges.length > 0) ||
+                 (window.greenDetection && window.greenDetection.events && window.greenDetection.events.length > 0))) {
+                window.shouldSkipColorCards = true;
+                window.shouldSkipYellow = true;
+            }
 
             console.log("Loaded timing array:", srcArray);
             console.log("Loaded video URL:", videoUrl);
