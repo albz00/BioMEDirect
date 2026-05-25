@@ -3095,6 +3095,7 @@ async function runDeterministicYellowPipeline({
       minDurationSeconds: minSeg,
       lessonId: lessonId || null,
     });
+    const greenEvents = Array.isArray(greenResult.greenEvents) ? greenResult.greenEvents : [];
     const yellowEvents = detection.yellowEvents;
     const yellowRanges = deriveYellowRangesFromEvents(yellowEvents);
     const yellowStopMarkers = buildYellowStopMarkers(yellowEvents);
@@ -3139,7 +3140,6 @@ async function runDeterministicYellowPipeline({
       zeroReason: detection.zeroReason || null,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
-    const greenEvents = Array.isArray(greenResult.greenEvents) ? greenResult.greenEvents : [];
     const greenDetection = {
       version: 1,
       lessonId: lessonId || null,
