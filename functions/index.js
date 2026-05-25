@@ -5,7 +5,10 @@ const { Storage } = require("@google-cloud/storage");
 
 /**
  * --- Callable / trigger map ---
- * PRIMARY TIMELINE PATH (all call runDeterministicYellowPipeline → dense RGB yellow detector):
+ * PRIMARY TIMELINE PATH (all call runDeterministicYellowPipeline):
+ *   - Yellow detector remains primary freeze-frame timeline source.
+ *   - Green detector runs in parallel as separate freeze/menu-anchor pipeline.
+ *   - Red loop-marker model is scaffolded/persisted as provisional (not fully implemented).
  *   generateSrcArray              Storage trigger, videos/*.mp4 upload; lessonId from metadata/videoPaths
  *   generateSrcArrayWithYellowOptions  HTTPS — admin "Generate source" (minDurationSeconds only)
  *   detectYellowScreen            HTTPS — "Regenerate from yellow" in admin (same pipeline)
@@ -41,6 +44,85 @@ admin.initializeApp();
 
 const storage = new Storage();
 const db = admin.firestore();
+const MARKER_MODEL_VERSION = "color-marker-v1";
+
+/**
+ * Shared marker model context for real-world source videos with overlapping marker usage.
+ * Yellow stays primary freeze behavior. Green is also freeze-capable and supports menu/AI hooks.
+ * Red loop behavior is intentionally provisional until creator sample playback is reviewed.
+ */
+function buildMarkerModelContext(sourceLabel = "pipeline") {
+  return {
+    version: MARKER_MODEL_VERSION,
+    sourceLabel,
+    modelIntent: {
+      yellow: {
+        role: "freeze_frame_primary",
+        preserveExistingBehavior: true,
+      },
+      green: {
+        role: "freeze_frame_and_menu_anchor",
+        freezeBackupEnabled: true,
+        aiTitleMappingSource: true,
+      },
+      red: {
+        role: "loop_marker_provisional",
+        fullLoopLogicImplemented: false,
+      },
+    },
+    realWorldNotes: [
+      "Source videos can use overlapping and inconsistent color-marker logic.",
+      "Yellow and green must coexist as a dual freeze-frame model.",
+      "Do not assume one perfectly clean marker system across source material.",
+    ],
+    samplePlaybackRequired: {
+      needed: true,
+      reason: "Need creator-intended yellow/green/red playback sample to finalize combined and red loop behavior.",
+      checklist: [
+        "Show yellow markers in context.",
+        "Show green markers in context.",
+        "Show red markers in context.",
+        "Show expected loop-break behavior after click.",
+      ],
+    },
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+}
+
+function buildRedDetectionScaffold({
+  lessonId = null,
+  sourceLabel = "pipeline",
+  analyzedVideoBasename = null,
+  durationSec = null,
+  streamInfo = null,
+} = {}) {
+  return {
+    version: 1,
+    lessonId,
+    sourceLabel,
+    analyzedVideoBasename,
+    durationSec,
+    status: "provisional_not_implemented",
+    loopModel: {
+      description: "When playback reaches red marker, jump back to previous freeze marker until user click.",
+      implemented: false,
+      confidence: "pending_creator_sample_review",
+    },
+    events: [],
+    unresolvedQuestions: [
+      "Exact jump target rules when red appears after mixed yellow/green freeze markers.",
+      "Loop break timing and click semantics across repeated loops.",
+    ],
+    samplePlaybackRequired: true,
+    normalization: streamInfo ? {
+      streamWidth: streamInfo.width,
+      streamHeight: streamInfo.height,
+      streamFrameRate: streamInfo.frameRate,
+      streamCodec: streamInfo.codec,
+    } : null,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+}
 
 async function resolveLessonIdForUploadedVideo({ filePath, objectMetadata }) {
   const explicitLessonId = objectMetadata && objectMetadata.lessonId ? String(objectMetadata.lessonId).trim() : "";
@@ -115,6 +197,8 @@ exports.generateSrcArray = onObjectFinalized(
               videoPath: filePath,
               yellowDetection: pipeline.yellowDetection,
               greenDetection: pipeline.greenDetection || null,
+              redDetection: pipeline.redDetection || null,
+              markerModelContext: pipeline.markerModelContext || buildMarkerModelContext("upload-trigger"),
               timelinePipeline: {
                 version: "yellow-content-v2",
                 source: "upload-trigger",
@@ -156,6 +240,8 @@ exports.generateSrcArray = onObjectFinalized(
             yellowScreenEvents: pipeline.yellowEvents,
             yellowDetection: pipeline.yellowDetection,
             greenDetection: pipeline.greenDetection || null,
+            redDetection: pipeline.redDetection || null,
+            markerModelContext: pipeline.markerModelContext || buildMarkerModelContext("upload-trigger"),
             chapterTimeline: pipeline.chapterTimeline,
             timelineReview: pipeline.review,
             timelinePipeline: {
@@ -177,6 +263,8 @@ exports.generateSrcArray = onObjectFinalized(
             yellowScreenEvents: pipeline.yellowEvents,
             yellowDetection: pipeline.yellowDetection,
             greenDetection: pipeline.greenDetection || null,
+            redDetection: pipeline.redDetection || null,
+            markerModelContext: pipeline.markerModelContext || buildMarkerModelContext("upload-trigger"),
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             timelinePipeline: {
@@ -2956,6 +3044,8 @@ async function runDeterministicYellowPipeline({
   yellowDebugCalibration,
 }) {
   const minSeg = Number.isFinite(minDurationSeconds) && minDurationSeconds > 0 ? minDurationSeconds : 0.06;
+  const effectiveSourceLabel = sourceLabel || "pipeline";
+  const markerModelContext = buildMarkerModelContext(effectiveSourceLabel);
 
   // Stage 1: prep / normalize only if stream is clearly unsuitable.
   const prepared = await prepareVideoForAnalysis(localVideoPath);
@@ -2963,7 +3053,7 @@ async function runDeterministicYellowPipeline({
 
   console.log("[yellow-pipeline] start", JSON.stringify({
     lessonId: lessonId || null,
-    source: sourceLabel || "pipeline",
+    source: effectiveSourceLabel,
     localVideo: path.basename(localVideoPath),
     durationSec: Math.round(analysisDuration * 1000) / 1000,
     minDurationSeconds: minSeg,
@@ -2995,7 +3085,8 @@ async function runDeterministicYellowPipeline({
     const yellowDetection = {
       version: 2,
       lessonId: lessonId || null,
-      sourceLabel: sourceLabel || "pipeline",
+      sourceLabel: effectiveSourceLabel,
+      markerModelVersion: MARKER_MODEL_VERSION,
       analyzedVideoBasename: path.basename(prepared.preparedPath),
       durationSec: Math.round(analysisDuration * 1000) / 1000,
       minDurationSeconds: minSeg,
@@ -3034,7 +3125,8 @@ async function runDeterministicYellowPipeline({
     const greenDetection = {
       version: 1,
       lessonId: lessonId || null,
-      sourceLabel: sourceLabel || "pipeline",
+      sourceLabel: effectiveSourceLabel,
+      markerModelVersion: MARKER_MODEL_VERSION,
       analyzedVideoBasename: path.basename(prepared.preparedPath),
       durationSec: Math.round(analysisDuration * 1000) / 1000,
       minDurationSeconds: minSeg,
@@ -3074,6 +3166,13 @@ async function runDeterministicYellowPipeline({
       },
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
+    const redDetection = buildRedDetectionScaffold({
+      lessonId: lessonId || null,
+      sourceLabel: effectiveSourceLabel,
+      analyzedVideoBasename: path.basename(prepared.preparedPath),
+      durationSec: Math.round(analysisDuration * 1000) / 1000,
+      streamInfo: prepared.info,
+    });
     console.log("[green-pipeline] detection", JSON.stringify({
       source: sourceLabel || "pipeline",
       candidateSpanCount: greenDetection.candidateSpanCount,
@@ -3165,6 +3264,8 @@ async function runDeterministicYellowPipeline({
       yellowEvents,
       yellowDetection,
       greenDetection,
+      redDetection,
+      markerModelContext,
       hasYellowEvents: yellowEvents.length > 0,
       chapterTimeline: mapping.mappings,
       review,
@@ -3206,6 +3307,8 @@ async function persistLessonYellowDetectionFailure(lessonId, videoPath, sourceLa
     {
       yellowDetection: pipeline.yellowDetection,
       greenDetection: pipeline.greenDetection || null,
+      redDetection: pipeline.redDetection || buildRedDetectionScaffold({ lessonId, sourceLabel }),
+      markerModelContext: pipeline.markerModelContext || buildMarkerModelContext(sourceLabel || "pipeline"),
       yellowScreenEvents: [],
       yellowScreenRanges: [],
       chapterTimeline: pipeline.chapterTimeline,
@@ -3220,6 +3323,27 @@ async function persistLessonYellowDetectionFailure(lessonId, videoPath, sourceLa
     },
     { merge: true }
   );
+}
+
+function summarizeGreenDetectionForResponse(greenDetection) {
+  const gd = greenDetection || {};
+  const csum = gd.candidateSpanSummary || {};
+  const candidateSpanCount = Number.isFinite(csum.candidateSpanCount)
+    ? csum.candidateSpanCount
+    : (Array.isArray(gd.rawCandidateSpans) ? gd.rawCandidateSpans.length : 0);
+  const acceptedEventCount = Number.isFinite(gd.acceptedEventCount)
+    ? gd.acceptedEventCount
+    : (Array.isArray(gd.events) ? gd.events.length : 0);
+  const rejectedSpanCount = Number.isFinite(csum.rejectedSpanCount)
+    ? csum.rejectedSpanCount
+    : (Array.isArray(gd.rejectedSpans) ? gd.rejectedSpans.length : 0);
+  return {
+    candidateSpanCount,
+    acceptedEventCount,
+    rejectedSpanCount,
+    zeroReason: gd.zeroReason || null,
+    rejectionReasonSummary: gd.rejectionReasonSummary || {},
+  };
 }
 
 // Build srcArray only from the complement of yellow (non-yellow intervals).
@@ -3360,6 +3484,7 @@ exports.detectYellowScreen = onCall(
 
       if (!pipeline.hasYellowEvents) {
         const csum = (pipeline.yellowDetection && pipeline.yellowDetection.candidateSpanSummary) || null;
+        const greenDetectionSummary = summarizeGreenDetectionForResponse(pipeline.greenDetection);
         await persistLessonYellowDetectionFailure(lessonId, videoPath, "manual-yellow-regenerate", pipeline);
         return {
           success: false,
@@ -3385,6 +3510,7 @@ exports.detectYellowScreen = onCall(
             pipeline.yellowDetection.shortFlashFallbackReport.activatedBecause
             ? pipeline.yellowDetection.shortFlashFallbackReport.activatedBecause
             : null,
+          greenDetectionSummary,
           reviewStates: pipeline.review.states,
         };
       }
@@ -3409,6 +3535,8 @@ exports.detectYellowScreen = onCall(
         yellowScreenEvents: pipeline.yellowEvents,
         yellowDetection: pipeline.yellowDetection,
         greenDetection: pipeline.greenDetection || null,
+        redDetection: pipeline.redDetection || buildRedDetectionScaffold({ lessonId, sourceLabel: "manual-yellow-regenerate" }),
+        markerModelContext: pipeline.markerModelContext || buildMarkerModelContext("manual-yellow-regenerate"),
         chapterTimeline: pipeline.chapterTimeline,
         timelineReview: pipeline.review,
         timelinePipeline: {
@@ -3423,6 +3551,7 @@ exports.detectYellowScreen = onCall(
         success: true,
         yellowRanges: pipeline.yellowRanges,
         yellowEvents: pipeline.yellowEvents.length,
+        greenDetectionSummary: summarizeGreenDetectionForResponse(pipeline.greenDetection),
         adjustedSegments: srcArray.length,
         reviewStates: pipeline.review.states,
         timelineGenerationSummary: pipeline.yellowDetection?.timelineGenerationSummary || null,
@@ -3475,6 +3604,7 @@ exports.generateSrcArrayWithYellowOptions = onCall(
 
       if (!pipeline.hasYellowEvents) {
         const csum = (pipeline.yellowDetection && pipeline.yellowDetection.candidateSpanSummary) || null;
+        const greenDetectionSummary = summarizeGreenDetectionForResponse(pipeline.greenDetection);
         await persistLessonYellowDetectionFailure(lessonId, videoPath, "manual-editor", pipeline, {
           minDurationSecondsApplied: effectiveMinSeg,
         });
@@ -3503,6 +3633,7 @@ exports.generateSrcArrayWithYellowOptions = onCall(
             pipeline.yellowDetection.shortFlashFallbackReport.activatedBecause
             ? pipeline.yellowDetection.shortFlashFallbackReport.activatedBecause
             : null,
+          greenDetectionSummary,
           reviewStates: pipeline.review.states || [],
           duration: pipeline.duration,
           minSegmentSeconds: effectiveMinSeg,
@@ -3530,6 +3661,8 @@ exports.generateSrcArrayWithYellowOptions = onCall(
           yellowScreenEvents: pipeline.yellowEvents,
           yellowDetection: pipeline.yellowDetection,
           greenDetection: pipeline.greenDetection || null,
+          redDetection: pipeline.redDetection || buildRedDetectionScaffold({ lessonId, sourceLabel: "manual-editor" }),
+          markerModelContext: pipeline.markerModelContext || buildMarkerModelContext("manual-editor"),
           chapterTimeline: pipeline.chapterTimeline,
           timelineReview: pipeline.review,
           timelinePipeline: {
@@ -3548,6 +3681,7 @@ exports.generateSrcArrayWithYellowOptions = onCall(
         success: true,
         segments: srcArray.length,
         yellowRanges: pipeline.yellowRanges.length,
+        greenDetectionSummary: summarizeGreenDetectionForResponse(pipeline.greenDetection),
         duration: pipeline.duration,
         reviewStates: pipeline.review.states || [],
         minSegmentSeconds: effectiveMinSeg,
@@ -4307,6 +4441,7 @@ exports.generateSrcArrayFromYellowScreens = onCall(
 
       if (!pipeline.hasYellowEvents) {
         const csum = (pipeline.yellowDetection && pipeline.yellowDetection.candidateSpanSummary) || null;
+        const greenDetectionSummary = summarizeGreenDetectionForResponse(pipeline.greenDetection);
         await persistLessonYellowDetectionFailure(lessonId, videoPath, "manual-generate-from-yellow", pipeline);
         return {
           success: false,
@@ -4332,6 +4467,7 @@ exports.generateSrcArrayFromYellowScreens = onCall(
             pipeline.yellowDetection.shortFlashFallbackReport.activatedBecause
             ? pipeline.yellowDetection.shortFlashFallbackReport.activatedBecause
             : null,
+          greenDetectionSummary,
           chapters: chapters.length,
           detections: 0,
           states: pipeline.review.states,
@@ -4359,6 +4495,8 @@ exports.generateSrcArrayFromYellowScreens = onCall(
           yellowScreenEvents: pipeline.yellowEvents,
           yellowDetection: pipeline.yellowDetection,
           greenDetection: pipeline.greenDetection || null,
+          redDetection: pipeline.redDetection || buildRedDetectionScaffold({ lessonId, sourceLabel: "manual-generate-from-yellow" }),
+          markerModelContext: pipeline.markerModelContext || buildMarkerModelContext("manual-generate-from-yellow"),
           chapterTimeline: pipeline.chapterTimeline,
           timelineReview: pipeline.review,
           autoMapping: {
@@ -4386,6 +4524,7 @@ exports.generateSrcArrayFromYellowScreens = onCall(
         status: pipeline.review.needsManualReview ? "needs_review" : "ok",
         chapters: chapters.length,
         detections: pipeline.yellowEvents.length,
+        greenDetectionSummary: summarizeGreenDetectionForResponse(pipeline.greenDetection),
         reason: pipeline.review.states.join(", "),
         segments: mergedSrc.length,
         states: pipeline.review.states,

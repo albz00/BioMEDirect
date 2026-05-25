@@ -31,6 +31,28 @@ let currentSrcArrayForEditor = [];
 let currentSrcArrayLessonId = null;
 /** Ordered display titles from lessonMetadata.chapterOrder (same order as backend chapter mapping). */
 let currentChapterTitlesForEditor = [];
+const DEFAULT_MARKER_MODEL_CONTEXT = {
+    version: 'color-marker-v1',
+    modelIntent: {
+        yellow: { role: 'freeze_frame_primary', preserveExistingBehavior: true },
+        green: { role: 'freeze_frame_and_menu_anchor', freezeBackupEnabled: true, aiTitleMappingSource: true },
+        red: { role: 'loop_marker_provisional', fullLoopLogicImplemented: false },
+    },
+    realWorldNotes: [
+        'Source videos may use overlapping/inconsistent marker logic.',
+        'Yellow and green are treated as dual freeze-frame paths.',
+        'Red loop behavior is scaffolded pending creator sample review.',
+    ],
+    samplePlaybackRequired: {
+        needed: true,
+        checklist: [
+            'Show yellow markers in context.',
+            'Show green markers in context.',
+            'Show red markers in context.',
+            'Show expected loop-break behavior after click.',
+        ],
+    },
+};
 
 /** Show loading state on a button (spinner, disabled). Pass the button element and true/false. */
 function setButtonLoading(btn, loading) {
@@ -1294,6 +1316,9 @@ async function loadSrcArrayForEditor(lessonId) {
     const timelinePipeline = data.timelinePipeline || null;
     const timelineReview = data.timelineReview || null;
     const yellowDetection = data.yellowDetection || null;
+    const greenDetection = data.greenDetection || null;
+    const redDetection = data.redDetection || null;
+    const markerModelContext = data.markerModelContext || null;
     const yellowScreenEvents = data.yellowScreenEvents || null;
     const unmappedChapters = (yellowDetection && Array.isArray(yellowDetection.unmappedChapters))
         ? yellowDetection.unmappedChapters
@@ -1307,6 +1332,9 @@ async function loadSrcArrayForEditor(lessonId) {
         timelinePipeline,
         timelineReview,
         yellowDetection,
+        greenDetection,
+        redDetection,
+        markerModelContext,
         yellowScreenEvents,
         unmappedChapters,
         timelineGenerationSummary,
@@ -1344,6 +1372,181 @@ function renderYellowEventsDebugPanel(yellowDetection, yellowScreenEvents) {
     }
     if (preEx) {
         preEx.textContent = expl ? JSON.stringify(expl, null, 2) : '(no segmentBuildExplanation)';
+    }
+}
+
+function formatFloatMaybe(v) {
+    return Number.isFinite(Number(v)) ? (Math.round(Number(v) * 1000) / 1000) : '—';
+}
+
+function escapeHtmlMini(v) {
+    return String(v == null ? '' : v)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/"/g, '&quot;');
+}
+
+function summarizeGreenDetection(greenDetection) {
+    const gd = greenDetection || {};
+    const csum = gd.candidateSpanSummary || {};
+    const raw = Array.isArray(gd.rawCandidateSpans) ? gd.rawCandidateSpans : [];
+    const events = Array.isArray(gd.events) ? gd.events : [];
+    const rejected = Array.isArray(gd.rejectedSpans) ? gd.rejectedSpans : raw.filter((s) => s && s.rejected);
+    const candidateSpanCount = Number.isFinite(csum.candidateSpanCount) ? csum.candidateSpanCount : raw.length;
+    const acceptedEventCount = Number.isFinite(gd.acceptedEventCount) ? gd.acceptedEventCount : events.length;
+    const rejectedSpanCount = Number.isFinite(csum.rejectedSpanCount) ? csum.rejectedSpanCount : rejected.length;
+    return {
+        candidateSpanCount,
+        acceptedEventCount,
+        rejectedSpanCount,
+        zeroReason: gd.zeroReason || null,
+        rejectionReasonSummary: gd.rejectionReasonSummary || {},
+        events,
+        rejectedSpans: rejected,
+    };
+}
+
+function renderGreenDetectionPanels(greenDetection, showWhenEmpty = false) {
+    const debugWrap = document.getElementById('greenDetectionDebugWrap');
+    const summaryPre = document.getElementById('greenDetectionSummaryPre');
+    const eventsTbody = document.getElementById('greenDetectionEventsTbody');
+    const rejectedPre = document.getElementById('greenDetectionRejectedPre');
+    const scaffoldWrap = document.getElementById('greenMappingScaffoldWrap');
+    const scaffoldTbody = document.getElementById('greenMappingScaffoldTbody');
+    if (!debugWrap || !summaryPre || !eventsTbody || !rejectedPre || !scaffoldWrap || !scaffoldTbody) return;
+
+    if (!showWhenEmpty && !greenDetection) {
+        debugWrap.hidden = true;
+        scaffoldWrap.hidden = true;
+        return;
+    }
+
+    const s = summarizeGreenDetection(greenDetection);
+    debugWrap.hidden = false;
+    scaffoldWrap.hidden = false;
+
+    summaryPre.textContent = JSON.stringify({
+        candidateSpanCount: s.candidateSpanCount,
+        acceptedEventCount: s.acceptedEventCount,
+        rejectedSpanCount: s.rejectedSpanCount,
+        zeroReason: s.zeroReason,
+        rejectionReasonSummary: s.rejectionReasonSummary,
+    }, null, 2);
+
+    if (s.events.length > 0) {
+        eventsTbody.innerHTML = s.events.map((ev) => {
+            const greenStart = ev.greenStart != null ? ev.greenStart : ev.startTime;
+            const greenEnd = ev.greenEnd != null ? ev.greenEnd : ev.endTime;
+            const freezeTime = ev.freezeTime != null ? ev.freezeTime : greenStart;
+            const resumeTime = ev.resumeTime != null ? ev.resumeTime : greenEnd;
+            return `<tr>
+                <td>${escapeHtmlMini(ev.eventIndex != null ? ev.eventIndex : '—')}</td>
+                <td>${escapeHtmlMini(formatFloatMaybe(greenStart))}</td>
+                <td>${escapeHtmlMini(formatFloatMaybe(greenEnd))}</td>
+                <td>${escapeHtmlMini(formatFloatMaybe(freezeTime))}</td>
+                <td>${escapeHtmlMini(formatFloatMaybe(resumeTime))}</td>
+                <td>${escapeHtmlMini(formatFloatMaybe(ev.detectionConfidence))}</td>
+            </tr>`;
+        }).join('');
+    } else {
+        eventsTbody.innerHTML = '<tr><td colspan="6">No accepted green events.</td></tr>';
+    }
+
+    rejectedPre.textContent = s.rejectedSpans.length > 0
+        ? JSON.stringify(s.rejectedSpans, null, 2)
+        : '(no rejected green spans)';
+
+    if (s.events.length > 0) {
+        scaffoldTbody.innerHTML = s.events.map((ev) => {
+            const greenStart = ev.greenStart != null ? ev.greenStart : ev.startTime;
+            const freezeTime = ev.freezeTime != null ? ev.freezeTime : greenStart;
+            return `<tr>
+                <td>${escapeHtmlMini(ev.eventIndex != null ? ev.eventIndex : '—')}</td>
+                <td>${escapeHtmlMini(formatFloatMaybe(greenStart))}</td>
+                <td>${escapeHtmlMini(formatFloatMaybe(freezeTime))}</td>
+                <td class="green-mapping-placeholder">Pending OCR/title-frame detection</td>
+                <td class="green-mapping-placeholder">Pending menu-title match</td>
+                <td class="green-mapping-placeholder">Scaffold only</td>
+                <td class="green-mapping-placeholder">Coming soon</td>
+                <td class="green-mapping-placeholder">Green can freeze + anchor mapping</td>
+            </tr>`;
+        }).join('');
+    } else {
+        scaffoldTbody.innerHTML = '<tr><td colspan="8" class="green-mapping-placeholder">No green events yet. Future title/menu mapping rows will appear here.</td></tr>';
+    }
+}
+
+function buildGreenSummaryLineFromResponse(greenDetectionSummary) {
+    if (!greenDetectionSummary || typeof greenDetectionSummary !== 'object') return '';
+    const c = Number.isFinite(greenDetectionSummary.candidateSpanCount) ? greenDetectionSummary.candidateSpanCount : 0;
+    const a = Number.isFinite(greenDetectionSummary.acceptedEventCount) ? greenDetectionSummary.acceptedEventCount : 0;
+    const r = Number.isFinite(greenDetectionSummary.rejectedSpanCount) ? greenDetectionSummary.rejectedSpanCount : 0;
+    let line = ` Green spans: ${c} candidate, ${a} accepted, ${r} rejected.`;
+    if (a === 0 && greenDetectionSummary.zeroReason) {
+        line += ` Green zeroReason: ${greenDetectionSummary.zeroReason}.`;
+    }
+    const rej = greenDetectionSummary.rejectionReasonSummary;
+    if (rej && typeof rej === 'object' && Object.keys(rej).length > 0) {
+        line += ` Rejections: ${JSON.stringify(rej)}.`;
+    }
+    return line;
+}
+
+function renderMarkerModelContextPanel(markerModelContext) {
+    const wrap = document.getElementById('markerModelContextWrap');
+    const pre = document.getElementById('markerModelContextPre');
+    if (!wrap || !pre) return;
+    const ctx = markerModelContext && typeof markerModelContext === 'object'
+        ? markerModelContext
+        : DEFAULT_MARKER_MODEL_CONTEXT;
+    wrap.hidden = false;
+    pre.textContent = JSON.stringify(ctx, null, 2);
+}
+
+function summarizeRedDetection(redDetection) {
+    const rd = redDetection || {};
+    const events = Array.isArray(rd.events) ? rd.events : [];
+    return {
+        status: rd.status || 'provisional_not_implemented',
+        eventCount: events.length,
+        loopModel: rd.loopModel || { implemented: false },
+        unresolvedQuestions: Array.isArray(rd.unresolvedQuestions) ? rd.unresolvedQuestions : [],
+        events,
+    };
+}
+
+function renderRedDetectionPanel(redDetection, showWhenEmpty = false) {
+    const wrap = document.getElementById('redDetectionScaffoldWrap');
+    const summaryPre = document.getElementById('redDetectionSummaryPre');
+    const tbody = document.getElementById('redDetectionEventsTbody');
+    if (!wrap || !summaryPre || !tbody) return;
+    if (!showWhenEmpty && !redDetection) {
+        wrap.hidden = true;
+        return;
+    }
+    const s = summarizeRedDetection(redDetection);
+    wrap.hidden = false;
+    summaryPre.textContent = JSON.stringify({
+        status: s.status,
+        eventCount: s.eventCount,
+        loopModel: s.loopModel,
+        unresolvedQuestions: s.unresolvedQuestions,
+        samplePlaybackRequired: true,
+    }, null, 2);
+    if (s.events.length > 0) {
+        tbody.innerHTML = s.events.map((ev, idx) => {
+            const redStart = ev.redStart != null ? ev.redStart : ev.startTime;
+            const redEnd = ev.redEnd != null ? ev.redEnd : ev.endTime;
+            return `<tr>
+                <td>${escapeHtmlMini(ev.eventIndex != null ? ev.eventIndex : idx + 1)}</td>
+                <td>${escapeHtmlMini(formatFloatMaybe(redStart))}</td>
+                <td>${escapeHtmlMini(formatFloatMaybe(redEnd))}</td>
+                <td>${escapeHtmlMini(ev.loopTargetFreezeEvent != null ? ev.loopTargetFreezeEvent : 'Pending rules')}</td>
+                <td>${escapeHtmlMini(ev.status || 'provisional')}</td>
+            </tr>`;
+        }).join('');
+    } else {
+        tbody.innerHTML = '<tr><td colspan="5">No red events yet. Loop-marker model is scaffolded pending real sample verification.</td></tr>';
     }
 }
 
@@ -1525,6 +1728,9 @@ async function refreshSrcArrayEditor() {
         currentChapterTitlesForEditor = [];
         renderSrcArrayTable([], null, [], {});
         renderYellowEventsDebugPanel(null, null);
+        renderGreenDetectionPanels(null, false);
+        renderRedDetectionPanel(null, false);
+        renderMarkerModelContextPanel(null);
         if (statusEl) statusEl.textContent = '';
         resetAiTitleMappingPanel();
         return;
@@ -1537,6 +1743,9 @@ async function refreshSrcArrayEditor() {
             timelinePipeline,
             timelineReview,
             yellowDetection,
+            greenDetection,
+            redDetection,
+            markerModelContext,
             yellowScreenEvents,
             unmappedChapters,
             timelineGenerationSummary,
@@ -1547,6 +1756,9 @@ async function refreshSrcArrayEditor() {
             timelineGenerationSummary,
         });
         renderYellowEventsDebugPanel(yellowDetection, yellowScreenEvents);
+        renderGreenDetectionPanels(greenDetection, true);
+        renderRedDetectionPanel(redDetection, true);
+        renderMarkerModelContextPanel(markerModelContext);
         if (statusEl) {
             const { display: playableRows, legacyInvalid } = splitSrcArrayForEditor(srcArray);
             let line = selectedLessonId
@@ -1564,12 +1776,26 @@ async function refreshSrcArrayEditor() {
             } else if (genFailed) {
                 line += ' · Last generate failed';
             }
+            if (greenDetection) {
+                const g = summarizeGreenDetection(greenDetection);
+                line += ` · Green ${g.acceptedEventCount}/${g.candidateSpanCount} accepted`;
+                if (g.acceptedEventCount === 0 && g.zeroReason) {
+                    line += ` (${g.zeroReason})`;
+                }
+            } else {
+                line += ' · Green detection pending/empty';
+            }
+            const redSummary = summarizeRedDetection(redDetection);
+            line += ` · Red: ${redSummary.status}`;
             statusEl.textContent = line;
         }
     } catch (e) {
         console.error('refreshSrcArrayEditor:', e);
         renderSrcArrayTable([], null, [], {});
         renderYellowEventsDebugPanel(null, null);
+        renderGreenDetectionPanels(null, false);
+        renderRedDetectionPanel(null, false);
+        renderMarkerModelContextPanel(null);
         if (statusEl) statusEl.textContent = 'Error loading';
     }
 }
@@ -1696,7 +1922,8 @@ function setupSrcArrayEditorListeners() {
                 if (data.success === false) {
                     const reason = data.reason || 'unknown';
                     const msg = data.message || reason;
-                    setStatus(`Generate failed: ${msg}. Timeline not overwritten. Check lesson yellowDetection in Firestore.`, 'error');
+                    const gLine = buildGreenSummaryLineFromResponse(data.greenDetectionSummary);
+                    setStatus(`Generate failed: ${msg}. Timeline not overwritten. Check lesson yellowDetection in Firestore.${gLine}`, 'error');
                     await refreshSrcArrayEditor();
                     return;
                 }
@@ -1716,7 +1943,8 @@ function setupSrcArrayEditorListeners() {
                 const tgLine = tg && typeof tg.validPlayableSegmentCount === 'number'
                     ? ` Playable segments: ${tg.validPlayableSegmentCount}. Unmapped chapters: ${tg.unmappedChapterCount != null ? tg.unmappedChapterCount : '—'}.`
                     : '';
-                setStatus(`Generated ${segs} timeline row(s).${yLine}${chLine}${tgLine}${sum}${states}`, 'success');
+                const gLine = buildGreenSummaryLineFromResponse(data.greenDetectionSummary);
+                setStatus(`Generated ${segs} timeline row(s).${yLine}${chLine}${tgLine}${gLine}${sum}${states}`, 'success');
 
                 await refreshSrcArrayEditor();
             } catch (e) {
@@ -2260,7 +2488,8 @@ async function regenerateSrcArrayFromYellow(lessonId, btn) {
 
         if (!rd.success) {
             const msg = rd.message || rd.reason || 'Yellow detection found no events';
-            setStatus(`Regenerate skipped: ${msg}. Timeline unchanged.`, 'error');
+            const gLine = buildGreenSummaryLineFromResponse(rd.greenDetectionSummary);
+            setStatus(`Regenerate skipped: ${msg}. Timeline unchanged.${gLine}`, 'error');
             if (selectedLessonId === lessonId) await refreshSrcArrayEditor();
             return;
         }
@@ -2272,7 +2501,8 @@ async function regenerateSrcArrayFromYellow(lessonId, btn) {
 
         const rangesCount = Array.isArray(rd.yellowRanges) ? rd.yellowRanges.length : 0;
         const segs = typeof rd.adjustedSegments === 'number' ? rd.adjustedSegments : 'updated';
-        setStatus(`Regenerated from yellow: ${rangesCount} ranges detected, ${segs} segments in srcArray`, 'success');
+        const gLine = buildGreenSummaryLineFromResponse(rd.greenDetectionSummary);
+        setStatus(`Regenerated from yellow: ${rangesCount} ranges detected, ${segs} segments in srcArray.${gLine}`, 'success');
         setTimeout(() => setStatus('Ready'), 3000);
     } catch (error) {
         console.error('Error regenerating srcArray from yellow:', error);
@@ -2635,10 +2865,12 @@ async function generateSrcArrayFromYellowScreensForLesson(lessonId) {
         const data = result.data || {};
         if (data.success === false) {
             const msg = data.message || data.reason || 'Generation failed';
-            setStatus(`Auto-generate failed: ${msg}. Timeline unchanged.`, 'error');
+            const gLine = buildGreenSummaryLineFromResponse(data.greenDetectionSummary);
+            setStatus(`Auto-generate failed: ${msg}. Timeline unchanged.${gLine}`, 'error');
         } else {
             const segs = data.segments || 0;
-            setStatus(`Generated ${segs} segments from yellow screens`, data.status === 'ok' ? 'success' : 'scanning');
+            const gLine = buildGreenSummaryLineFromResponse(data.greenDetectionSummary);
+            setStatus(`Generated ${segs} segments from yellow screens.${gLine}`, data.status === 'ok' ? 'success' : 'scanning');
         }
 
         // Refresh the srcArray editor so the new timeline is visible
