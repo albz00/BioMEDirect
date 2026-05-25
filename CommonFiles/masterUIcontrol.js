@@ -35,7 +35,7 @@ var nextFreezeMarkerIdx = 0;
 var nextPlaybackEventIdx = 0;
 var pausedAtFreezeMarkerIdx = -1;
 var lastPlaybackTimeForMarkerCheck = null;
-var guidedPlaybackState = "idle"; // idle | playing_to_next_freeze | paused_at_freeze | looping_at_red | completed | playing_to_end
+var guidedPlaybackState = "idle"; // idle | playing_to_next_freeze | paused_at_freeze | looping_at_red | completed
 var guidedTargetEventIdx = -1;
 /** Freeze frame we are stopped on (segment start). */
 var currentFreezeFrameIdx = -1;
@@ -215,11 +215,63 @@ function isInLessonVideoClickContext() {
     return !states.menu && currentSlide > 0 && CONTINUOUS_VIDEO_PLAYBACK && freezeMarkers.length > 0;
 }
 
+function isPlayingSegmentForward() {
+    return guidedPlaybackState === "playing_to_next_freeze" || guidedPlaybackState === "looping_at_red";
+}
+
+function getInteractiveControlSnapshot() {
+    var inLesson = isInLessonVideoClickContext();
+    var videoPaused = (typeof videoId !== "undefined" && videoId) ? !!videoId.paused : true;
+    var inVideoClickAllowed = false;
+    var clickIgnoreReason = null;
+    if (inLesson) {
+        if (guidedPlaybackState === "paused_at_freeze" || guidedPlaybackState === "looping_at_red") {
+            inVideoClickAllowed = true;
+        } else if (videoPaused) {
+            inVideoClickAllowed = true;
+        } else if (isPlayingSegmentForward()) {
+            inVideoClickAllowed = false;
+            clickIgnoreReason = "segment_already_playing";
+        } else {
+            inVideoClickAllowed = true;
+        }
+    }
+    return {
+        inVideoClickAllowed: inVideoClickAllowed,
+        menuNavigationAllowed: true,
+        controlsEnabled: { inVideoClick: inVideoClickAllowed, menuNavigation: true },
+        controlsDisabled: (!inVideoClickAllowed && inLesson && isPlayingSegmentForward())
+            ? ["in_video_click_while_playing"] : [],
+        clickIgnoreReason: clickIgnoreReason,
+    };
+}
+
+/** When paused on a freeze post-frame but state was lost, restore paused_at_freeze. */
+function syncPausedFreezeStateFromVideoTime(reason) {
+    if (typeof videoId === "undefined" || !videoId || !videoId.paused) return false;
+    if (guidedPlaybackState === "paused_at_freeze" && pausedAtFreezeMarkerIdx >= 0) return true;
+    var idx = findFreezeFrameIndexAtTime(Number(videoId.currentTime));
+    if (idx < 0) {
+        idx = findPreviousFreezeMarkerIndexBeforeTime(Number(videoId.currentTime) + 0.001);
+    }
+    if (idx < 0) return false;
+    pausedAtFreezeMarkerIdx = idx;
+    currentFreezeFrameIdx = idx;
+    segmentTargetFreezeIdx = -1;
+    nextFreezeFrameIdx = -1;
+    setGuidedPlaybackState("paused_at_freeze", reason || "infer_paused_at_freeze");
+    return true;
+}
+
 function logPlayerMarkerDebug(payload) {
+    var ctrl = getInteractiveControlSnapshot();
     var base = {
         mode: guidedPlaybackState,
         currentTime: (typeof videoId !== "undefined" && videoId && isFinite(Number(videoId.currentTime)))
             ? Math.round(Number(videoId.currentTime) * 1000) / 1000 : null,
+        currentFreezeFrameIndex: currentFreezeFrameIdx,
+        nextFreezeFrameIndex: nextFreezeFrameIdx,
+        segmentTargetFreezeIndex: segmentTargetFreezeIdx,
         nextFreezeMarkerIndex: nextFreezeMarkerIdx,
         nextPlaybackEventIndex: nextPlaybackEventIdx,
         guidedTargetEventIndex: guidedTargetEventIdx,
@@ -230,6 +282,9 @@ function logPlayerMarkerDebug(payload) {
         activeRedLoopPreviousFreezeIndex: activeRedLoopPreviousFreezeIdx,
         activeRedLoopReturnTime: activeRedLoopReturnTime != null && isFinite(Number(activeRedLoopReturnTime))
             ? Math.round(Number(activeRedLoopReturnTime) * 1000) / 1000 : null,
+        inVideoClickAllowed: ctrl.inVideoClickAllowed,
+        controlsEnabled: ctrl.controlsEnabled,
+        controlsDisabled: ctrl.controlsDisabled,
     };
     var out = {};
     for (var k in base) { if (Object.prototype.hasOwnProperty.call(base, k)) out[k] = base[k]; }
@@ -331,7 +386,7 @@ function runTensegrityTimeupdateDiagnostics(videoEl, prev, curr, mk, crossedStar
     var wallMsSincePrev = tensegrityDebugLastTimeupdateMs ? (wallNow - tensegrityDebugLastTimeupdateMs) : null;
     tensegrityDebugLastTimeupdateMs = wallNow;
     var dt = (isFinite(p) && isFinite(t)) ? Math.round((t - p) * 1000) / 1000 : null;
-    var playingGuide = guidedPlaybackState === "playing_to_event" || guidedPlaybackState === "playing_to_marker";
+    var playingGuide = isPlayingSegmentForward();
     var idx = guidedTargetEventIdx;
     var paused = videoEl ? !!videoEl.paused : true;
     var anomalies = [];
@@ -521,23 +576,21 @@ function ensureSeekPastRedCardRangesOnly(t) {
 }
 
 /**
- * During guided play, do not leapfrog yellow/green freeze spans (autoplay must hit the same
- * resolve+pause path as click/resume). Red cards may still be skipped invisibly.
+ * During guided play, only red control cards are skipped invisibly. Yellow/green freeze spans
+ * end the segment via tryCommitSegmentTargetFreezeStop (post-marker resolve + pause).
  */
-function applyInvisibleLeapfrogDuringGuidedPlay(videoEl, t) {
+function applyRedCardLeapfrogDuringGuidedPlay(videoEl, t) {
     if (!videoEl || !isFinite(Number(t))) return t;
-    if (guidedPlaybackState !== "playing_to_next_freeze" &&
-        guidedPlaybackState !== "playing_to_event" &&
-        guidedPlaybackState !== "looping_at_red") return t;
-    if (isTimeInsideFreezeMarkerCardSpan(t)) return t;
+    if (!isPlayingSegmentForward()) return t;
     var past = ensureSeekPastRedCardRangesOnly(Number(t));
     if (Math.abs(past - Number(t)) > 1e-5) {
         videoEl.currentTime = past;
         advanceMarkerCursorToTime(past);
         logPlayerMarkerDebug({
             event: "invisible_leapfrog_during_play",
+            leapfrogApplied: true,
             leapfrogHelperUsed: true,
-            chosenResumePoint: Math.round(past * 1000) / 1000,
+            chosenResumeTarget: Math.round(past * 1000) / 1000,
             previousTime: Math.round(Number(t) * 1000) / 1000,
             markerType: "red",
         });
@@ -811,12 +864,16 @@ function advanceMarkerCursorToTime(t) {
 
 function setGuidedPlaybackState(nextState, reason) {
     guidedPlaybackState = nextState;
+    var ctrl = getInteractiveControlSnapshot();
     logPlayerMarkerDebug({
         event: "state",
         reason: reason || null,
         currentFreezeFrameIndex: currentFreezeFrameIdx,
         nextFreezeFrameIndex: nextFreezeFrameIdx,
         segmentTargetFreezeIndex: segmentTargetFreezeIdx,
+        controlsEnabled: ctrl.controlsEnabled,
+        controlsDisabled: ctrl.controlsDisabled,
+        inVideoClickAllowed: ctrl.inVideoClickAllowed,
     });
 }
 
@@ -871,26 +928,46 @@ function advancePastSkippedFreezeEventsInSegment(t) {
 }
 
 /**
- * Safety net: if playback crossed the segment target freeze between prev and t, stop there.
- * Prevents playing through when guidedTargetEventIdx was advanced incorrectly.
+ * Segment runtime: reaching the target freeze control span (yellow or green) ends the segment
+ * immediately — resolve post-marker instructional frame and pause (leapfrog, not play-through).
  */
-function tryHandleSegmentTargetFreezeCrossing(videoEl, prev, t) {
+function tryCommitSegmentTargetFreezeStop(videoEl, prev, t) {
+    if (guidedPlaybackState !== "playing_to_next_freeze") return false;
     if (segmentTargetFreezeIdx < 0 || segmentTargetFreezeIdx >= freezeMarkers.length) return false;
-    if (!isFinite(Number(prev)) || !isFinite(Number(t))) return false;
-    var mk = freezeMarkers[segmentTargetFreezeIdx];
+    if (!videoEl || !isFinite(Number(prev)) || !isFinite(Number(t))) return false;
+    var idx = segmentTargetFreezeIdx;
+    var mk = freezeMarkers[idx];
+    if (!mk) return false;
+    var p = Number(prev);
+    var c = Number(t);
+    var spanStart = Number(mk.start);
+    var spanEnd = Number(mk.end);
     var crossAt = Number(mk.crossAt);
-    if (!isFinite(crossAt)) return false;
-    if (Number(prev) >= crossAt - 1e-4 || Number(t) < crossAt - 1e-4) return false;
+    if (!isFinite(spanStart) || !isFinite(spanEnd)) return false;
+
+    var enteredControlSpan = p < spanStart - 1e-4 && c >= spanStart - 1e-4;
+    var insideControlSpan = c >= spanStart - 1e-4 && c <= spanEnd + COLOR_CARD_RANGE_SKIP_EPS_SEC;
+    var crossedFreezeTrigger = isFinite(crossAt) && p < crossAt - 1e-4 && c >= crossAt - 1e-4;
+    var coarseJumpIntoSpan = p < spanStart - 1e-4 && insideControlSpan;
+    if (!enteredControlSpan && !insideControlSpan && !crossedFreezeTrigger && !coarseJumpIntoSpan) {
+        return false;
+    }
+
+    var resolvedStop = resolvePostFreezeStopTime(mk, idx, "segment_target_freeze_span");
     logPlayerMarkerDebug({
-        event: "freeze_crossing_detected",
+        event: "freeze_span_stop",
+        freezeStopFired: true,
+        leapfrogApplied: true,
         markerType: mk.markerType,
-        markerIndex: segmentTargetFreezeIdx,
-        previousTime: Math.round(Number(prev) * 1000) / 1000,
-        currentTime: Math.round(Number(t) * 1000) / 1000,
-        chosenStopPoint: Math.round(crossAt * 1000) / 1000,
-        segmentTargetFreezeIndex: segmentTargetFreezeIdx,
+        markerIndex: idx,
+        segmentTargetFreezeIndex: idx,
+        chosenStopPoint: isFinite(crossAt) ? Math.round(crossAt * 1000) / 1000 : null,
+        chosenResumeTarget: isFinite(Number(resolvedStop))
+            ? Math.round(Number(resolvedStop) * 1000) / 1000 : null,
+        previousTime: Math.round(p * 1000) / 1000,
+        currentTime: Math.round(c * 1000) / 1000,
     });
-    applyFreezeMarkerStopAtCrossing(videoEl, mk, segmentTargetFreezeIdx, prev, t, "segment_target_freeze_crossing");
+    applyFreezeMarkerStopAtCrossing(videoEl, mk, idx, prev, t, "segment_target_freeze_span");
     return true;
 }
 
@@ -901,7 +978,10 @@ function tryHandleSegmentTargetFreezeCrossing(videoEl, prev, t) {
 function beginPlayToNextFreezeFrame(reason) {
     if (!CONTINUOUS_VIDEO_PLAYBACK) return;
     if (freezeMarkers.length === 0) {
-        setGuidedPlaybackState("playing_to_end", reason || "no_freeze_markers");
+        setGuidedPlaybackState("completed", reason || "no_freeze_markers");
+        if (typeof videoId !== "undefined" && videoId) {
+            try { videoId.pause(); } catch (noMkErr) { console.log(noMkErr); }
+        }
         return;
     }
     var t = Number(videoId.currentTime);
@@ -923,12 +1003,15 @@ function beginPlayToNextFreezeFrame(reason) {
         activeRedLoopEventIdx = -1;
         activeRedLoopReturnTime = null;
         activeRedLoopPreviousFreezeIdx = -1;
-        setGuidedPlaybackState("playing_to_end", reason || "play_past_last_freeze");
+        setGuidedPlaybackState("completed", reason || "play_past_last_freeze");
         logPlayerMarkerDebug({
             event: "play_segment_no_next_freeze",
             reason: reason || null,
             currentFreezeFrameIndex: currentFreezeFrameIdx,
         });
+        if (typeof videoId !== "undefined" && videoId) {
+            try { videoId.pause(); } catch (pastLastErr) { console.log(pastLastErr); }
+        }
         return;
     }
 
@@ -1091,7 +1174,10 @@ function applyFreezeMarkerStopAtCrossing(videoEl, mk, freezeIdx, prev, t, reason
         markerIndex: freezeIdx,
         isFreeze: true,
         isLoop: false,
+        freezeStopFired: true,
+        leapfrogApplied: true,
         chosenStopPoint: Math.round(Number(mk.crossAt) * 1000) / 1000,
+        chosenResumeTarget: Math.round(Number(stopTarget) * 1000) / 1000,
         chosenResumePoint: Math.round(Number(stopTarget) * 1000) / 1000,
         resolvedPostMarkerContentPoint: Math.round(Number(stopTarget) * 1000) / 1000,
         leapfrogHelperUsed: true,
@@ -1276,9 +1362,7 @@ function initializePlayer(videoUrl, timelineArray) {
             });
             return;
         }
-        if (guidedPlaybackState !== "playing_to_next_freeze" &&
-            guidedPlaybackState !== "playing_to_event" &&
-            guidedPlaybackState !== "looping_at_red") {
+        if (!isPlayingSegmentForward()) {
             beginPlayToNextFreezeFrame("play_event");
         }
         lastPlaybackTimeForMarkerCheck = Number(this.currentTime);
@@ -1300,14 +1384,21 @@ function initializePlayer(videoUrl, timelineArray) {
                 var prev = Number(lastPlaybackTimeForMarkerCheck);
                 if (!isFinite(prev)) prev = Number(t);
                 advanceMarkerCursorToTime(t);
-                t = applyInvisibleLeapfrogDuringGuidedPlay(this, t);
+                var mkGuide = null;
+                var crossedStart = false;
+                var pauseFired = false;
+
+                if (guidedPlaybackState === "playing_to_next_freeze" && segmentTargetFreezeIdx >= 0) {
+                    if (tryCommitSegmentTargetFreezeStop(this, prev, t)) {
+                        return;
+                    }
+                }
+
+                t = applyRedCardLeapfrogDuringGuidedPlay(this, t);
                 if (Math.abs(Number(this.currentTime) - Number(t)) > 1e-5) {
                     lastPlaybackTimeForMarkerCheck = Number(this.currentTime);
                     return;
                 }
-                var mkGuide = null;
-                var crossedStart = false;
-                var pauseFired = false;
 
                 if (guidedPlaybackState === "looping_at_red" && activeRedLoopEventIdx >= 0 &&
                     activeRedLoopReturnTime != null && isFinite(Number(activeRedLoopReturnTime))) {
@@ -1328,17 +1419,11 @@ function initializePlayer(videoUrl, timelineArray) {
                     }
                 }
 
-                if ((guidedPlaybackState === "playing_to_next_freeze" ||
-                    guidedPlaybackState === "playing_to_event") &&
-                    segmentTargetFreezeIdx >= 0) {
-                    if (tryHandleSegmentTargetFreezeCrossing(this, prev, t)) {
-                        return;
-                    }
+                if (guidedPlaybackState === "playing_to_next_freeze" && segmentTargetFreezeIdx >= 0) {
                     advancePastSkippedFreezeEventsInSegment(t);
                 }
 
-                if ((guidedPlaybackState === "playing_to_next_freeze" ||
-                    guidedPlaybackState === "playing_to_event") &&
+                if (guidedPlaybackState === "playing_to_next_freeze" &&
                     guidedTargetEventIdx >= 0 &&
                     guidedTargetEventIdx < playbackEvents.length) {
                     var ev = playbackEvents[guidedTargetEventIdx];
@@ -1711,19 +1796,32 @@ function nextSlide(){ // FindMe1
         return;
     }
     if (isInLessonVideoClickContext()) {
-        if (guidedPlaybackState === "playing_to_next_freeze" ||
-            guidedPlaybackState === "playing_to_event" ||
-            guidedPlaybackState === "playing_to_marker" ||
-            guidedPlaybackState === "looping_at_red") {
-            logPlayerMarkerDebug({
-                clickedElement: baseClickDebug.clickedElement,
-                clickAction: "ignored_already_playing_segment",
-                currentFreezeFrameIndex: currentFreezeFrameIdx,
-                segmentTargetFreezeIndex: segmentTargetFreezeIdx,
-            });
-            return;
-        }
         if (videoId && videoId.paused) {
+            syncPausedFreezeStateFromVideoTime("click_infer_paused_freeze");
+            if (guidedPlaybackState === "paused_at_freeze") {
+                var inferIdx = pausedAtFreezeMarkerIdx;
+                var inferMk = inferIdx >= 0 ? freezeMarkers[inferIdx] : null;
+                var inferResume = inferMk
+                    ? resolvePostFreezeStopTime(inferMk, inferIdx, "click_resume_from_inferred_freeze")
+                    : null;
+                currentFreezeFrameIdx = inferIdx >= 0 ? inferIdx : currentFreezeFrameIdx;
+                pausedAtFreezeMarkerIdx = -1;
+                if (isFinite(Number(inferResume))) {
+                    syncVideoSeekWithMarkerState(videoId, Number(inferResume), "click_play_segment_to_next_freeze");
+                }
+                beginPlayToNextFreezeFrame("click_play_segment_to_next_freeze");
+                logPlayerMarkerDebug({
+                    event: "click_play_segment_to_next_freeze",
+                    clickedElement: baseClickDebug.clickedElement,
+                    clickAction: "play_current_freeze_to_next_freeze",
+                    currentFreezeFrameIndex: currentFreezeFrameIdx,
+                    segmentTargetFreezeIndex: segmentTargetFreezeIdx,
+                    chosenResumeTarget: isFinite(Number(inferResume))
+                        ? Math.round(Number(inferResume) * 1000) / 1000 : null,
+                });
+                try { videoId.play(); } catch (errResume) { console.log(errResume); }
+                return;
+            }
             logPlayerMarkerDebug({
                 event: "click_play_segment_to_next_freeze",
                 clickedElement: baseClickDebug.clickedElement,
@@ -1731,18 +1829,26 @@ function nextSlide(){ // FindMe1
                 currentFreezeFrameIndex: currentFreezeFrameIdx,
             });
             beginPlayToNextFreezeFrame("click_play_segment_to_next_freeze");
-            try { videoId.play(); } catch (errResume) { console.log(errResume); }
+            try { videoId.play(); } catch (errResume2) { console.log(errResume2); }
+            return;
+        }
+        if (videoId && !videoId.paused && isPlayingSegmentForward()) {
+            var ctrlSnap = getInteractiveControlSnapshot();
+            logPlayerMarkerDebug({
+                clickedElement: baseClickDebug.clickedElement,
+                clickAction: "ignored_already_playing_segment",
+                clickIgnoredReason: ctrlSnap.clickIgnoreReason || "segment_already_playing",
+                currentFreezeFrameIndex: currentFreezeFrameIdx,
+                segmentTargetFreezeIndex: segmentTargetFreezeIdx,
+            });
             return;
         }
     }
-    if (CONTINUOUS_VIDEO_PLAYBACK &&
-        (guidedPlaybackState === "playing_to_next_freeze" ||
-            guidedPlaybackState === "playing_to_event" ||
-            guidedPlaybackState === "playing_to_marker" ||
-            guidedPlaybackState === "looping_at_red")) {
+    if (CONTINUOUS_VIDEO_PLAYBACK && videoId && !videoId.paused && isPlayingSegmentForward()) {
         logPlayerMarkerDebug({
             clickedElement: baseClickDebug.clickedElement,
             clickAction: "ignored_already_playing_segment",
+            clickIgnoredReason: "segment_already_playing",
         });
         return;
     }
