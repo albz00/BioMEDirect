@@ -102,76 +102,8 @@
 
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
 <script>
-    // Emergency CleavageStage-only fallback: embed official working lesson page.
-    const OFFICIAL_CLEAVAGE_IFRAME_URL = "https://my.wvsom.edu/Students/Applications/BioME/TextT/LessonsT/EmbryologyT/CleavageStageT/CleavageStageT.html";
-    const USE_OFFICIAL_CLEAVAGE_IFRAME_FALLBACK = true;
-
-    function mountOfficialCleavageFallback() {
-        const htmlEl = document.documentElement;
-        const bodyEl = document.body;
-        const lessonRoot = document.querySelector(".entireLesson") || bodyEl;
-        const menuPane = document.getElementById("lessonMenuPage");
-        const lessonPane = document.getElementById("lesson");
-
-        if (menuPane) menuPane.style.display = "none";
-        if (lessonPane) lessonPane.style.display = "none";
-
-        htmlEl.style.height = "100%";
-        bodyEl.style.height = "100%";
-        bodyEl.style.margin = "0";
-        bodyEl.style.overflow = "hidden";
-        lessonRoot.style.height = "100vh";
-        lessonRoot.style.width = "100%";
-        lessonRoot.style.margin = "0";
-        lessonRoot.style.padding = "0";
-        lessonRoot.style.overflow = "hidden";
-
-        let wrap = document.getElementById("officialLessonEmbed");
-        if (!wrap) {
-            wrap = document.createElement("div");
-            wrap.id = "officialLessonEmbed";
-            wrap.style.position = "relative";
-            wrap.style.width = "100%";
-            wrap.style.height = "100vh";
-            wrap.style.background = "#000";
-            wrap.style.overflow = "hidden";
-            lessonRoot.appendChild(wrap);
-        }
-
-        let iframe = document.getElementById("officialLessonIframe");
-        if (!iframe) {
-            iframe = document.createElement("iframe");
-            iframe.id = "officialLessonIframe";
-            iframe.title = "Official CleavageStage Lesson";
-            iframe.src = OFFICIAL_CLEAVAGE_IFRAME_URL;
-            iframe.setAttribute("loading", "eager");
-            iframe.setAttribute("referrerpolicy", "no-referrer-when-downgrade");
-            iframe.setAttribute("allowfullscreen", "");
-            iframe.style.width = "100%";
-            iframe.style.height = "100%";
-            iframe.style.border = "0";
-            iframe.style.display = "block";
-            wrap.appendChild(iframe);
-        }
-
-        const resetIframeToOfficialStart = function(evt) {
-            if (evt && typeof evt.preventDefault === "function") evt.preventDefault();
-            if (evt && typeof evt.stopPropagation === "function") evt.stopPropagation();
-            const activeFrame = document.getElementById("officialLessonIframe");
-            if (!activeFrame) return;
-            activeFrame.src = OFFICIAL_CLEAVAGE_IFRAME_URL;
-        };
-
-        for (let i = 1; i <= 15; i++) {
-            const btn = document.getElementById("menu" + i);
-            if (!btn) continue;
-            btn.addEventListener("click", resetIframeToOfficialStart);
-        }
-    }
-
-    if (USE_OFFICIAL_CLEAVAGE_IFRAME_FALLBACK) {
-        mountOfficialCleavageFallback();
-    } else {
+    // Temporary emergency override: use legacy chapter-stepping player runtime on this lesson only.
+    window.useLegacyChapterPlayerOverride = true;
 
     // Initialize Firebase
     const firebaseConfig = {
@@ -264,6 +196,5 @@
             document.body.appendChild(lessonScript);
         })();
     };
-    }
 </script>
 </html>
