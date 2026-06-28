@@ -46,6 +46,90 @@ admin.initializeApp();
 const storage = new Storage();
 const db = admin.firestore();
 const MARKER_MODEL_VERSION = "color-marker-v1";
+/** Bump when the timeline build model changes; echoed in success responses so the admin can detect a stale deploy. */
+const TIMELINE_BUILD_TAG = "all-marker-v1";
+
+/**
+ * Structured error result returned by timeline callables instead of throwing.
+ * Firebase onCall strips messages from non-HttpsError throws (client sees only "internal"),
+ * so we return a success:false object carrying the stage + stack for the admin error report.
+ */
+function buildPipelineErrorResult(stage, error) {
+  const err = error || {};
+  return {
+    success: false,
+    reason: "pipeline_error",
+    stage: stage || "unknown",
+    message: err.message ? String(err.message) : String(err),
+    errorName: err.name ? String(err.name) : "Error",
+    errorStack: String(err.stack || "").slice(0, 4000),
+  };
+}
+
+/**
+ * Persist a generate failure to the lesson WITHOUT touching srcArray, so the admin can show/report it.
+ */
+async function persistLessonGenerateError(lessonId, sourceLabel, stage, error) {
+  if (!lessonId) return;
+  try {
+    const err = error || {};
+    await db.collection("lessons").doc(lessonId).set(
+      {
+        lastGenerateError: {
+          stage: stage || "unknown",
+          message: err.message ? String(err.message) : String(err),
+          errorName: err.name ? String(err.name) : "Error",
+          errorStack: String(err.stack || "").slice(0, 4000),
+          source: sourceLabel || null,
+          at: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        timelinePipeline: {
+          source: sourceLabel || null,
+          status: "error",
+          lastErrorStage: stage || "unknown",
+          lastAttemptAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+      },
+      { merge: true },
+    );
+  } catch (persistErr) {
+    console.error("[persistLessonGenerateError] failed to record error:", persistErr.message);
+  }
+}
+
+/**
+ * All pipeline-owned fields written to lessons/{lessonId} by the upload trigger and the
+ * generate/regenerate callables. Wiping these returns a lesson to a clean pre-generate state
+ * WITHOUT touching structural data in lessonMetadata (chapter order/display names).
+ */
+const LESSON_PIPELINE_WIPE_FIELDS = [
+  "srcArray",
+  "originalSrcArray",
+  "yellowScreenRanges",
+  "yellowStopMarkers",
+  "yellowScreenEvents",
+  "yellowDetection",
+  "greenDetection",
+  "greenStopMarkers",
+  "redDetection",
+  "redStopMarkers",
+  "redScreenRanges",
+  "markerModelContext",
+  "chapterTimeline",
+  "timelineReview",
+  "timelinePipeline",
+  "lastGenerateError",
+  "autoMapping",
+];
+
+/** Build a merge-set patch that deletes every pipeline field. Pass extra field names to also clear them. */
+function buildLessonPipelineWipePatch(extraFields = []) {
+  const patch = {};
+  for (const field of LESSON_PIPELINE_WIPE_FIELDS.concat(extraFields)) {
+    patch[field] = admin.firestore.FieldValue.delete();
+  }
+  return patch;
+}
 
 /**
  * Shared marker model context for real-world source videos with overlapping marker usage.
@@ -224,19 +308,25 @@ exports.generateSrcArray = onObjectFinalized(
     const uploadedVideoId = path.basename(filePath, ".mp4");
     const bucket = storage.bucket(bucketName);
     const tmpFile = path.join(os.tmpdir(), `upload_${Date.now()}_${path.basename(filePath)}`);
+    let stage = "init";
+    let lessonId = null;
 
     try {
+      stage = "download";
       console.log("Downloading uploaded lesson video:", filePath);
       await bucket.file(filePath).download({ destination: tmpFile });
 
+      stage = "resolve_lesson";
       // Resolve which lesson this video belongs to (from custom metadata or videoPaths mapping)
-      const lessonId = await resolveLessonIdForUploadedVideo({
+      lessonId = await resolveLessonIdForUploadedVideo({
         filePath,
         objectMetadata: object.metadata || {},
       });
 
+      stage = "load_chapters";
       const chapterTitles = lessonId ? await loadOrderedChapterTitles(lessonId) : [];
 
+      stage = "pipeline";
       const pipeline = await runDeterministicYellowPipeline({
         lessonId: lessonId || null,
         localVideoPath: tmpFile,
@@ -269,6 +359,7 @@ exports.generateSrcArray = onObjectFinalized(
         return;
       }
 
+      stage = "merge";
       let srcArray = pipeline.srcArray;
       if (lessonId) {
         const existingDoc = await db.collection("lessons").doc(lessonId).get();
@@ -287,6 +378,7 @@ exports.generateSrcArray = onObjectFinalized(
 
       // If we know the lesson, write directly to its timeline document.
       // Otherwise, keep the proposal under videoAnalyses so it can be inspected later.
+      stage = "persist";
       if (lessonId) {
         await db.collection("lessons").doc(lessonId).set(
           {
@@ -304,10 +396,12 @@ exports.generateSrcArray = onObjectFinalized(
             markerModelContext: pipeline.markerModelContext || buildMarkerModelContext("upload-trigger"),
             chapterTimeline: pipeline.chapterTimeline,
             timelineReview: pipeline.review,
+            lastGenerateError: admin.firestore.FieldValue.delete(),
             timelinePipeline: {
               version: "yellow-content-v2",
               source: "upload-trigger",
               status: "ok",
+              buildTag: TIMELINE_BUILD_TAG,
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             },
           },
@@ -341,8 +435,11 @@ exports.generateSrcArray = onObjectFinalized(
         );
       }
     } catch (error) {
-      console.error("generateSrcArray failed:", error);
+      console.error(`generateSrcArray failed at stage=${stage}:`, error && error.stack ? error.stack : error);
       // Best‑effort error marker; do not rethrow so the upload itself still succeeds.
+      if (lessonId) {
+        await persistLessonGenerateError(lessonId, "upload-trigger", stage, error);
+      }
       await db.collection("videoAnalyses").doc(uploadedVideoId).set(
         {
           videoPath: filePath,
@@ -350,7 +447,9 @@ exports.generateSrcArray = onObjectFinalized(
             version: "yellow-content-v2",
             source: "upload-trigger",
             status: "failed",
+            lastErrorStage: stage,
             error: error.message || String(error),
+            errorStack: String(error.stack || "").slice(0, 4000),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
         },
@@ -4386,10 +4485,14 @@ exports.detectYellowScreen = onCall(
 
     const bucket = admin.storage().bucket();
     const tmpFile = path.join(os.tmpdir(), `yellow_detect_${Date.now()}.mp4`);
+    let stage = "init";
 
     try {
+      stage = "download";
       await bucket.file(videoPath).download({ destination: tmpFile });
+      stage = "load_chapters";
       const chapterTitles = await loadOrderedChapterTitles(lessonId);
+      stage = "pipeline";
       const pipeline = await runDeterministicYellowPipeline({
         lessonId,
         localVideoPath: tmpFile,
@@ -4432,6 +4535,7 @@ exports.detectYellowScreen = onCall(
         };
       }
 
+      stage = "merge";
       const existingDoc = await db.collection("lessons").doc(lessonId).get();
       const existing = existingDoc.exists ? (existingDoc.data().srcArray || []) : [];
       let srcArray = mergeManualTimelineOverrides(pipeline.srcArray, existing);
@@ -4444,6 +4548,7 @@ exports.detectYellowScreen = onCall(
         };
       }
 
+      stage = "persist";
       await db.collection("lessons").doc(lessonId).set({
         srcArray,
         originalSrcArray: srcArray,
@@ -4459,16 +4564,20 @@ exports.detectYellowScreen = onCall(
         markerModelContext: pipeline.markerModelContext || buildMarkerModelContext("manual-yellow-regenerate"),
         chapterTimeline: pipeline.chapterTimeline,
         timelineReview: pipeline.review,
+        lastGenerateError: admin.firestore.FieldValue.delete(),
         timelinePipeline: {
           version: "yellow-content-v2",
           source: "manual-yellow-regenerate",
           status: "ok",
+          buildTag: TIMELINE_BUILD_TAG,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
       }, { merge: true });
 
       return {
         success: true,
+        buildTag: TIMELINE_BUILD_TAG,
+        timelineModel: pipeline.yellowDetection?.timelineGenerationSummary?.timelineModel || null,
         yellowRanges: pipeline.yellowRanges,
         yellowEvents: pipeline.yellowEvents.length,
         greenDetectionSummary: summarizeGreenDetectionForResponse(pipeline.greenDetection),
@@ -4478,8 +4587,9 @@ exports.detectYellowScreen = onCall(
         timelineGenerationSummary: pipeline.yellowDetection?.timelineGenerationSummary || null,
       };
     } catch (error) {
-      console.error("Error detecting yellow screen:", error);
-      throw new Error(`Yellow screen detection failed: ${error.message}`);
+      console.error(`Error detecting yellow screen at stage=${stage}:`, error && error.stack ? error.stack : error);
+      await persistLessonGenerateError(lessonId, "manual-yellow-regenerate", stage, error);
+      return buildPipelineErrorResult(stage, error);
     } finally {
       if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
     }
@@ -4502,10 +4612,13 @@ exports.generateSrcArrayWithYellowOptions = onCall(
 
     const bucket = admin.storage().bucket();
     const tmpFile = path.join(os.tmpdir(), `yellow_manual_${Date.now()}.mp4`);
+    let stage = "init";
 
     try {
+      stage = "download";
       await bucket.file(videoPath).download({ destination: tmpFile });
 
+      stage = "load_chapters";
       const chapterTitles = await loadOrderedChapterTitles(lessonId);
       console.log("[generateSrcArrayWithYellowOptions]", JSON.stringify({
         lessonId,
@@ -4514,6 +4627,7 @@ exports.generateSrcArrayWithYellowOptions = onCall(
         minDurationSeconds: effectiveMinSeg,
       }));
 
+      stage = "pipeline";
       const pipeline = await runDeterministicYellowPipeline({
         lessonId,
         localVideoPath: tmpFile,
@@ -4561,6 +4675,7 @@ exports.generateSrcArrayWithYellowOptions = onCall(
         };
       }
 
+      stage = "merge";
       const existingDoc = await db.collection("lessons").doc(lessonId).get();
       const existing = existingDoc.exists ? (existingDoc.data().srcArray || []) : [];
       let srcArray = mergeManualTimelineOverrides(pipeline.srcArray, existing);
@@ -4573,6 +4688,7 @@ exports.generateSrcArrayWithYellowOptions = onCall(
         };
       }
 
+      stage = "persist";
       await db.collection("lessons").doc(lessonId).set(
         {
           srcArray,
@@ -4589,10 +4705,12 @@ exports.generateSrcArrayWithYellowOptions = onCall(
           markerModelContext: pipeline.markerModelContext || buildMarkerModelContext("manual-editor"),
           chapterTimeline: pipeline.chapterTimeline,
           timelineReview: pipeline.review,
+          lastGenerateError: admin.firestore.FieldValue.delete(),
           timelinePipeline: {
             version: "yellow-content-v2",
             source: "manual-editor",
             status: "ok",
+            buildTag: TIMELINE_BUILD_TAG,
             minDurationSecondsApplied: effectiveMinSeg,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
@@ -4603,6 +4721,8 @@ exports.generateSrcArrayWithYellowOptions = onCall(
       const tgs = pipeline.yellowDetection?.timelineGenerationSummary || null;
       return {
         success: true,
+        buildTag: TIMELINE_BUILD_TAG,
+        timelineModel: tgs?.timelineModel || null,
         segments: srcArray.length,
         yellowRanges: pipeline.yellowRanges.length,
         greenDetectionSummary: summarizeGreenDetectionForResponse(pipeline.greenDetection),
@@ -4624,8 +4744,9 @@ exports.generateSrcArrayWithYellowOptions = onCall(
         timelineGenerationSummary: tgs,
       };
     } catch (error) {
-      console.error("generateSrcArrayWithYellowOptions failed:", error);
-      throw new Error(`generateSrcArrayWithYellowOptions failed: ${error.message}`);
+      console.error(`generateSrcArrayWithYellowOptions failed at stage=${stage}:`, error && error.stack ? error.stack : error);
+      await persistLessonGenerateError(lessonId, "manual-editor", stage, error);
+      return buildPipelineErrorResult(stage, error);
     } finally {
       if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
     }
@@ -5354,9 +5475,12 @@ exports.generateSrcArrayFromYellowScreens = onCall(
 
     const bucket = admin.storage().bucket();
     const tmpFile = path.join(os.tmpdir(), `srcarray_yellow_${Date.now()}.mp4`);
+    let stage = "init";
 
     try {
+      stage = "download";
       await bucket.file(videoPath).download({ destination: tmpFile });
+      stage = "pipeline";
       const pipeline = await runDeterministicYellowPipeline({
         lessonId,
         localVideoPath: tmpFile,
@@ -5399,6 +5523,7 @@ exports.generateSrcArrayFromYellowScreens = onCall(
         };
       }
 
+      stage = "merge";
       const existingDoc = await db.collection("lessons").doc(lessonId).get();
       const existing = existingDoc.exists ? (existingDoc.data().srcArray || []) : [];
       let mergedSrc = mergeManualTimelineOverrides(pipeline.srcArray, existing);
@@ -5411,6 +5536,7 @@ exports.generateSrcArrayFromYellowScreens = onCall(
         };
       }
 
+      stage = "persist";
       await db.collection("lessons").doc(lessonId).set(
         {
           srcArray: mergedSrc,
@@ -5427,6 +5553,7 @@ exports.generateSrcArrayFromYellowScreens = onCall(
           markerModelContext: pipeline.markerModelContext || buildMarkerModelContext("manual-generate-from-yellow"),
           chapterTimeline: pipeline.chapterTimeline,
           timelineReview: pipeline.review,
+          lastGenerateError: admin.firestore.FieldValue.delete(),
           autoMapping: {
             method: "yellowSequentialDeterministic",
             lessonId,
@@ -5440,6 +5567,7 @@ exports.generateSrcArrayFromYellowScreens = onCall(
             version: "yellow-content-v2",
             source: "manual-generate-from-yellow",
             status: "ok",
+            buildTag: TIMELINE_BUILD_TAG,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
         },
@@ -5449,6 +5577,8 @@ exports.generateSrcArrayFromYellowScreens = onCall(
       const tgs = pipeline.yellowDetection?.timelineGenerationSummary || null;
       return {
         success: true,
+        buildTag: TIMELINE_BUILD_TAG,
+        timelineModel: tgs?.timelineModel || null,
         status: pipeline.review.needsManualReview ? "needs_review" : "ok",
         chapters: chapters.length,
         detections: pipeline.yellowEvents.length,
@@ -5466,8 +5596,9 @@ exports.generateSrcArrayFromYellowScreens = onCall(
         timelineGenerationSummary: tgs,
       };
     } catch (error) {
-      console.error("Error generating srcArray from yellow screens:", error);
-      throw new Error(`generateSrcArrayFromYellowScreens failed: ${error.message}`);
+      console.error(`Error generating srcArray from yellow screens at stage=${stage}:`, error && error.stack ? error.stack : error);
+      await persistLessonGenerateError(lessonId, "manual-generate-from-yellow", stage, error);
+      return buildPipelineErrorResult(stage, error);
     } finally {
       if (fs.existsSync(tmpFile)) {
         fs.unlinkSync(tmpFile);
@@ -5570,5 +5701,57 @@ exports.mapYellowEventsToChaptersWithAI = onCall(
       idxs = events.map((_, i) => i);
     }
     return runAiChapterMappingForEventIndexes(lessonId, idxs);
+  }
+);
+
+/**
+ * Wipe a lesson's stale pipeline state so a fresh upload/generate cannot inherit old data.
+ * - mode "timeline": clears all detection/timeline fields on lessons/{lessonId}; keeps the video assignment.
+ * - mode "full": same, plus detaches the assigned video (videoPaths/{lessonId}.videoPath) and clears the
+ *   temporary forceFirstChapterStartAtZero playback flag, so the lesson is ready for a fresh attach.
+ * Never touches lessonMetadata (chapter order/display names) or Storage files.
+ */
+exports.wipeLessonPipelineData = onCall(
+  {
+    memory: "256MiB",
+    timeoutSeconds: 60,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Sign in required.");
+    }
+    const { lessonId, mode } = request.data || {};
+    if (!lessonId) {
+      throw new HttpsError("invalid-argument", "lessonId is required");
+    }
+    const wipeMode = mode === "full" ? "full" : "timeline";
+    const extraFields = wipeMode === "full" ? ["forceFirstChapterStartAtZero"] : [];
+
+    try {
+      await db.collection("lessons").doc(lessonId).set(
+        buildLessonPipelineWipePatch(extraFields),
+        { merge: true },
+      );
+
+      let videoDetached = false;
+      if (wipeMode === "full") {
+        await db.collection("videoPaths").doc(lessonId).set(
+          { videoPath: admin.firestore.FieldValue.delete() },
+          { merge: true },
+        );
+        videoDetached = true;
+      }
+
+      console.log(`[wipeLessonPipelineData] lesson=${lessonId} mode=${wipeMode} videoDetached=${videoDetached}`);
+      return {
+        success: true,
+        mode: wipeMode,
+        wipedFields: LESSON_PIPELINE_WIPE_FIELDS.concat(extraFields),
+        videoDetached,
+      };
+    } catch (error) {
+      console.error(`[wipeLessonPipelineData] failed for lesson=${lessonId} mode=${wipeMode}:`, error && error.stack ? error.stack : error);
+      throw new HttpsError("internal", `Wipe failed: ${error.message || String(error)}`);
+    }
   }
 );

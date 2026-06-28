@@ -33,6 +33,12 @@ let currentSrcArrayLessonId = null;
 let currentChapterTitlesForEditor = [];
 /** Full detection payload last loaded into the editor, used by the Cursor prompt generators. */
 let currentDetectionDataForEditor = null;
+/** Last Generate-source failure (from a pipeline_error response, a transport/internal catch, or persisted in Firestore). */
+let lastGenerateError = null;
+/** True when the deployed functions returned a timeline build older than the current all-marker model. */
+let staleTimelineBuildDetected = false;
+/** The timeline build model expected from a current deploy. */
+const EXPECTED_TIMELINE_MODEL = 'all-marker-chronological';
 const DEFAULT_MARKER_MODEL_CONTEXT = {
     version: 'color-marker-v1',
     modelIntent: {
@@ -1224,7 +1230,8 @@ function getLessonCardHTML(lesson, playbackOpts) {
                         ${videoOptions}
                     </select>
                     <button class="assign-btn" onclick="assignVideo('${escId}', this)" id="assign-btn-${lesson.lessonId}">${lesson.hasVideo ? 'Update' : 'Assign'}</button>
-                    <button type="button" class="btn btn-secondary btn-sm" onclick="resetLessonAssignment('${escId}', this)"><span class="btn-label">Reset</span></button>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="resetLessonAssignment('${escId}', this)" title="Restore the default video path (videos/${safeLessonId}.mp4). Does not wipe the timeline or detection data."><span class="btn-label">Use default path</span></button>
+                    <button type="button" class="btn btn-danger btn-sm" onclick="resetLessonForReattach('${escId}', this)" title="Detach the current video AND wipe all timeline/detection data so you can attach or upload a fresh video. Chapter metadata is kept."><span class="btn-label">Reset for reattach</span></button>
                     <!-- Regenerate-from-yellow disabled now that generation handles yellow in a single path -->
                 </div>
                 <p class="lesson-attach-hint">After assigning a video, open <strong>Steps 2-3</strong> below to generate and review the timeline.</p>
@@ -1350,6 +1357,7 @@ async function loadSrcArrayForEditor(lessonId) {
     const timelineGenerationSummary = yellowDetection && yellowDetection.timelineGenerationSummary
         ? yellowDetection.timelineGenerationSummary
         : null;
+    const persistedGenerateError = data.lastGenerateError || null;
     return {
         lessonId,
         srcArray,
@@ -1362,6 +1370,7 @@ async function loadSrcArrayForEditor(lessonId) {
         yellowScreenEvents,
         unmappedChapters,
         timelineGenerationSummary,
+        persistedGenerateError,
     };
 }
 
@@ -1957,10 +1966,30 @@ function buildTimelineCursorPrompt(d) {
     return parts.join('\n');
 }
 
+/** Returns the `## Generate error` markdown block, or '' if there is no recorded error. */
+function buildErrorCursorPrompt(d) {
+    d = d || currentDetectionDataForEditor || {};
+    const err = d.lastGenerateError || lastGenerateError || null;
+    if (!err) return '';
+    const parts = [];
+    parts.push('## Generate error');
+    parts.push(`- Stage: \`${err.stage || 'unknown'}\``);
+    parts.push(`- Source: \`${err.source || '(unknown)'}\``);
+    parts.push(`- Error: \`${err.errorName || 'Error'}\`: ${err.message || '(no message)'}`);
+    if (err.code) parts.push(`- Client error code: \`${err.code}\``);
+    if (err.errorStack) {
+        parts.push('');
+        parts.push('```');
+        parts.push(String(err.errorStack));
+        parts.push('```');
+    }
+    return parts.join('\n');
+}
+
 function buildFullCursorPrompt(d) {
     d = d || currentDetectionDataForEditor || {};
     const lessonId = d.lessonId || currentSrcArrayLessonId || '(unknown lesson)';
-    return [
+    const sections = [
         `# Cursor full report — lesson \`${lessonId}\``,
         cursorPromptVideoLine(d),
         '',
@@ -1971,7 +2000,13 @@ function buildFullCursorPrompt(d) {
         cursorPromptColorSection(d, 'red'),
         '',
         buildTimelineCursorPrompt(d).replace(/^## Cursor report: TIMELINE \/ srcArray\n[\s\S]*?\n\n/, '## Timeline / srcArray\n'),
-    ].join('\n');
+    ];
+    const errBlock = buildErrorCursorPrompt(d);
+    if (errBlock) {
+        sections.push('');
+        sections.push(errBlock);
+    }
+    return sections.join('\n');
 }
 
 /** Render the compact "Detection at a glance" strip above the editor toolbar. */
@@ -2007,6 +2042,10 @@ function renderDetectionGlance(d) {
     ];
     if (tg.timelineModel) chips.push(`<span class="glance-chip">${esc(tg.timelineModel)}</span>`);
     states.forEach((s) => chips.push(`<span class="glance-chip glance-chip-review">${esc(s)}</span>`));
+    const genErr = d.lastGenerateError || lastGenerateError || null;
+    if (genErr) {
+        chips.unshift(`<span class="glance-chip glance-chip-error">generate error @ ${esc(genErr.stage || 'unknown')}</span>`);
+    }
     el.innerHTML = `<span class="glance-label">Detection at a glance:</span>${chips.join('')}`;
     el.hidden = false;
 }
@@ -2060,8 +2099,12 @@ async function refreshSrcArrayEditor() {
             yellowScreenEvents,
             unmappedChapters,
             timelineGenerationSummary,
+            persistedGenerateError,
         } = await loadSrcArrayForEditor(selectedLessonId);
         const chapterTitles = await getOrderedChapterTitlesForLesson(selectedLessonId);
+        // Prefer an in-session error (just produced by Generate) but fall back to the persisted one so a
+        // prior failure stays visible/reportable after a page refresh.
+        const effectiveGenerateError = lastGenerateError || persistedGenerateError || null;
         currentDetectionDataForEditor = {
             lessonId,
             srcArray,
@@ -2075,6 +2118,7 @@ async function refreshSrcArrayEditor() {
             unmappedChapters,
             timelineGenerationSummary,
             chapterTitles,
+            lastGenerateError: effectiveGenerateError,
         };
         renderDetectionGlance(currentDetectionDataForEditor);
         renderSrcArrayTable(srcArray, selectedLessonId, chapterTitles, {
@@ -2095,7 +2139,9 @@ async function refreshSrcArrayEditor() {
             }
             const genOk = timelinePipeline && timelinePipeline.status === 'ok';
             const genFailed = timelineReview && timelineReview.generationFailed === true;
-            if (genOk && !genFailed) {
+            if (effectiveGenerateError) {
+                line += ` · Last generate ERRORED @ ${effectiveGenerateError.stage || 'unknown'} — use "Copy error report"`;
+            } else if (genOk && !genFailed) {
                 line += ' · Last generate: OK';
             } else if (timelinePipeline && timelinePipeline.status === 'no_yellow_detected') {
                 line += ' · Last generate: no yellow detected (see yellowDetection)';
@@ -2158,6 +2204,19 @@ function setupCursorPromptButtons() {
     bind('copyRedPromptBtn', buildRedCursorPrompt);
     bind('copyTimelinePromptBtn', buildTimelineCursorPrompt);
     bind('copyFullPromptBtn', buildFullCursorPrompt);
+
+    // The error report can exist even when no detection data is loaded (e.g. download/pipeline failed early).
+    const errBtn = document.getElementById('copyErrorPromptBtn');
+    if (errBtn) {
+        errBtn.addEventListener('click', () => {
+            const text = buildErrorCursorPrompt(currentDetectionDataForEditor);
+            if (!text) {
+                setStatus('No generate error recorded — nothing to copy.', 'error');
+                return;
+            }
+            copyCursorPrompt(text, errBtn);
+        });
+    }
 }
 
 function setupSrcArrayEditorListeners() {
@@ -2271,11 +2330,25 @@ function setupSrcArrayEditorListeners() {
                 if (data.success === false) {
                     const reason = data.reason || 'unknown';
                     const msg = data.message || reason;
+                    if (reason === 'pipeline_error') {
+                        lastGenerateError = {
+                            stage: data.stage || 'unknown',
+                            message: msg,
+                            errorName: data.errorName || 'Error',
+                            errorStack: data.errorStack || '',
+                            source: 'manual-editor',
+                        };
+                        setStatus(`Generate errored at stage "${data.stage || 'unknown'}": ${msg}. Timeline not overwritten — use "Copy error report" to send the details to Cursor.`, 'error');
+                        await refreshSrcArrayEditor();
+                        return;
+                    }
                     const gLine = buildGreenSummaryLineFromResponse(data.greenDetectionSummary);
                     setStatus(`Generate failed: ${msg}. Timeline not overwritten. Check lesson yellowDetection in Firestore.${gLine}`, 'error');
                     await refreshSrcArrayEditor();
                     return;
                 }
+                lastGenerateError = null;
+                staleTimelineBuildDetected = (data.timelineModel || (data.timelineGenerationSummary && data.timelineGenerationSummary.timelineModel) || null) !== EXPECTED_TIMELINE_MODEL;
                 const segs = typeof data.segments === 'number' ? data.segments : 'updated';
                 const yEv = typeof data.yellowEventsDetected === 'number' ? data.yellowEventsDetected : null;
                 const ranges = typeof data.yellowRanges === 'number' ? data.yellowRanges : '?';
@@ -2294,14 +2367,68 @@ function setupSrcArrayEditorListeners() {
                     : '';
                 const gLine = buildGreenSummaryLineFromResponse(data.greenDetectionSummary);
                 const rLine = buildRedSummaryLineFromResponse(data.redDetectionSummary);
-                setStatus(`Generated ${segs} timeline row(s).${yLine}${chLine}${tgLine}${gLine}${rLine}${sum}${states}`, 'success');
+                if (staleTimelineBuildDetected) {
+                    setStatus(`Generated ${segs} timeline row(s) but the deployed functions returned an OLD timeline model (got "${data.timelineModel || 'none'}", expected "${EXPECTED_TIMELINE_MODEL}"). Run: firebase deploy --only functions.${yLine}${chLine}${tgLine}${gLine}${rLine}`, 'error');
+                } else {
+                    setStatus(`Generated ${segs} timeline row(s).${yLine}${chLine}${tgLine}${gLine}${rLine}${sum}${states}`, 'success');
+                }
 
                 await refreshSrcArrayEditor();
             } catch (e) {
                 console.error('generateSrcArrayWithYellowOptions failed:', e);
-                setStatus('Error generating timeline: ' + e.message, 'error');
+                lastGenerateError = {
+                    stage: 'client',
+                    message: e && e.message ? e.message : String(e),
+                    errorName: (e && e.name) || 'Error',
+                    code: (e && e.code) || null,
+                    errorStack: (e && e.stack) ? String(e.stack).slice(0, 4000) : '',
+                    source: 'manual-editor',
+                };
+                setStatus('Error generating timeline: ' + (e && e.message ? e.message : String(e)) + ' — use "Copy error report" to send details to Cursor.', 'error');
+                await refreshSrcArrayEditor();
             } finally {
                 setButtonLoading(generateBtn, false);
+            }
+        });
+    }
+
+    const wipeTimelineBtn = document.getElementById('wipeTimelineBtn');
+    if (wipeTimelineBtn) {
+        wipeTimelineBtn.addEventListener('click', async () => {
+            if (!selectedLessonId) {
+                setStatus('Select a lesson first', 'error');
+                return;
+            }
+            try {
+                requireAuth();
+            } catch (error) {
+                setStatus('Authentication required', 'error');
+                return;
+            }
+            const confirmed = window.confirm('Wipe all timeline and detection data for this lesson? The video assignment stays, and you can Generate source again afterward.');
+            if (!confirmed) return;
+
+            setButtonLoading(wipeTimelineBtn, true);
+            setStatus('Wiping timeline and detection data…', 'scanning');
+            try {
+                const wipeFn = functions.httpsCallable('wipeLessonPipelineData');
+                const result = await wipeFn({ lessonId: selectedLessonId, mode: 'timeline' });
+                const data = result.data || {};
+                if (data.success === false) {
+                    setStatus('Wipe failed: ' + (data.message || 'unknown error'), 'error');
+                    return;
+                }
+                lastGenerateError = null;
+                staleTimelineBuildDetected = false;
+                currentDetectionDataForEditor = null;
+                currentSrcArrayForEditor = [];
+                await refreshSrcArrayEditor();
+                setStatus('Timeline and detection data wiped. Video still assigned — click Generate source to rebuild.', 'success');
+            } catch (e) {
+                console.error('wipeLessonPipelineData (timeline) failed:', e);
+                setStatus('Wipe failed: ' + (e && e.message ? e.message : String(e)), 'error');
+            } finally {
+                setButtonLoading(wipeTimelineBtn, false);
             }
         });
     }
@@ -2808,6 +2935,65 @@ async function resetLessonAssignment(lessonId, btn) {
     }
 }
 
+// Full reset for a fresh attach: wipe all timeline/detection data AND detach the assigned video.
+// Keeps lessonMetadata (chapter order/display names).
+async function resetLessonForReattach(lessonId, btn) {
+    try {
+        requireAuth();
+    } catch (error) {
+        alert('Authentication required. Please log in again.');
+        return;
+    }
+
+    const lesson = lessonsData.find(l => l.lessonId === lessonId);
+    if (!lesson) {
+        setStatus('Lesson not found', 'error');
+        return;
+    }
+
+    const confirmed = window.confirm(`Reset "${lesson.name}" for a fresh attach? This wipes all timeline/detection data AND detaches the current video. Chapter metadata is kept.`);
+    if (!confirmed) return;
+
+    setButtonLoading(btn, true);
+    setStatus(`Resetting ${lesson.name} for reattach…`, 'scanning');
+
+    try {
+        const wipeFn = functions.httpsCallable('wipeLessonPipelineData');
+        const result = await wipeFn({ lessonId, mode: 'full' });
+        const data = result.data || {};
+        if (data.success === false) {
+            setStatus('Reset failed: ' + (data.message || 'unknown error'), 'error');
+            return;
+        }
+
+        lesson.currentPath = '';
+        lesson.hasVideo = false;
+
+        if (selectedLessonId === lessonId) {
+            lastGenerateError = null;
+            staleTimelineBuildDetected = false;
+            currentDetectionDataForEditor = null;
+            currentSrcArrayForEditor = [];
+        }
+
+        renderSidebarTree();
+        displaySelectedLesson();
+        updateVideosCountDisplay();
+        if (selectedLessonId === lessonId) {
+            await refreshSrcArrayEditor();
+        }
+
+        setStatus(`Lesson reset for reattach — timeline wiped and video detached. Attach or upload a new video to begin.`, 'success');
+        setTimeout(() => setStatus('Ready'), 3500);
+    } catch (error) {
+        console.error('Error resetting lesson for reattach:', error);
+        alert('Error resetting lesson for reattach: ' + error.message);
+        setStatus('Error resetting lesson for reattach: ' + error.message, 'error');
+    } finally {
+        setButtonLoading(btn, false);
+    }
+}
+
 // Regenerate srcArray for a lesson's video using yellow-screen detection (server-side)
 async function regenerateSrcArrayFromYellow(lessonId, btn) {
     try {
@@ -3306,6 +3492,7 @@ window.saveChapterDisplayName = saveChapterDisplayName;
 window.adjustChapterIndexSequence = adjustChapterIndexSequence;
 window.saveAllChapters = saveAllChapters;
 window.resetLessonAssignment = resetLessonAssignment;
+window.resetLessonForReattach = resetLessonForReattach;
 async function saveLessonPlaybackSettings(lessonId, btn) {
     try {
         requireAuth();

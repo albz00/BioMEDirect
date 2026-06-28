@@ -224,13 +224,17 @@
                                     <button type="button" id="srcArrayGenerateFromYellowBtn" class="btn btn-secondary btn-sm" title="Re-run detection (yellow + green + red) and rebuild the timeline from the assigned video">
                                         Generate source
                                     </button>
+                                    <button type="button" id="wipeTimelineBtn" class="btn btn-danger btn-sm" title="Delete all timeline + detection data for this lesson (Firestore). Keeps the assigned video so you can Generate source again from a clean state.">
+                                        Wipe timeline
+                                    </button>
                                 </div>
                                 <span id="srcArrayEditorStatus" class="srcarray-editor-status"></span>
                                 <p class="srcarray-editor-hint">Generate source re-runs all three color detectors (yellow = freeze, green = freeze + future menu anchor, red = loop). Dense scan uses native video FPS. The timeline rows below now list every detected card (yellow/green/red) in time order; each color also drives freeze/loop at playback. Playback start/end are content after the card; source/confidence are debug-only.</p>
                                 <div class="cursor-prompt-row">
                                     <span class="cursor-prompt-row-label">Export for Cursor:</span>
                                     <button type="button" id="copyTimelinePromptBtn" class="btn btn-secondary btn-sm cursor-prompt-btn" title="Copy a timeline/playback summary to paste back into Cursor">Copy timeline prompt</button>
-                                    <button type="button" id="copyFullPromptBtn" class="btn btn-primary btn-sm cursor-prompt-btn" title="Copy a full duration + yellow/green/red + timeline report to paste back into Cursor">Copy full report</button>
+                                    <button type="button" id="copyErrorPromptBtn" class="btn btn-danger btn-sm cursor-prompt-btn" title="Copy the last Generate-source error (stage + stack) to paste back into Cursor">Copy error report</button>
+                                    <button type="button" id="copyFullPromptBtn" class="btn btn-primary btn-sm cursor-prompt-btn" title="Copy a full duration + yellow/green/red + timeline + error report to paste back into Cursor">Copy full report</button>
                                 </div>
                                 <div class="srcarray-editor-ai-row">
                                     <button type="button" id="aiTitleMappingBtn" class="btn btn-secondary btn-sm" disabled title="Not active yet — green-to-menu AI mapping is Phase 2. Logic is retained but the action is disabled.">Run AI Title Mapping (Phase 2 — disabled)</button>
