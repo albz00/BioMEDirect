@@ -184,7 +184,7 @@
                 <div class="main-content">
                     <div id="selectedLessonCard" class="collapsible-card">
                         <button type="button" class="collapsible-card-header" id="selectedLessonToggle" aria-expanded="true" aria-controls="selectedLessonBody">
-                            <span class="collapsible-card-title">Selected Lesson</span>
+                            <span class="collapsible-card-title"><span class="admin-step-badge">Step 1</span> Selected Lesson &amp; Video</span>
                             <svg class="collapsible-card-chevron heroicon" width="20" height="20" aria-hidden="true"><use href="#icon-chevron-right"/></svg>
                         </button>
                         <div id="selectedLessonBody" class="collapsible-card-body">
@@ -195,10 +195,12 @@
                     </div>
                     <div id="srcArrayEditorCard" class="srcarray-editor-card collapsed">
                         <button type="button" class="srcarray-editor-header" id="srcArrayEditorToggle" aria-expanded="false" aria-controls="srcArrayEditorBody">
-                            <span class="srcarray-editor-title">Timeline / srcArray Editor</span>
+                            <span class="srcarray-editor-title"><span class="admin-step-badge">Steps 2-3</span> Generate, Review &amp; Export Timeline</span>
                             <svg class="srcarray-editor-chevron heroicon" width="20" height="20" aria-hidden="true"><use href="#icon-chevron-right"/></svg>
                         </button>
                         <div id="srcArrayEditorBody" class="srcarray-editor-body" hidden>
+                            <div id="detectionGlanceStrip" class="detection-glance" hidden></div>
+                            <h3 class="admin-step-header"><span class="admin-step-badge">Step 2</span> Generate the timeline from the assigned video's markers</h3>
                             <div class="srcarray-editor-toolbar">
                                 <button type="button" id="srcArraySaveAllBtn" class="btn btn-primary btn-sm">Save all</button>
                                 <div class="srcarray-editor-generate">
@@ -224,13 +226,19 @@
                                     </button>
                                 </div>
                                 <span id="srcArrayEditorStatus" class="srcarray-editor-status"></span>
-                                <p class="srcarray-editor-hint">Generate source re-runs all three color detectors (yellow = freeze, green = freeze + future menu anchor, red = loop). Dense scan uses native video FPS. The editable timeline rows below are chapters from yellow events; green and red are shown in their own panels and drive freeze/loop at playback. Playback start/end are content after the card; source/confidence are debug-only.</p>
+                                <p class="srcarray-editor-hint">Generate source re-runs all three color detectors (yellow = freeze, green = freeze + future menu anchor, red = loop). Dense scan uses native video FPS. The timeline rows below now list every detected card (yellow/green/red) in time order; each color also drives freeze/loop at playback. Playback start/end are content after the card; source/confidence are debug-only.</p>
+                                <div class="cursor-prompt-row">
+                                    <span class="cursor-prompt-row-label">Export for Cursor:</span>
+                                    <button type="button" id="copyTimelinePromptBtn" class="btn btn-secondary btn-sm cursor-prompt-btn" title="Copy a timeline/playback summary to paste back into Cursor">Copy timeline prompt</button>
+                                    <button type="button" id="copyFullPromptBtn" class="btn btn-primary btn-sm cursor-prompt-btn" title="Copy a full duration + yellow/green/red + timeline report to paste back into Cursor">Copy full report</button>
+                                </div>
                                 <div class="srcarray-editor-ai-row">
-                                    <button type="button" id="aiTitleMappingBtn" class="btn btn-secondary btn-sm">Run AI Title Mapping</button>
-                                    <p id="aiTitleMappingStatus" class="srcarray-editor-ai-status ai-mapping-idle" aria-live="polite">Idle</p>
+                                    <button type="button" id="aiTitleMappingBtn" class="btn btn-secondary btn-sm" disabled title="Not active yet — green-to-menu AI mapping is Phase 2. Logic is retained but the action is disabled.">Run AI Title Mapping (Phase 2 — disabled)</button>
+                                    <p id="aiTitleMappingStatus" class="srcarray-editor-ai-status ai-mapping-idle" aria-live="polite">Disabled — coming in Phase 2</p>
                                 </div>
                                 <div id="aiTitleMappingResults" class="srcarray-editor-ai-results" hidden></div>
                             </div>
+                            <h3 class="admin-step-header"><span class="admin-step-badge">Step 3</span> Review, edit, and export for Cursor</h3>
                             <div class="srcarray-editor-table-wrap">
                                 <table class="srcarray-editor-table" id="srcArrayEditorTable">
                                     <thead>
@@ -254,6 +262,7 @@
                                 <details open>
                                     <summary class="yellow-events-debug-summary">Raw yellow events &amp; mapping (persisted)</summary>
                                     <p class="yellow-events-debug-hint">From <code>yellowDetection.events</code> (fallback: <code>yellowScreenEvents</code>). Mapping explanation from <code>segmentBuildExplanation</code>.</p>
+                                    <button type="button" id="copyYellowPromptBtn" class="btn btn-secondary btn-sm cursor-prompt-btn" title="Copy a yellow-detection summary to paste back into Cursor">Copy Cursor prompt</button>
                                     <h4 class="yellow-events-debug-h4">Events</h4>
                                     <pre id="yellowEventsDebugEvents" class="yellow-events-debug-pre"></pre>
                                     <h4 class="yellow-events-debug-h4">Segment build / mapping</h4>
@@ -264,6 +273,7 @@
                                 <details open>
                                     <summary class="green-detection-summary">Green freeze detection (persisted)</summary>
                                     <p class="green-detection-hint">From <code>greenDetection</code>. This remains separate from yellow and supports dual freeze-frame behavior, menu-link anchoring, and future title mapping.</p>
+                                    <button type="button" id="copyGreenPromptBtn" class="btn btn-secondary btn-sm cursor-prompt-btn" title="Copy a green-detection summary to paste back into Cursor">Copy Cursor prompt</button>
                                     <h4 class="green-detection-h4">Summary</h4>
                                     <pre id="greenDetectionSummaryPre" class="green-detection-pre"></pre>
                                     <h4 class="green-detection-h4">Accepted green events</h4>
@@ -290,8 +300,8 @@
                             </div>
                             <div id="greenMappingScaffoldWrap" class="green-mapping-scaffold" hidden>
                                 <details open>
-                                    <summary class="green-mapping-summary">Green Freeze Frames / Mapping (future scaffold)</summary>
-                                    <p class="green-mapping-hint">Placeholder area for future mapping between detected in-video title frames and real menu titles. This pass is scaffold-only (no edit actions yet).</p>
+                                    <summary class="green-mapping-summary">Green Freeze Frames / Mapping (Phase 2 — disabled)</summary>
+                                    <p class="green-mapping-hint">Disabled — coming in Phase 2. Placeholder for mapping detected in-video green title frames to real menu titles. No edit actions are wired yet; the green-to-menu AI mapping is not active.</p>
                                     <div class="green-mapping-table-wrap">
                                         <table class="green-mapping-table">
                                             <thead>
@@ -315,6 +325,7 @@
                                 <details open>
                                     <summary class="red-detection-summary">Red Loop Markers</summary>
                                     <p class="red-detection-hint">From <code>redDetection</code>. Detected red cards define loops: on reaching a red card, playback returns to the previous freeze marker's content and replays until the user clicks. Calibrate <code>RED_ENTER/EXIT</code> thresholds if red anatomy content causes false positives.</p>
+                                    <button type="button" id="copyRedPromptBtn" class="btn btn-secondary btn-sm cursor-prompt-btn" title="Copy a red-detection summary to paste back into Cursor">Copy Cursor prompt</button>
                                     <h4 class="red-detection-h4">Summary</h4>
                                     <pre id="redDetectionSummaryPre" class="red-detection-pre"></pre>
                                     <h4 class="red-detection-h4">Detected / candidate red events</h4>

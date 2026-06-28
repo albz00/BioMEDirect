@@ -31,6 +31,8 @@ let currentSrcArrayForEditor = [];
 let currentSrcArrayLessonId = null;
 /** Ordered display titles from lessonMetadata.chapterOrder (same order as backend chapter mapping). */
 let currentChapterTitlesForEditor = [];
+/** Full detection payload last loaded into the editor, used by the Cursor prompt generators. */
+let currentDetectionDataForEditor = null;
 const DEFAULT_MARKER_MODEL_CONTEXT = {
     version: 'color-marker-v1',
     modelIntent: {
@@ -1215,6 +1217,7 @@ function getLessonCardHTML(lesson, playbackOpts) {
                     </div>
                     <button class="btn-metadata-save" onclick="saveLessonMetadata('${escId}', this)">Save Lesson Name</button>
                 </div>
+                <h4 class="lesson-attach-title"><span class="admin-step-badge">Step 1</span> Attach a video to this lesson</h4>
                 <div class="assignment-row">
                     <select id="video-select-${lesson.lessonId}">
                         <option value="">${lesson.hasVideo ? 'Change video...' : 'Select a video...'}</option>
@@ -1224,6 +1227,7 @@ function getLessonCardHTML(lesson, playbackOpts) {
                     <button type="button" class="btn btn-secondary btn-sm" onclick="resetLessonAssignment('${escId}', this)"><span class="btn-label">Reset</span></button>
                     <!-- Regenerate-from-yellow disabled now that generation handles yellow in a single path -->
                 </div>
+                <p class="lesson-attach-hint">After assigning a video, open <strong>Steps 2-3</strong> below to generate and review the timeline.</p>
                 <div class="lesson-playback-settings">
                     <h4 class="lesson-playback-settings-title">Playback (temporary)</h4>
                     <label class="lesson-playback-settings-label">
@@ -1783,12 +1787,256 @@ function renderAiTitleMappingResults(data) {
     el.hidden = false;
 }
 
+// ---------------------------------------------------------------------------
+// Cursor prompt generators
+// Build copy-pasteable markdown reports (per color + timeline + full) summarizing
+// what the detection functions found for the selected video, so the operator can
+// paste concrete results back into Cursor when communicating about a lesson.
+// ---------------------------------------------------------------------------
+
+/** mm:ss from seconds. */
+function formatDurationMmSs(sec) {
+    const s = Number(sec);
+    if (!isFinite(s) || s < 0) return '—';
+    const m = Math.floor(s / 60);
+    const r = Math.round(s % 60);
+    return `${m}:${String(r).padStart(2, '0')}`;
+}
+
+function promptRound(x, places = 3) {
+    const n = Number(x);
+    if (!isFinite(n)) return '—';
+    const f = Math.pow(10, places);
+    return String(Math.round(n * f) / f);
+}
+
+/** Shared header line: video basename + total length. */
+function cursorPromptVideoLine(d) {
+    const yd = d.yellowDetection || {};
+    const gd = d.greenDetection || {};
+    const rd = d.redDetection || {};
+    const basename = yd.analyzedVideoBasename || gd.analyzedVideoBasename || rd.analyzedVideoBasename || '(unknown video)';
+    let dur = yd.durationSec;
+    if (dur == null) dur = gd.durationSec;
+    if (dur == null) dur = rd.durationSec;
+    if (dur == null && d.timelineReview) dur = d.timelineReview.duration;
+    const durLine = dur != null ? `${formatDurationMmSs(dur)} (${promptRound(dur)}s)` : '(unknown)';
+    return `- Video: \`${basename}\`\n- Total length: ${durLine}`;
+}
+
+/** Render an events array as a compact markdown table for one color. */
+function cursorPromptEventsTable(events, color) {
+    const evs = Array.isArray(events) ? events : [];
+    if (evs.length === 0) return '_No accepted events._';
+    const startKey = color === 'green' ? 'greenStart' : (color === 'red' ? 'redStart' : 'yellowStart');
+    const endKey = color === 'green' ? 'greenEnd' : (color === 'red' ? 'redEnd' : 'yellowEnd');
+    const lines = ['| # | start | end | dur(s) | contentStart | confidence |', '|---|---|---|---|---|---|'];
+    evs.forEach((e, i) => {
+        const s = e[startKey] != null ? e[startKey] : e.startTime;
+        const en = e[endKey] != null ? e[endKey] : e.endTime;
+        const dur = e.duration != null ? e.duration : (isFinite(Number(en) - Number(s)) ? Number(en) - Number(s) : null);
+        const cs = e.contentStart != null ? promptRound(e.contentStart) : '—';
+        const conf = e.detectionConfidence != null ? promptRound(e.detectionConfidence) : '—';
+        lines.push(`| ${e.eventIndex != null ? e.eventIndex : i + 1} | ${promptRound(s)} | ${promptRound(en)} | ${promptRound(dur)} | ${cs} | ${conf} |`);
+    });
+    return lines.join('\n');
+}
+
+const CURSOR_PROMPT_FUNCTION_CHAINS = {
+    yellow: 'scoreTitleCardFrame -> pixelStrictTitleYellow -> buildYellowEventsFromFrames -> attachContentStartsToEvents',
+    green: 'scoreFreezeGreenFrame -> pixelStrictFreezeGreen -> buildGreenEventsFromFrames',
+    red: 'scoreFreezeRedFrame -> pixelStrictLoopRed -> buildRedEventsFromFrames',
+};
+
+function cursorPromptColorSection(d, color) {
+    const det = color === 'green' ? (d.greenDetection || {})
+        : (color === 'red' ? (d.redDetection || {}) : (d.yellowDetection || {}));
+    const label = color.charAt(0).toUpperCase() + color.slice(1);
+    const events = Array.isArray(det.events) ? det.events
+        : (color === 'yellow' && Array.isArray(d.yellowScreenEvents) ? d.yellowScreenEvents : []);
+    const candidateCount = det.candidateSpanCount != null
+        ? det.candidateSpanCount
+        : (det.candidateSpanSummary && det.candidateSpanSummary.candidateSpanCount != null
+            ? det.candidateSpanSummary.candidateSpanCount
+            : (Array.isArray(det.rawCandidateSpans) ? det.rawCandidateSpans.length : '—'));
+    const acceptedCount = det.acceptedEventCount != null ? det.acceptedEventCount : events.length;
+    const rejectedCount = Array.isArray(det.rejectedSpans) ? det.rejectedSpans.length : '—';
+    const parts = [];
+    parts.push(`### ${label} markers`);
+    parts.push(`- Detector chain: \`${CURSOR_PROMPT_FUNCTION_CHAINS[color]}\``);
+    if (det.colorPipeline) parts.push(`- Pipeline label: \`${det.colorPipeline}\``);
+    if (det.thresholds) parts.push(`- Thresholds: \`${JSON.stringify(det.thresholds)}\``);
+    parts.push(`- Candidates: ${candidateCount} · Accepted: ${acceptedCount} · Rejected: ${rejectedCount}`);
+    if (det.status) parts.push(`- Status: ${det.status}`);
+    if (det.zeroReason) parts.push(`- zeroReason: \`${det.zeroReason}\``);
+    if (det.rejectionReasonSummary && Object.keys(det.rejectionReasonSummary).length) {
+        parts.push(`- Rejection reasons: \`${JSON.stringify(det.rejectionReasonSummary)}\``);
+    }
+    parts.push('');
+    parts.push(`**Accepted ${label.toLowerCase()} events (${events.length}):**`);
+    parts.push(cursorPromptEventsTable(events, color));
+    return parts.join('\n');
+}
+
+function cursorPromptObservedStub(color) {
+    const what = color === 'timeline' ? 'timeline/playback' : `${color} cards`;
+    return `\n\n**Observed vs expected (fill in):**\n- What I saw with the ${what}: \n- What I expected: \n- Specific timestamps to check: `;
+}
+
+function buildYellowCursorPrompt(d) {
+    d = d || currentDetectionDataForEditor || {};
+    return [
+        '## Cursor report: YELLOW freeze-card detection',
+        cursorPromptVideoLine(d),
+        '',
+        cursorPromptColorSection(d, 'yellow'),
+        cursorPromptObservedStub('yellow'),
+    ].join('\n');
+}
+
+function buildGreenCursorPrompt(d) {
+    d = d || currentDetectionDataForEditor || {};
+    return [
+        '## Cursor report: GREEN menu/freeze-card detection',
+        cursorPromptVideoLine(d),
+        '',
+        cursorPromptColorSection(d, 'green'),
+        cursorPromptObservedStub('green'),
+    ].join('\n');
+}
+
+function buildRedCursorPrompt(d) {
+    d = d || currentDetectionDataForEditor || {};
+    return [
+        '## Cursor report: RED loop-card detection',
+        cursorPromptVideoLine(d),
+        '',
+        cursorPromptColorSection(d, 'red'),
+        cursorPromptObservedStub('red'),
+    ].join('\n');
+}
+
+function buildTimelineCursorPrompt(d) {
+    d = d || currentDetectionDataForEditor || {};
+    const tg = d.timelineGenerationSummary
+        || (d.yellowDetection && d.yellowDetection.timelineGenerationSummary)
+        || {};
+    const review = d.timelineReview || {};
+    const rows = Array.isArray(d.srcArray) ? d.srcArray : [];
+    const counts = tg.markerRowCounts || {};
+    const states = Array.isArray(review.states) ? review.states : [];
+    const parts = [];
+    parts.push('## Cursor report: TIMELINE / srcArray');
+    parts.push(cursorPromptVideoLine(d));
+    parts.push('');
+    parts.push('- Builders: `detectAllColorCardsDense` (single-pass decode) -> `generateAllMarkerTimeline`');
+    if (tg.timelineModel) parts.push(`- Timeline model: \`${tg.timelineModel}\``);
+    parts.push(`- srcArray rows persisted: ${rows.length}`);
+    parts.push(`- Marker row counts: yellow ${counts.yellow != null ? counts.yellow : '—'}, green ${counts.green != null ? counts.green : '—'}, red ${counts.red != null ? counts.red : '—'}, total ${counts.total != null ? counts.total : '—'}`);
+    if (tg.validPlayableSegmentCount != null) parts.push(`- Playable segments: ${tg.validPlayableSegmentCount}`);
+    if (tg.unmappedChapterCount != null) parts.push(`- Unmapped chapters: ${tg.unmappedChapterCount}`);
+    if (tg.invalidRowCountFilteredOut != null) parts.push(`- Invalid rows filtered: ${tg.invalidRowCountFilteredOut}`);
+    parts.push(`- Review states: ${states.length ? states.join(', ') : '(none)'}`);
+    parts.push('');
+    parts.push('**Timeline rows:**');
+    if (rows.length === 0) {
+        parts.push('_No rows._');
+    } else {
+        const lines = ['| # | type | start | end | menuLink |', '|---|---|---|---|---|'];
+        rows.forEach((r, i) => {
+            const color = r.markerColor || (r.loop ? 'red' : (r.role === 'opening' || (r.src_start == null && r.src_end == null) ? 'opening' : 'yellow'));
+            const sem = r.markerSemantics || (r.loop ? 'loop' : (color === 'opening' ? 'menu' : 'freeze'));
+            const s = r.src_start != null ? promptRound(r.src_start) : '—';
+            const en = r.src_end != null ? promptRound(r.src_end) : '—';
+            const link = (r.menuLink != null ? String(r.menuLink) : '').replace(/\|/g, '/');
+            lines.push(`| ${i} | ${color}/${sem} | ${s} | ${en} | ${link} |`);
+        });
+        parts.push(lines.join('\n'));
+    }
+    parts.push(cursorPromptObservedStub('timeline'));
+    return parts.join('\n');
+}
+
+function buildFullCursorPrompt(d) {
+    d = d || currentDetectionDataForEditor || {};
+    const lessonId = d.lessonId || currentSrcArrayLessonId || '(unknown lesson)';
+    return [
+        `# Cursor full report — lesson \`${lessonId}\``,
+        cursorPromptVideoLine(d),
+        '',
+        cursorPromptColorSection(d, 'yellow'),
+        '',
+        cursorPromptColorSection(d, 'green'),
+        '',
+        cursorPromptColorSection(d, 'red'),
+        '',
+        buildTimelineCursorPrompt(d).replace(/^## Cursor report: TIMELINE \/ srcArray\n[\s\S]*?\n\n/, '## Timeline / srcArray\n'),
+    ].join('\n');
+}
+
+/** Render the compact "Detection at a glance" strip above the editor toolbar. */
+function renderDetectionGlance(d) {
+    const el = document.getElementById('detectionGlanceStrip');
+    if (!el) return;
+    if (!d) {
+        el.hidden = true;
+        el.innerHTML = '';
+        return;
+    }
+    const yd = d.yellowDetection || {};
+    const gd = d.greenDetection || {};
+    const rd = d.redDetection || {};
+    let dur = yd.durationSec;
+    if (dur == null) dur = gd.durationSec;
+    if (dur == null) dur = rd.durationSec;
+    if (dur == null && d.timelineReview) dur = d.timelineReview.duration;
+    const yCount = Array.isArray(yd.events) ? yd.events.length
+        : (Array.isArray(d.yellowScreenEvents) ? d.yellowScreenEvents.length : 0);
+    const gCount = gd.acceptedEventCount != null ? gd.acceptedEventCount : (Array.isArray(gd.events) ? gd.events.length : 0);
+    const rCount = rd.acceptedEventCount != null ? rd.acceptedEventCount : (Array.isArray(rd.events) ? rd.events.length : 0);
+    const rows = Array.isArray(d.srcArray) ? d.srcArray.length : 0;
+    const tg = d.timelineGenerationSummary || (yd && yd.timelineGenerationSummary) || {};
+    const states = (d.timelineReview && Array.isArray(d.timelineReview.states)) ? d.timelineReview.states : [];
+    const esc = escapeHtmlAdmin;
+    const chips = [
+        `<span class="glance-chip glance-chip-dur">Length ${esc(formatDurationMmSs(dur))}</span>`,
+        `<span class="glance-chip srcarray-type-yellow">Yellow ${yCount}</span>`,
+        `<span class="glance-chip srcarray-type-green">Green ${gCount}</span>`,
+        `<span class="glance-chip srcarray-type-red">Red ${rCount}</span>`,
+        `<span class="glance-chip">Rows ${rows}</span>`,
+    ];
+    if (tg.timelineModel) chips.push(`<span class="glance-chip">${esc(tg.timelineModel)}</span>`);
+    states.forEach((s) => chips.push(`<span class="glance-chip glance-chip-review">${esc(s)}</span>`));
+    el.innerHTML = `<span class="glance-label">Detection at a glance:</span>${chips.join('')}`;
+    el.hidden = false;
+}
+
+/** Copy generated prompt text to clipboard, flashing the button label (mirrors instructions copy). */
+function copyCursorPrompt(text, btn) {
+    if (!text) {
+        setStatus('Nothing to copy yet — generate a timeline first.', 'error');
+        return;
+    }
+    const restore = (msg) => {
+        if (!btn) return;
+        const orig = btn.getAttribute('data-orig-label') || btn.textContent;
+        btn.setAttribute('data-orig-label', orig);
+        btn.textContent = msg;
+        setTimeout(() => { btn.textContent = orig; }, 1500);
+    };
+    navigator.clipboard.writeText(text).then(() => restore('Copied!')).catch(() => {
+        restore('Copy failed');
+    });
+}
+
 async function refreshSrcArrayEditor() {
     const statusEl = document.getElementById('srcArrayEditorStatus');
     if (!selectedLessonId) {
         currentSrcArrayForEditor = [];
         currentSrcArrayLessonId = null;
         currentChapterTitlesForEditor = [];
+        currentDetectionDataForEditor = null;
+        renderDetectionGlance(null);
         renderSrcArrayTable([], null, [], {});
         renderYellowEventsDebugPanel(null, null);
         renderGreenDetectionPanels(null, false);
@@ -1814,6 +2062,21 @@ async function refreshSrcArrayEditor() {
             timelineGenerationSummary,
         } = await loadSrcArrayForEditor(selectedLessonId);
         const chapterTitles = await getOrderedChapterTitlesForLesson(selectedLessonId);
+        currentDetectionDataForEditor = {
+            lessonId,
+            srcArray,
+            timelinePipeline,
+            timelineReview,
+            yellowDetection,
+            greenDetection,
+            redDetection,
+            markerModelContext,
+            yellowScreenEvents,
+            unmappedChapters,
+            timelineGenerationSummary,
+            chapterTitles,
+        };
+        renderDetectionGlance(currentDetectionDataForEditor);
         renderSrcArrayTable(srcArray, selectedLessonId, chapterTitles, {
             unmappedChapters,
             timelineGenerationSummary,
@@ -1854,6 +2117,8 @@ async function refreshSrcArrayEditor() {
         }
     } catch (e) {
         console.error('refreshSrcArrayEditor:', e);
+        currentDetectionDataForEditor = null;
+        renderDetectionGlance(null);
         renderSrcArrayTable([], null, [], {});
         renderYellowEventsDebugPanel(null, null);
         renderGreenDetectionPanels(null, false);
@@ -1875,10 +2140,31 @@ function setupCollapsibleCard(cardId, toggleId, bodyId) {
     });
 }
 
+/** Wire the per-section + full Cursor prompt copy buttons. */
+function setupCursorPromptButtons() {
+    const bind = (id, builder) => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        btn.addEventListener('click', () => {
+            if (!currentDetectionDataForEditor) {
+                setStatus('No detection data loaded yet — select a lesson and Generate source.', 'error');
+                return;
+            }
+            copyCursorPrompt(builder(currentDetectionDataForEditor), btn);
+        });
+    };
+    bind('copyYellowPromptBtn', buildYellowCursorPrompt);
+    bind('copyGreenPromptBtn', buildGreenCursorPrompt);
+    bind('copyRedPromptBtn', buildRedCursorPrompt);
+    bind('copyTimelinePromptBtn', buildTimelineCursorPrompt);
+    bind('copyFullPromptBtn', buildFullCursorPrompt);
+}
+
 function setupSrcArrayEditorListeners() {
     setupCollapsibleCard('srcArrayEditorCard', 'srcArrayEditorToggle', 'srcArrayEditorBody');
     setupCollapsibleCard('selectedLessonCard', 'selectedLessonToggle', 'selectedLessonBody');
     setupCollapsibleCard('videosCard', 'videosCardToggle', 'videosCardBody');
+    setupCursorPromptButtons();
     const saveBtn = document.getElementById('srcArraySaveAllBtn');
     const generateBtn = document.getElementById('srcArrayGenerateFromYellowBtn');
     const minSegInput = document.getElementById('srcArrayMinSegInput');
@@ -2022,7 +2308,10 @@ function setupSrcArrayEditorListeners() {
 
     const aiTitleMappingBtn = document.getElementById('aiTitleMappingBtn');
     if (aiTitleMappingBtn) {
+        // Phase 2 feature: keep the wiring/logic but disable the action for now.
+        aiTitleMappingBtn.disabled = true;
         aiTitleMappingBtn.addEventListener('click', async () => {
+            if (aiTitleMappingBtn.disabled) return;
             const resEl = document.getElementById('aiTitleMappingResults');
             if (!selectedLessonId) {
                 setAiTitleMappingStatus('failed', 'Select a lesson first');
