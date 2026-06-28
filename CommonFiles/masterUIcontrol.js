@@ -25,6 +25,24 @@ var PAUSE_AT_FREEZE_MARKERS = true;
 /** @deprecated alias — use PAUSE_AT_FREEZE_MARKERS */
 var PAUSE_AT_YELLOW_MARKERS = PAUSE_AT_FREEZE_MARKERS;
 
+/**
+ * TEMPORARY TESTING MODE — remove once green->menu mapping (Phase 2) lands.
+ * When on, every menu link plays from the very start of the video (t=0) instead of
+ * previewing a chapter's end frame. Toggle with the flag below or the `?menuFromZero=1`
+ * query param. Default OFF so production behavior is unchanged.
+ */
+var TEMP_MENU_LINKS_PLAY_FROM_ZERO = false;
+
+function menuLinksPlayFromZeroEnabled() {
+    if (TEMP_MENU_LINKS_PLAY_FROM_ZERO === true) return true;
+    try {
+        if (typeof location !== "undefined" && location.search) {
+            return /[?&]menuFromZero=1\b/.test(location.search);
+        }
+    } catch (e) { /* ignore */ }
+    return false;
+}
+
 /** Unified freeze markers (yellow + green), sorted by crossAt. */
 var freezeMarkers = [];
 /** Loop markers (red), sorted by crossAt. */
@@ -134,6 +152,8 @@ function isFirstChapterSegment(seg) {
 }
 
 function shouldApplyForceZeroForSlide(seg, slideIdx) {
+    // Temporary testing aid: force every slide to start at t=0.
+    if (menuLinksPlayFromZeroEnabled()) return true;
     if (!shouldForceFirstChapterStartAtZero()) return false;
     if (isFirstPlayableChapterSlide(slideIdx)) return true;
     if (isFirstChapterSegment(seg)) return true;
@@ -742,6 +762,49 @@ function applyRedCardLeapfrogDuringGuidedPlay(videoEl, t) {
             markerType: "red",
         });
         return past;
+    }
+    return t;
+}
+
+/**
+ * Per-tick color-card safety net during guided play (backstop for coarse timeupdate jumps):
+ *  - red control cards: skip past invisibly (delegates to applyRedCardLeapfrogDuringGuidedPlay).
+ *  - yellow/green freeze cards: if the playhead landed INSIDE a freeze span (not caught by the
+ *    crossing path in tryCommitSegmentTargetFreezeStop), commit the freeze stop now so the card
+ *    never renders. Pause + seek past via applyFreezeMarkerStopAtCrossing.
+ * Returns the (possibly red-advanced) time; when a freeze stop fires, currentTime is moved to the
+ * post-card stop target, so the caller's currentTime-change guard short-circuits the tick.
+ */
+function applyColorCardSafetyDuringGuidedPlay(videoEl, t) {
+    if (!videoEl || !isFinite(Number(t))) return t;
+    if (!isPlayingSegmentForward()) return t;
+
+    var afterRed = applyRedCardLeapfrogDuringGuidedPlay(videoEl, t);
+    if (Math.abs(Number(afterRed) - Number(t)) > 1e-5) {
+        return afterRed;
+    }
+
+    if (guidedPlaybackState !== "playing_to_next_freeze") return t;
+    var c = Number(t);
+    for (var i = 0; i < freezeMarkers.length; i++) {
+        var mk = freezeMarkers[i];
+        if (!mk) continue;
+        var s = Number(mk.start);
+        var e = Number(mk.end);
+        if (!isFinite(s) || !isFinite(e)) continue;
+        if (c >= s - 1e-4 && c <= e + COLOR_CARD_RANGE_SKIP_EPS_SEC) {
+            logPlayerMarkerDebug({
+                event: "color_card_safety_freeze_backstop",
+                freezeStopFired: true,
+                leapfrogApplied: true,
+                markerType: mk.markerType,
+                markerIndex: i,
+                insideSpanStop: true,
+                previousTime: Math.round(c * 1000) / 1000,
+            });
+            applyFreezeMarkerStopAtCrossing(videoEl, mk, i, t, t, "color_card_safety_inside_freeze_span");
+            return t;
+        }
     }
     return t;
 }
@@ -1613,7 +1676,7 @@ function initializePlayer(videoUrl, timelineArray) {
                     }
                 }
 
-                t = applyRedCardLeapfrogDuringGuidedPlay(this, t);
+                t = applyColorCardSafetyDuringGuidedPlay(this, t);
                 if (Math.abs(Number(this.currentTime) - Number(t)) > 1e-5) {
                     lastPlaybackTimeForMarkerCheck = Number(this.currentTime);
                     return;

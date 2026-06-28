@@ -2613,17 +2613,28 @@ function mergeManualTimelineOverrides(newSegments, existing) {
   if (!Array.isArray(newSegments) || newSegments.length === 0) return newSegments;
   if (!Array.isArray(existing) || existing.length === 0) return newSegments;
 
+  // Key locked rows by stable marker id (markerColor@start), falling back to legacy chapterIndex.
+  const byKey = new Map();
   const byChapter = new Map();
   for (const seg of existing) {
-    if (seg && seg.manualOverride === true && seg.chapterIndex != null) {
-      byChapter.set(seg.chapterIndex, seg);
+    if (seg && seg.manualOverride === true) {
+      const key = markerRowKey(seg);
+      if (key) byKey.set(key, seg);
+      if (seg.chapterIndex != null) byChapter.set(seg.chapterIndex, seg);
     }
   }
-  if (byChapter.size === 0) return newSegments;
+  if (byKey.size === 0 && byChapter.size === 0) return newSegments;
 
   return newSegments.map((neu) => {
-    if (!neu || neu.chapterIndex == null || !byChapter.has(neu.chapterIndex)) return neu;
-    const old = byChapter.get(neu.chapterIndex);
+    if (!neu) return neu;
+    const neuKey = markerRowKey(neu);
+    let old = null;
+    if (neuKey && byKey.has(neuKey)) {
+      old = byKey.get(neuKey);
+    } else if (neu.chapterIndex != null && byChapter.has(neu.chapterIndex)) {
+      old = byChapter.get(neu.chapterIndex);
+    }
+    if (!old) return neu;
     return {
       ...neu,
       src_start: old.src_start,
@@ -2644,65 +2655,70 @@ function mergeManualTimelineOverrides(newSegments, existing) {
   });
 }
 
-function detectYellowEventsDense(video, streamInfo, options = {}) {
-  const minDurationSeconds = Number.isFinite(options.minDurationSeconds) && options.minDurationSeconds > 0
-    ? options.minDurationSeconds
-    : 0.06;
+/** Score one decoded RGB frame for all three card colors (single-pass shared scoring). */
+function scoreFrameForYellow(frameData, targetWidth, targetHeight) {
+  const scored = scoreTitleCardFrame(frameData, targetWidth, targetHeight, 4);
+  return {
+    yellowRatio: scored.yellowRatio,
+    warmFullRatio: scored.warmFullRatio,
+    strictFullRatio: scored.strictFullRatio,
+    maroonFullRatio: scored.maroonFullRatio,
+    warmCombined: scored.warmCombined,
+    strictCombined: scored.strictCombined,
+    structureGate: scored.structureGate,
+    coveragePenalty: scored.coveragePenalty,
+    lumaStd: scored.lumaStd,
+    edgeMean: scored.edgeMean,
+  };
+}
 
-  return new Promise((resolve, reject) => {
-    const sourceWidth = Number.isFinite(streamInfo.width) ? streamInfo.width : 1280;
-    const sourceHeight = Number.isFinite(streamInfo.height) ? streamInfo.height : 720;
-    const frameRate = Number.isFinite(streamInfo.frameRate) && streamInfo.frameRate > 0 ? streamInfo.frameRate : 30;
+function scoreFrameForGreen(frameData, targetWidth, targetHeight) {
+  const scored = scoreFreezeGreenFrame(frameData, targetWidth, targetHeight, 4);
+  return {
+    greenRatio: scored.greenRatio,
+    strictFullRatio: scored.strictFullRatio,
+    strictCenterRatio: scored.strictCenterRatio,
+    strictCombined: scored.strictCombined,
+    avgSaturation: scored.avgSaturation,
+    avgBrightness: scored.avgBrightness,
+    lumaStd: scored.lumaStd,
+    edgeMean: scored.edgeMean,
+    structureGate: scored.structureGate,
+    coveragePenalty: scored.coveragePenalty,
+  };
+}
 
-    const targetWidth = Math.min(480, sourceWidth);
-    const targetHeight = Math.max(2, Math.floor((sourceHeight / sourceWidth) * targetWidth / 2) * 2);
-    const frameSize = targetWidth * targetHeight * 3;
-    let buffer = Buffer.alloc(0);
-    const frameDetections = [];
-    let stderrTail = "";
+function scoreFrameForRed(frameData, targetWidth, targetHeight) {
+  const scored = scoreFreezeRedFrame(frameData, targetWidth, targetHeight, 4);
+  return {
+    redRatio: scored.redRatio,
+    strictFullRatio: scored.strictFullRatio,
+    strictCenterRatio: scored.strictCenterRatio,
+    strictCombined: scored.strictCombined,
+    avgSaturation: scored.avgSaturation,
+    avgBrightness: scored.avgBrightness,
+    lumaStd: scored.lumaStd,
+    edgeMean: scored.edgeMean,
+    structureGate: scored.structureGate,
+    coveragePenalty: scored.coveragePenalty,
+  };
+}
 
-    const proc = spawn(ffmpegPath, [
-      "-i", video,
-      "-vf", `scale=${targetWidth}:${targetHeight}:flags=fast_bilinear`,
-      "-f", "rawvideo",
-      "-pix_fmt", "rgb24",
-      "-vsync", "cfr",
-      "-an",
-      "-",
-    ]);
+function computeDecodeDimensions(streamInfo) {
+  const sourceWidth = Number.isFinite(streamInfo.width) ? streamInfo.width : 1280;
+  const sourceHeight = Number.isFinite(streamInfo.height) ? streamInfo.height : 720;
+  const frameRate = Number.isFinite(streamInfo.frameRate) && streamInfo.frameRate > 0 ? streamInfo.frameRate : 30;
+  const targetWidth = Math.min(480, sourceWidth);
+  const targetHeight = Math.max(2, Math.floor((sourceHeight / sourceWidth) * targetWidth / 2) * 2);
+  return { frameRate, targetWidth, targetHeight };
+}
 
-    proc.stderr.on("data", (data) => {
-      const s = data.toString();
-      stderrTail = (stderrTail + s).slice(-4000);
-    });
-
-    proc.stdout.on("data", (chunk) => {
-      buffer = Buffer.concat([buffer, chunk]);
-      while (buffer.length >= frameSize) {
-        const frameData = buffer.slice(0, frameSize);
-        buffer = buffer.slice(frameSize);
-        const scored = scoreTitleCardFrame(frameData, targetWidth, targetHeight, 4);
-        frameDetections.push({
-          yellowRatio: scored.yellowRatio,
-          warmFullRatio: scored.warmFullRatio,
-          strictFullRatio: scored.strictFullRatio,
-          maroonFullRatio: scored.maroonFullRatio,
-          warmCombined: scored.warmCombined,
-          strictCombined: scored.strictCombined,
-          structureGate: scored.structureGate,
-          coveragePenalty: scored.coveragePenalty,
-          lumaStd: scored.lumaStd,
-          edgeMean: scored.edgeMean,
-        });
-      }
-    });
-    proc.on("close", async (code) => {
-      if (code !== 0 && code !== 1) {
-        console.error("[yellow-dense] ffmpeg failed code", code, stderrTail.slice(-800));
-        reject(new Error(`Dense yellow detection failed (ffmpeg code ${code})`));
-        return;
-      }
-
+/**
+ * Build the yellow detection result object from per-frame yellow scores.
+ * Extracted verbatim from detectYellowEventsDense so the single-pass decode and the
+ * standalone detector share one code path (no tuning changes).
+ */
+async function finalizeYellowDetection(frameDetections, frameRate, minDurationSeconds, options, video, targetWidth, targetHeight, stderrTail) {
       const built = buildYellowEventsFromFrames(frameDetections, frameRate, minDurationSeconds);
       const rawGroupedEvents = built.events;
       const rawCandidateSpans = built.rawCandidateSpans || [];
@@ -2890,7 +2906,7 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
         console.error("[yellow-dense] stderr tail:", stderrTail.slice(-1200));
       }
 
-      resolve({
+      return {
         frameRate,
         frameCount: frameDetections.length,
         yellowEvents,
@@ -2914,24 +2930,16 @@ function detectYellowEventsDense(video, streamInfo, options = {}) {
         zeroReason,
         calibrationReport,
         stderrTail: frameDetections.length === 0 ? stderrTail.slice(-2000) : undefined,
-      });
-    });
-    proc.on("error", reject);
-  });
+      };
 }
 
-function detectGreenEventsDense(video, streamInfo, options = {}) {
+function detectYellowEventsDense(video, streamInfo, options = {}) {
   const minDurationSeconds = Number.isFinite(options.minDurationSeconds) && options.minDurationSeconds > 0
     ? options.minDurationSeconds
     : 0.06;
 
   return new Promise((resolve, reject) => {
-    const sourceWidth = Number.isFinite(streamInfo.width) ? streamInfo.width : 1280;
-    const sourceHeight = Number.isFinite(streamInfo.height) ? streamInfo.height : 720;
-    const frameRate = Number.isFinite(streamInfo.frameRate) && streamInfo.frameRate > 0 ? streamInfo.frameRate : 30;
-
-    const targetWidth = Math.min(480, sourceWidth);
-    const targetHeight = Math.max(2, Math.floor((sourceHeight / sourceWidth) * targetWidth / 2) * 2);
+    const { frameRate, targetWidth, targetHeight } = computeDecodeDimensions(streamInfo);
     const frameSize = targetWidth * targetHeight * 3;
     let buffer = Buffer.alloc(0);
     const frameDetections = [];
@@ -2957,29 +2965,27 @@ function detectGreenEventsDense(video, streamInfo, options = {}) {
       while (buffer.length >= frameSize) {
         const frameData = buffer.slice(0, frameSize);
         buffer = buffer.slice(frameSize);
-        const scored = scoreFreezeGreenFrame(frameData, targetWidth, targetHeight, 4);
-        frameDetections.push({
-          greenRatio: scored.greenRatio,
-          strictFullRatio: scored.strictFullRatio,
-          strictCenterRatio: scored.strictCenterRatio,
-          strictCombined: scored.strictCombined,
-          avgSaturation: scored.avgSaturation,
-          avgBrightness: scored.avgBrightness,
-          lumaStd: scored.lumaStd,
-          edgeMean: scored.edgeMean,
-          structureGate: scored.structureGate,
-          coveragePenalty: scored.coveragePenalty,
-        });
+        frameDetections.push(scoreFrameForYellow(frameData, targetWidth, targetHeight));
       }
     });
-
-    proc.on("close", (code) => {
+    proc.on("close", async (code) => {
       if (code !== 0 && code !== 1) {
-        console.error("[green-dense] ffmpeg failed code", code, stderrTail.slice(-800));
-        reject(new Error(`Dense green detection failed (ffmpeg code ${code})`));
+        console.error("[yellow-dense] ffmpeg failed code", code, stderrTail.slice(-800));
+        reject(new Error(`Dense yellow detection failed (ffmpeg code ${code})`));
         return;
       }
+      try {
+        resolve(await finalizeYellowDetection(frameDetections, frameRate, minDurationSeconds, options, video, targetWidth, targetHeight, stderrTail));
+      } catch (e) {
+        reject(e);
+      }
+    });
+    proc.on("error", reject);
+  });
+}
 
+/** Build the green detection result object from per-frame green scores. Extracted from detectGreenEventsDense. */
+function finalizeGreenDetection(frameDetections, frameRate, minDurationSeconds, video, stderrTail) {
       const built = buildGreenEventsFromFrames(frameDetections, frameRate, minDurationSeconds);
       const greenEvents = built.events || [];
       const rawCandidateSpans = built.rawCandidateSpans || [];
@@ -3034,7 +3040,7 @@ function detectGreenEventsDense(video, streamInfo, options = {}) {
         zeroReason,
       }));
 
-      resolve({
+      return {
         frameRate,
         frameCount: frameDetections.length,
         greenEvents,
@@ -3049,25 +3055,16 @@ function detectGreenEventsDense(video, streamInfo, options = {}) {
         },
         zeroReason,
         stderrTail: frameDetections.length === 0 ? stderrTail.slice(-2000) : undefined,
-      });
-    });
-    proc.on("error", reject);
-  });
+      };
 }
 
-/** Dense sequential red loop-marker detection. Mirror of detectGreenEventsDense. */
-function detectRedEventsDense(video, streamInfo, options = {}) {
+function detectGreenEventsDense(video, streamInfo, options = {}) {
   const minDurationSeconds = Number.isFinite(options.minDurationSeconds) && options.minDurationSeconds > 0
     ? options.minDurationSeconds
     : 0.06;
 
   return new Promise((resolve, reject) => {
-    const sourceWidth = Number.isFinite(streamInfo.width) ? streamInfo.width : 1280;
-    const sourceHeight = Number.isFinite(streamInfo.height) ? streamInfo.height : 720;
-    const frameRate = Number.isFinite(streamInfo.frameRate) && streamInfo.frameRate > 0 ? streamInfo.frameRate : 30;
-
-    const targetWidth = Math.min(480, sourceWidth);
-    const targetHeight = Math.max(2, Math.floor((sourceHeight / sourceWidth) * targetWidth / 2) * 2);
+    const { frameRate, targetWidth, targetHeight } = computeDecodeDimensions(streamInfo);
     const frameSize = targetWidth * targetHeight * 3;
     let buffer = Buffer.alloc(0);
     const frameDetections = [];
@@ -3093,29 +3090,28 @@ function detectRedEventsDense(video, streamInfo, options = {}) {
       while (buffer.length >= frameSize) {
         const frameData = buffer.slice(0, frameSize);
         buffer = buffer.slice(frameSize);
-        const scored = scoreFreezeRedFrame(frameData, targetWidth, targetHeight, 4);
-        frameDetections.push({
-          redRatio: scored.redRatio,
-          strictFullRatio: scored.strictFullRatio,
-          strictCenterRatio: scored.strictCenterRatio,
-          strictCombined: scored.strictCombined,
-          avgSaturation: scored.avgSaturation,
-          avgBrightness: scored.avgBrightness,
-          lumaStd: scored.lumaStd,
-          edgeMean: scored.edgeMean,
-          structureGate: scored.structureGate,
-          coveragePenalty: scored.coveragePenalty,
-        });
+        frameDetections.push(scoreFrameForGreen(frameData, targetWidth, targetHeight));
       }
     });
 
     proc.on("close", (code) => {
       if (code !== 0 && code !== 1) {
-        console.error("[red-dense] ffmpeg failed code", code, stderrTail.slice(-800));
-        reject(new Error(`Dense red detection failed (ffmpeg code ${code})`));
+        console.error("[green-dense] ffmpeg failed code", code, stderrTail.slice(-800));
+        reject(new Error(`Dense green detection failed (ffmpeg code ${code})`));
         return;
       }
+      try {
+        resolve(finalizeGreenDetection(frameDetections, frameRate, minDurationSeconds, video, stderrTail));
+      } catch (e) {
+        reject(e);
+      }
+    });
+    proc.on("error", reject);
+  });
+}
 
+/** Build the red detection result object from per-frame red scores. Extracted from detectRedEventsDense. */
+function finalizeRedDetection(frameDetections, frameRate, minDurationSeconds, video, stderrTail) {
       const built = buildRedEventsFromFrames(frameDetections, frameRate, minDurationSeconds);
       const redEvents = built.events || [];
       const rawCandidateSpans = built.rawCandidateSpans || [];
@@ -3166,7 +3162,7 @@ function detectRedEventsDense(video, streamInfo, options = {}) {
         zeroReason,
       }));
 
-      resolve({
+      return {
         frameRate,
         frameCount: frameDetections.length,
         redEvents,
@@ -3181,7 +3177,132 @@ function detectRedEventsDense(video, streamInfo, options = {}) {
         },
         zeroReason,
         stderrTail: frameDetections.length === 0 ? stderrTail.slice(-2000) : undefined,
-      });
+      };
+}
+
+/** Dense sequential red loop-marker detection. Mirror of detectGreenEventsDense. */
+function detectRedEventsDense(video, streamInfo, options = {}) {
+  const minDurationSeconds = Number.isFinite(options.minDurationSeconds) && options.minDurationSeconds > 0
+    ? options.minDurationSeconds
+    : 0.06;
+
+  return new Promise((resolve, reject) => {
+    const { frameRate, targetWidth, targetHeight } = computeDecodeDimensions(streamInfo);
+    const frameSize = targetWidth * targetHeight * 3;
+    let buffer = Buffer.alloc(0);
+    const frameDetections = [];
+    let stderrTail = "";
+
+    const proc = spawn(ffmpegPath, [
+      "-i", video,
+      "-vf", `scale=${targetWidth}:${targetHeight}:flags=fast_bilinear`,
+      "-f", "rawvideo",
+      "-pix_fmt", "rgb24",
+      "-vsync", "cfr",
+      "-an",
+      "-",
+    ]);
+
+    proc.stderr.on("data", (data) => {
+      const s = data.toString();
+      stderrTail = (stderrTail + s).slice(-4000);
+    });
+
+    proc.stdout.on("data", (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.length >= frameSize) {
+        const frameData = buffer.slice(0, frameSize);
+        buffer = buffer.slice(frameSize);
+        frameDetections.push(scoreFrameForRed(frameData, targetWidth, targetHeight));
+      }
+    });
+
+    proc.on("close", (code) => {
+      if (code !== 0 && code !== 1) {
+        console.error("[red-dense] ffmpeg failed code", code, stderrTail.slice(-800));
+        reject(new Error(`Dense red detection failed (ffmpeg code ${code})`));
+        return;
+      }
+      try {
+        resolve(finalizeRedDetection(frameDetections, frameRate, minDurationSeconds, video, stderrTail));
+      } catch (e) {
+        reject(e);
+      }
+    });
+    proc.on("error", reject);
+  });
+}
+
+/**
+ * Single-pass color-card detection. Runs ONE ffmpeg decode and, per frame, scores all three
+ * card colors (yellow/green/red) into separate arrays, then runs each color's finalizer.
+ * Replaces three sequential full decodes (the cause of slow "Generate source"). Returns
+ * { yellow, green, red } where each value is identical to the matching detect*EventsDense result.
+ */
+function detectAllColorCardsDense(video, streamInfo, options = {}) {
+  const minDurationSeconds = Number.isFinite(options.minDurationSeconds) && options.minDurationSeconds > 0
+    ? options.minDurationSeconds
+    : 0.06;
+
+  return new Promise((resolve, reject) => {
+    const { frameRate, targetWidth, targetHeight } = computeDecodeDimensions(streamInfo);
+    const frameSize = targetWidth * targetHeight * 3;
+    let buffer = Buffer.alloc(0);
+    const yellowFrames = [];
+    const greenFrames = [];
+    const redFrames = [];
+    let stderrTail = "";
+
+    const proc = spawn(ffmpegPath, [
+      "-i", video,
+      "-vf", `scale=${targetWidth}:${targetHeight}:flags=fast_bilinear`,
+      "-f", "rawvideo",
+      "-pix_fmt", "rgb24",
+      "-vsync", "cfr",
+      "-an",
+      "-",
+    ]);
+
+    proc.stderr.on("data", (data) => {
+      const s = data.toString();
+      stderrTail = (stderrTail + s).slice(-4000);
+    });
+
+    proc.stdout.on("data", (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.length >= frameSize) {
+        const frameData = buffer.slice(0, frameSize);
+        buffer = buffer.slice(frameSize);
+        yellowFrames.push(scoreFrameForYellow(frameData, targetWidth, targetHeight));
+        greenFrames.push(scoreFrameForGreen(frameData, targetWidth, targetHeight));
+        redFrames.push(scoreFrameForRed(frameData, targetWidth, targetHeight));
+      }
+    });
+
+    proc.on("close", async (code) => {
+      if (code !== 0 && code !== 1) {
+        console.error("[allcolor-dense] ffmpeg failed code", code, stderrTail.slice(-800));
+        reject(new Error(`Single-pass color detection failed (ffmpeg code ${code})`));
+        return;
+      }
+      try {
+        const yellow = await finalizeYellowDetection(
+          yellowFrames, frameRate, minDurationSeconds, options, video, targetWidth, targetHeight, stderrTail,
+        );
+        const green = finalizeGreenDetection(greenFrames, frameRate, minDurationSeconds, video, stderrTail);
+        const red = finalizeRedDetection(redFrames, frameRate, minDurationSeconds, video, stderrTail);
+        console.log("[allcolor-dense]", JSON.stringify({
+          video: path.basename(video),
+          frameRate,
+          frameCount: yellowFrames.length,
+          yellowEventCount: (yellow.yellowEvents || []).length,
+          greenEventCount: (green.greenEvents || []).length,
+          redEventCount: (red.redEvents || []).length,
+        }));
+        resolve({ yellow, green, red });
+      } catch (e) {
+        reject(e);
+      }
     });
     proc.on("error", reject);
   });
@@ -3625,6 +3746,166 @@ function generateChapterAwareSrcArray(mappings, duration) {
   return { srcArray, unmappedChapters };
 }
 
+/** Stable per-row id so locked editor rows survive regen under the all-marker model. */
+function markerRowKey(seg) {
+  if (!seg) return null;
+  const color = seg.markerColor || (seg.loop ? "red" : "yellow");
+  const startRaw = seg.markerStart != null
+    ? seg.markerStart
+    : (seg.yellowStart != null ? seg.yellowStart
+      : (seg.greenStart != null ? seg.greenStart
+        : (seg.redStart != null ? seg.redStart : seg.src_start)));
+  if (!Number.isFinite(startRaw)) return null;
+  return `${color}@${Math.round(Number(startRaw) * 10) / 10}`;
+}
+
+/**
+ * Build a timeline that contains EVERY detected card (yellow/green/red) in chronological order,
+ * with no chapter-count cap. Each card becomes one row:
+ *  - yellow/green (freeze): src window = this card's contentStart -> NEXT freeze card's start (red
+ *    cards do not break the window; the runtime red loop handles that via redStopMarkers).
+ *  - red (loop): src window = the red card span itself, loop:true.
+ * Green-to-menu-name AI mapping stays Phase 2; menuLink here is descriptive.
+ */
+function generateAllMarkerTimeline(yellowEvents, greenEvents, redEvents, duration) {
+  const dur = Number.isFinite(duration) ? Math.round(duration * 1000) / 1000 : 0;
+  const round = (x) => (x != null && Number.isFinite(Number(x)) ? Math.round(Number(x) * 1000) / 1000 : null);
+
+  const cards = [];
+  let yi = 0; let gi = 0; let ri = 0;
+
+  (yellowEvents || []).forEach((e) => {
+    const start = e.yellowStart != null ? e.yellowStart : e.startTime;
+    const end = e.yellowEnd != null ? e.yellowEnd : e.endTime;
+    const contentStart = e.contentStart != null ? Math.max(Number(e.contentStart), end) : end;
+    cards.push({
+      markerColor: "yellow", markerSemantics: "freeze", isFreeze: true, loop: false,
+      cardStart: start, cardEnd: end, contentStart,
+      detectionConfidence: e.detectionConfidence != null ? e.detectionConfidence : null,
+      label: `Yellow freeze ${++yi}`,
+    });
+  });
+  (greenEvents || []).forEach((e) => {
+    const start = e.greenStart != null ? e.greenStart : e.startTime;
+    const end = e.greenEnd != null ? e.greenEnd : e.endTime;
+    const contentStart = e.contentStart != null ? Math.max(Number(e.contentStart), end) : end;
+    cards.push({
+      markerColor: "green", markerSemantics: "freeze", isFreeze: true, loop: false, isMenuAnchor: true,
+      cardStart: start, cardEnd: end, contentStart,
+      detectionConfidence: e.detectionConfidence != null ? e.detectionConfidence : null,
+      label: `Green freeze ${++gi}`,
+    });
+  });
+  (redEvents || []).forEach((e) => {
+    const start = e.redStart != null ? e.redStart : e.startTime;
+    const end = e.redEnd != null ? e.redEnd : e.endTime;
+    cards.push({
+      markerColor: "red", markerSemantics: "loop", isFreeze: false, loop: true,
+      cardStart: start, cardEnd: end, contentStart: end,
+      detectionConfidence: e.detectionConfidence != null ? e.detectionConfidence : null,
+      label: `Red loop ${++ri}`,
+    });
+  });
+
+  cards.sort((a, b) => (a.cardStart || 0) - (b.cardStart || 0));
+
+  const srcArray = [{
+    role: "opening",
+    src_start: null,
+    src_end: null,
+    freezeFrame: null,
+    menuLink: "Opening",
+    side: false,
+    loop: false,
+  }];
+
+  let contentIdx = 0;
+  for (let i = 0; i < cards.length; i++) {
+    const c = cards[i];
+
+    if (c.markerColor === "red") {
+      const rs = round(c.cardStart);
+      const re = round(c.cardEnd);
+      srcArray.push({
+        index: contentIdx,
+        markerColor: "red",
+        markerSemantics: "loop",
+        markerStart: rs,
+        title: c.label,
+        redStart: rs,
+        redEnd: re,
+        contentStart: rs,
+        contentEnd: re,
+        start: rs,
+        end: re,
+        src_start: rs,
+        src_end: re,
+        menuLink: c.label,
+        freezeFrame: contentIdx,
+        source: "all-marker-timeline",
+        detectionConfidence: round(c.detectionConfidence),
+        confidence: round(c.detectionConfidence) || 0,
+        status: "ok",
+        flagged: false,
+        manualOverride: false,
+        side: false,
+        loop: true,
+        playable: true,
+      });
+      contentIdx += 1;
+      continue;
+    }
+
+    // Freeze card (yellow/green): content runs until the NEXT freeze card start (skip red cards).
+    let nextFreezeStart = dur;
+    for (let j = i + 1; j < cards.length; j++) {
+      if (cards[j].isFreeze) { nextFreezeStart = cards[j].cardStart; break; }
+    }
+    const cs = round(Math.max(Number(c.contentStart), Number(c.cardEnd)));
+    const ce = round(nextFreezeStart);
+
+    const row = {
+      index: contentIdx,
+      markerColor: c.markerColor,
+      markerSemantics: "freeze",
+      markerStart: round(c.cardStart),
+      title: c.label,
+      menuLink: c.label,
+      isMenuAnchor: c.isMenuAnchor === true,
+      contentStart: cs,
+      contentEnd: ce,
+      start: cs,
+      end: ce,
+      src_start: cs,
+      src_end: ce,
+      freezeFrame: contentIdx,
+      source: "all-marker-timeline",
+      detectionConfidence: round(c.detectionConfidence),
+      confidence: round(c.detectionConfidence) || 0,
+      status: isPlayableContentTiming({ src_start: cs, src_end: ce }) ? "ok" : "invalidSegmentBounds",
+      flagged: !isPlayableContentTiming({ src_start: cs, src_end: ce }),
+      manualOverride: false,
+      side: false,
+      loop: false,
+      playable: true,
+    };
+    if (c.markerColor === "yellow") {
+      row.yellowStart = round(c.cardStart);
+      row.yellowEnd = round(c.cardEnd);
+    } else {
+      row.greenStart = round(c.cardStart);
+      row.greenEnd = round(c.cardEnd);
+    }
+    srcArray.push(row);
+    contentIdx += 1;
+  }
+
+  return {
+    srcArray,
+    markerCounts: { yellow: yi, green: gi, red: ri, total: cards.length },
+  };
+}
+
 async function runDeterministicYellowPipeline({
   lessonId,
   localVideoPath,
@@ -3657,22 +3938,16 @@ async function runDeterministicYellowPipeline({
   }));
 
   try {
-    // Stage 2: dense sequential yellow detection with event state machine.
-    const detection = await detectYellowEventsDense(prepared.preparedPath, prepared.info, {
+    // Stage 2: single-pass dense detection. One ffmpeg decode scores yellow/green/red per frame,
+    // then each color's finalizer runs (~3x fewer decodes than the prior sequential approach).
+    const allColors = await detectAllColorCardsDense(prepared.preparedPath, prepared.info, {
       minDurationSeconds: minSeg,
       yellowDebugCalibration: yellowDebugCalibration === true,
       lessonId: lessonId || null,
     });
-    // Stage 2b: dense sequential green freeze-marker detection (separate pipeline/object).
-    const greenResult = await detectGreenEventsDense(prepared.preparedPath, prepared.info, {
-      minDurationSeconds: minSeg,
-      lessonId: lessonId || null,
-    });
-    // Stage 2c: dense sequential red loop-marker detection (separate pipeline/object).
-    const redResult = await detectRedEventsDense(prepared.preparedPath, prepared.info, {
-      minDurationSeconds: minSeg,
-      lessonId: lessonId || null,
-    });
+    const detection = allColors.yellow;
+    const greenResult = allColors.green;
+    const redResult = allColors.red;
     const greenEvents = Array.isArray(greenResult.greenEvents) ? greenResult.greenEvents : [];
     const redEvents = Array.isArray(redResult.redEvents) ? redResult.redEvents : [];
     const yellowEvents = detection.yellowEvents;
@@ -3790,21 +4065,26 @@ async function runDeterministicYellowPipeline({
       zeroReason: redDetection.zeroReason,
     }));
 
-    // Stage 3: deterministic ordered chapter mapping (bootstrap strategy).
+    // Stage 3: deterministic ordered chapter mapping kept for debug/AI panels only (no longer gates timeline).
     const effectiveChapterTitles = (chapterTitles && chapterTitles.length > 0)
       ? chapterTitles
       : yellowEvents.map((_, i) => `Chapter ${i + 1}`);
     const mapping = mapYellowEventsToChapters(effectiveChapterTitles, yellowEvents);
-
-    // Stage 4: chapter-aware playable srcArray (opening + valid timed rows only).
     const built = generateChapterAwareSrcArray(mapping.mappings, analysisDuration);
-    let srcArray = built.srcArray;
+
+    // Stage 4: all-marker timeline — every detected yellow/green/red card as a chronological row.
+    const allMarker = generateAllMarkerTimeline(yellowEvents, greenEvents, redEvents, analysisDuration);
+    let srcArray = allMarker.srcArray;
     const validation = validatePlayableSrcArrayForWrite(srcArray, sourceLabel || "pipeline");
     srcArray = validation.srcArray;
 
     const timelineGenerationSummary = {
       chapterCount: effectiveChapterTitles.length,
       yellowEventCount: yellowEvents.length,
+      greenEventCount: greenEvents.length,
+      redEventCount: redEvents.length,
+      markerRowCounts: allMarker.markerCounts,
+      timelineModel: "all-marker-chronological",
       validPlayableSegmentCount: srcArray.filter((s) => isPlayableContentTiming(s)).length,
       unmappedChapterCount: built.unmappedChapters.length,
       invalidRowCountFilteredOut: validation.invalidRowCountFilteredOut,

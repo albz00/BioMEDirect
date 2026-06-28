@@ -1676,8 +1676,20 @@ function renderSrcArrayTable(srcArray, lessonId, chapterTitles, panelExtras) {
         const conf = seg.confidence != null ? String(seg.confidence) : '';
         const flagged = seg.flagged === true;
         const manualOverride = seg.manualOverride === true;
+        const markerColor = seg.markerColor != null
+            ? String(seg.markerColor)
+            : (seg.loop === true ? 'red' : (seg.role === 'opening' || (start === '' && end === '') ? 'opening' : 'yellow'));
+        const markerSemantics = seg.markerSemantics != null
+            ? String(seg.markerSemantics)
+            : (seg.loop === true ? 'loop' : (markerColor === 'opening' ? 'menu' : 'freeze'));
+        const typeCell = `<span class="srcarray-type-chip srcarray-type-${esc(markerColor)}" title="${esc(markerColor)} card · ${esc(markerSemantics)}">${esc(markerColor)}<br><span class="srcarray-type-sem">${esc(markerSemantics)}</span></span>`;
+        const greenStart = seg.greenStart != null ? Number(seg.greenStart) : '';
+        const greenEnd = seg.greenEnd != null ? Number(seg.greenEnd) : '';
+        const redStart = seg.redStart != null ? Number(seg.redStart) : '';
+        const redEnd = seg.redEnd != null ? Number(seg.redEnd) : '';
         return `<tr data-index="${index}">
             <td class="srcarray-col-index">${index}</td>
+            <td class="srcarray-col-type">${typeCell}</td>
             <td><input type="number" step="0.01" class="srcarray-input-start" value="${start}" data-index="${index}"></td>
             <td><input type="number" step="0.01" class="srcarray-input-end" value="${end}" data-index="${index}"></td>
             <td><input type="number" step="1" min="0" class="srcarray-input-chapterIndex" value="${chNum === '' ? '' : chNum}" data-index="${index}" placeholder="—"></td>
@@ -1689,8 +1701,14 @@ function renderSrcArrayTable(srcArray, lessonId, chapterTitles, panelExtras) {
                 <details class="srcarray-details">
                     <summary>debug</summary>
                     <div class="srcarray-details-grid">
+                        <span>markerColor</span><span>${esc(markerColor)}</span>
+                        <span>semantics</span><span>${esc(markerSemantics)}</span>
                         <span>yellowStart</span><span>${esc(yellowStart === '' ? '—' : yellowStart)}</span>
                         <span>yellowEnd</span><span>${esc(yellowEnd === '' ? '—' : yellowEnd)}</span>
+                        <span>greenStart</span><span>${esc(greenStart === '' ? '—' : greenStart)}</span>
+                        <span>greenEnd</span><span>${esc(greenEnd === '' ? '—' : greenEnd)}</span>
+                        <span>redStart</span><span>${esc(redStart === '' ? '—' : redStart)}</span>
+                        <span>redEnd</span><span>${esc(redEnd === '' ? '—' : redEnd)}</span>
                         <span>title</span><span>${esc(seg.title != null ? seg.title : '—')}</span>
                         <span>source</span><span>${esc(source || '—')}</span>
                         <span>confidence</span><span>${esc(conf || '—')}</span>
