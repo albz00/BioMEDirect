@@ -3961,6 +3961,28 @@ function summarizeGreenDetectionForResponse(greenDetection) {
   };
 }
 
+function summarizeRedDetectionForResponse(redDetection) {
+  const rd = redDetection || {};
+  const csum = rd.candidateSpanSummary || {};
+  const candidateSpanCount = Number.isFinite(csum.candidateSpanCount)
+    ? csum.candidateSpanCount
+    : (Array.isArray(rd.rawCandidateSpans) ? rd.rawCandidateSpans.length : 0);
+  const acceptedEventCount = Number.isFinite(rd.acceptedEventCount)
+    ? rd.acceptedEventCount
+    : (Array.isArray(rd.events) ? rd.events.length : 0);
+  const rejectedSpanCount = Number.isFinite(csum.rejectedSpanCount)
+    ? csum.rejectedSpanCount
+    : (Array.isArray(rd.rejectedSpans) ? rd.rejectedSpans.length : 0);
+  return {
+    candidateSpanCount,
+    acceptedEventCount,
+    rejectedSpanCount,
+    status: rd.status || null,
+    zeroReason: rd.zeroReason || null,
+    rejectionReasonSummary: rd.rejectionReasonSummary || {},
+  };
+}
+
 // Build srcArray only from the complement of yellow (non-yellow intervals).
 // Segments: [0, firstYellow.start], [yellow[i].end, yellow[i+1].start], ..., [lastYellow.end, duration].
 // No segment overlaps any yellow range; leapfrog uses exact stored yellowScreenRanges.
@@ -4170,6 +4192,7 @@ exports.detectYellowScreen = onCall(
         yellowRanges: pipeline.yellowRanges,
         yellowEvents: pipeline.yellowEvents.length,
         greenDetectionSummary: summarizeGreenDetectionForResponse(pipeline.greenDetection),
+        redDetectionSummary: summarizeRedDetectionForResponse(pipeline.redDetection),
         adjustedSegments: srcArray.length,
         reviewStates: pipeline.review.states,
         timelineGenerationSummary: pipeline.yellowDetection?.timelineGenerationSummary || null,
@@ -4303,6 +4326,7 @@ exports.generateSrcArrayWithYellowOptions = onCall(
         segments: srcArray.length,
         yellowRanges: pipeline.yellowRanges.length,
         greenDetectionSummary: summarizeGreenDetectionForResponse(pipeline.greenDetection),
+        redDetectionSummary: summarizeRedDetectionForResponse(pipeline.redDetection),
         duration: pipeline.duration,
         reviewStates: pipeline.review.states || [],
         minSegmentSeconds: effectiveMinSeg,
@@ -5149,6 +5173,7 @@ exports.generateSrcArrayFromYellowScreens = onCall(
         chapters: chapters.length,
         detections: pipeline.yellowEvents.length,
         greenDetectionSummary: summarizeGreenDetectionForResponse(pipeline.greenDetection),
+        redDetectionSummary: summarizeRedDetectionForResponse(pipeline.redDetection),
         reason: pipeline.review.states.join(", "),
         segments: mergedSrc.length,
         states: pipeline.review.states,

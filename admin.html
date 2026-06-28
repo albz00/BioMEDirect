@@ -203,7 +203,7 @@
                                 <button type="button" id="srcArraySaveAllBtn" class="btn btn-primary btn-sm">Save all</button>
                                 <div class="srcarray-editor-generate">
                                     <label class="srcarray-editor-label">
-                                        Min yellow duration (s)
+                                        Min card duration (s)
                                         <input
                                             type="number"
                                             id="srcArrayMinSegInput"
@@ -212,19 +212,19 @@
                                             step="0.01"
                                             value="0.05"
                                             placeholder="0.05"
-                                            title="Minimum duration for a yellow block to count as one event (dense decode uses the video’s native frame rate)"
+                                            title="Minimum duration for a yellow/green/red color card to count as one event (applies to all three detectors; dense decode uses the video’s native frame rate)"
                                         >
                                     </label>
                                     <label class="srcarray-editor-label srcarray-editor-debug">
-                                        <input type="checkbox" id="srcArrayYellowDebugCal" title="Upload frame PNGs + masks to Storage; extra logs">
+                                        <input type="checkbox" id="srcArrayYellowDebugCal" title="Yellow only: upload yellow frame PNGs + masks to Storage; extra logs. Does not affect green/red.">
                                         Yellow cal debug
                                     </label>
-                                    <button type="button" id="srcArrayGenerateFromYellowBtn" class="btn btn-secondary btn-sm">
+                                    <button type="button" id="srcArrayGenerateFromYellowBtn" class="btn btn-secondary btn-sm" title="Re-run detection (yellow + green + red) and rebuild the timeline from the assigned video">
                                         Generate source
                                     </button>
                                 </div>
                                 <span id="srcArrayEditorStatus" class="srcarray-editor-status"></span>
-                                <p class="srcarray-editor-hint">Dense scan uses native video FPS (not configurable here). Playback start/end are content after yellow. Chapter names come from the chapter editor; yellow/source/confidence are debug-only.</p>
+                                <p class="srcarray-editor-hint">Generate source re-runs all three color detectors (yellow = freeze, green = freeze + future menu anchor, red = loop). Dense scan uses native video FPS. The editable timeline rows below are chapters from yellow events; green and red are shown in their own panels and drive freeze/loop at playback. Playback start/end are content after the card; source/confidence are debug-only.</p>
                                 <div class="srcarray-editor-ai-row">
                                     <button type="button" id="aiTitleMappingBtn" class="btn btn-secondary btn-sm">Run AI Title Mapping</button>
                                     <p id="aiTitleMappingStatus" class="srcarray-editor-ai-status ai-mapping-idle" aria-live="polite">Idle</p>
@@ -243,7 +243,7 @@
                                             <th>menu link</th>
                                             <th>flag</th>
                                             <th>lock</th>
-                                            <th>yellow / debug</th>
+                                            <th>card / debug<br><span class="th-sub">yellow event</span></th>
                                         </tr>
                                     </thead>
                                     <tbody id="srcArrayEditorTbody"></tbody>

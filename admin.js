@@ -1512,6 +1512,18 @@ function buildGreenSummaryLineFromResponse(greenDetectionSummary) {
     return line;
 }
 
+function buildRedSummaryLineFromResponse(redDetectionSummary) {
+    if (!redDetectionSummary || typeof redDetectionSummary !== 'object') return '';
+    const c = Number.isFinite(redDetectionSummary.candidateSpanCount) ? redDetectionSummary.candidateSpanCount : 0;
+    const a = Number.isFinite(redDetectionSummary.acceptedEventCount) ? redDetectionSummary.acceptedEventCount : 0;
+    const r = Number.isFinite(redDetectionSummary.rejectedSpanCount) ? redDetectionSummary.rejectedSpanCount : 0;
+    let line = ` Red (loop) spans: ${c} candidate, ${a} accepted, ${r} rejected.`;
+    if (a === 0 && redDetectionSummary.zeroReason) {
+        line += ` Red zeroReason: ${redDetectionSummary.zeroReason}.`;
+    }
+    return line;
+}
+
 function renderMarkerModelContextPanel(markerModelContext) {
     const wrap = document.getElementById('markerModelContextWrap');
     const pre = document.getElementById('markerModelContextPre');
@@ -1930,7 +1942,7 @@ function setupSrcArrayEditorListeners() {
 
             try {
                 setButtonLoading(generateBtn, true);
-                setStatus(`Generating timeline (min yellow duration ${minSegmentSeconds}s)…`, 'scanning');
+                setStatus(`Generating timeline (min card duration ${minSegmentSeconds}s; detecting yellow + green + red)…`, 'scanning');
 
                 const videoPath = await getVideoPathForLesson(selectedLessonId);
                 if (!videoPath) {
@@ -1977,7 +1989,8 @@ function setupSrcArrayEditorListeners() {
                     ? ` Playable segments: ${tg.validPlayableSegmentCount}. Unmapped chapters: ${tg.unmappedChapterCount != null ? tg.unmappedChapterCount : '—'}.`
                     : '';
                 const gLine = buildGreenSummaryLineFromResponse(data.greenDetectionSummary);
-                setStatus(`Generated ${segs} timeline row(s).${yLine}${chLine}${tgLine}${gLine}${sum}${states}`, 'success');
+                const rLine = buildRedSummaryLineFromResponse(data.redDetectionSummary);
+                setStatus(`Generated ${segs} timeline row(s).${yLine}${chLine}${tgLine}${gLine}${rLine}${sum}${states}`, 'success');
 
                 await refreshSrcArrayEditor();
             } catch (e) {
@@ -2535,7 +2548,8 @@ async function regenerateSrcArrayFromYellow(lessonId, btn) {
         const rangesCount = Array.isArray(rd.yellowRanges) ? rd.yellowRanges.length : 0;
         const segs = typeof rd.adjustedSegments === 'number' ? rd.adjustedSegments : 'updated';
         const gLine = buildGreenSummaryLineFromResponse(rd.greenDetectionSummary);
-        setStatus(`Regenerated from yellow: ${rangesCount} ranges detected, ${segs} segments in srcArray.${gLine}`, 'success');
+        const rLine = buildRedSummaryLineFromResponse(rd.redDetectionSummary);
+        setStatus(`Regenerated from yellow: ${rangesCount} ranges detected, ${segs} segments in srcArray.${gLine}${rLine}`, 'success');
         setTimeout(() => setStatus('Ready'), 3000);
     } catch (error) {
         console.error('Error regenerating srcArray from yellow:', error);
@@ -2903,7 +2917,8 @@ async function generateSrcArrayFromYellowScreensForLesson(lessonId) {
         } else {
             const segs = data.segments || 0;
             const gLine = buildGreenSummaryLineFromResponse(data.greenDetectionSummary);
-            setStatus(`Generated ${segs} segments from yellow screens.${gLine}`, data.status === 'ok' ? 'success' : 'scanning');
+            const rLine = buildRedSummaryLineFromResponse(data.redDetectionSummary);
+            setStatus(`Generated ${segs} segments from yellow screens.${gLine}${rLine}`, data.status === 'ok' ? 'success' : 'scanning');
         }
 
         // Refresh the srcArray editor so the new timeline is visible
