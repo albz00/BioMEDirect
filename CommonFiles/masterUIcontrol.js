@@ -124,12 +124,10 @@ function shouldForceFirstChapterStartAtZero() {
 }
 
 function shouldUseLegacyChapterPlayerOverride() {
-    if (typeof window !== "undefined" && window.useLegacyChapterPlayerOverride === true) return true;
-    try {
-        var p = (typeof location !== "undefined" && location.pathname) ? String(location.pathname).toLowerCase() : "";
-        if (p.indexOf("/cleavagestaget/") >= 0 && p.indexOf("cleavagestaget.html") >= 0) return true;
-    } catch (e) { /* ignore */ }
-    return false;
+    // Legacy chapter-stepping player is only used when a page explicitly opts in.
+    // (Previously the cleavage lesson was hardcoded here, which disabled the marker-driven
+    // natural playback + freeze stops for that lesson.)
+    return typeof window !== "undefined" && window.useLegacyChapterPlayerOverride === true;
 }
 
 /** First playable chapter row index in srcArray (after opening). */
@@ -1585,6 +1583,34 @@ function initializePlayer(videoUrl, timelineArray) {
         playbackEventCount: playbackEvents.length,
         forceFirstChapterStartAtZero: shouldForceFirstChapterStartAtZero(),
     });
+
+    // Startup diagnostic: confirm which playback path is active and whether the lesson
+    // actually delivered markers to the player (helps verify wiped/regenerated lesson data).
+    try {
+        var wDiag = typeof window !== "undefined" ? window : {};
+        var winCount = function (arr) { return Array.isArray(arr) ? arr.length : 0; };
+        var yellowFreezeCount = 0;
+        var greenFreezeCount = 0;
+        for (var di = 0; di < freezeMarkers.length; di++) {
+            if (freezeMarkers[di].markerType === "yellow") yellowFreezeCount++;
+            else if (freezeMarkers[di].markerType === "green") greenFreezeCount++;
+        }
+        console.info("[player] playback mode:", {
+            legacyOverride: legacyChapterPlayerOverride === true,
+            CONTINUOUS_VIDEO_PLAYBACK: CONTINUOUS_VIDEO_PLAYBACK === true,
+            PAUSE_AT_FREEZE_MARKERS: PAUSE_AT_FREEZE_MARKERS === true,
+            freezeMarkerCount: freezeMarkers.length,
+            yellowFreezeCount: yellowFreezeCount,
+            greenFreezeCount: greenFreezeCount,
+            loopMarkerCount: loopMarkers.length,
+            playbackEventCount: playbackEvents.length,
+            windowYellowStopMarkers: winCount(wDiag.yellowStopMarkers),
+            windowGreenStopMarkers: winCount(wDiag.greenStopMarkers),
+            windowRedStopMarkers: winCount(wDiag.redStopMarkers),
+            srcArrayRows: Array.isArray(srcArray) ? srcArray.length : 0,
+        });
+    } catch (diagErr) { /* diagnostics must never break init */ }
+
     setGuidedPlaybackState("idle", "initialize");
 
     // Runtime-owned click wiring so in-video clicks always reach nextSlide()
