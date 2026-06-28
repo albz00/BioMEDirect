@@ -36,15 +36,15 @@ const DEFAULT_MARKER_MODEL_CONTEXT = {
     modelIntent: {
         yellow: { role: 'freeze_frame_primary', preserveExistingBehavior: true },
         green: { role: 'freeze_frame_and_menu_anchor', freezeBackupEnabled: true, aiTitleMappingSource: true },
-        red: { role: 'loop_marker_provisional', fullLoopLogicImplemented: false },
+        red: { role: 'loop_marker', fullLoopLogicImplemented: true, loopReturnTarget: 'previous_freeze_marker_content', breaksOnUserClick: true },
     },
     realWorldNotes: [
         'Source videos may use overlapping/inconsistent marker logic.',
         'Yellow and green are treated as dual freeze-frame paths.',
-        'Red loop behavior is scaffolded pending creator sample review.',
+        'Red loops back to the previous freeze marker content until the user clicks.',
     ],
     samplePlaybackRequired: {
-        needed: true,
+        needed: false,
         checklist: [
             'Show yellow markers in context.',
             'Show green markers in context.',
@@ -1531,6 +1531,9 @@ function summarizeRedDetection(redDetection) {
         eventCount: events.length,
         loopModel: rd.loopModel || { implemented: false },
         unresolvedQuestions: Array.isArray(rd.unresolvedQuestions) ? rd.unresolvedQuestions : [],
+        samplePlaybackRequired: rd.samplePlaybackRequired === true,
+        zeroReason: rd.zeroReason || null,
+        thresholds: rd.thresholds || null,
         events,
     };
 }
@@ -1545,28 +1548,38 @@ function renderRedDetectionPanel(redDetection, showWhenEmpty = false) {
         return;
     }
     const s = summarizeRedDetection(redDetection);
+    const implemented = s.loopModel && s.loopModel.implemented === true;
     wrap.hidden = false;
     summaryPre.textContent = JSON.stringify({
         status: s.status,
         eventCount: s.eventCount,
         loopModel: s.loopModel,
+        thresholds: s.thresholds,
+        zeroReason: s.zeroReason,
         unresolvedQuestions: s.unresolvedQuestions,
-        samplePlaybackRequired: true,
+        samplePlaybackRequired: s.samplePlaybackRequired,
     }, null, 2);
     if (s.events.length > 0) {
         tbody.innerHTML = s.events.map((ev, idx) => {
             const redStart = ev.redStart != null ? ev.redStart : ev.startTime;
             const redEnd = ev.redEnd != null ? ev.redEnd : ev.endTime;
+            const loopTarget = ev.loopTargetFreezeEvent != null
+                ? ev.loopTargetFreezeEvent
+                : (implemented ? 'Previous freeze (runtime)' : 'Pending rules');
+            const conf = ev.detectionConfidence != null ? formatFloatMaybe(ev.detectionConfidence) : 'n/a';
             return `<tr>
                 <td>${escapeHtmlMini(ev.eventIndex != null ? ev.eventIndex : idx + 1)}</td>
                 <td>${escapeHtmlMini(formatFloatMaybe(redStart))}</td>
                 <td>${escapeHtmlMini(formatFloatMaybe(redEnd))}</td>
-                <td>${escapeHtmlMini(ev.loopTargetFreezeEvent != null ? ev.loopTargetFreezeEvent : 'Pending rules')}</td>
-                <td>${escapeHtmlMini(ev.status || 'provisional')}</td>
+                <td>${escapeHtmlMini(loopTarget)}</td>
+                <td>${escapeHtmlMini((ev.status || (implemented ? 'detected' : 'provisional')) + ' (conf ' + conf + ')')}</td>
             </tr>`;
         }).join('');
     } else {
-        tbody.innerHTML = '<tr><td colspan="5">No red events yet. Loop-marker model is scaffolded pending real sample verification.</td></tr>';
+        const emptyMsg = implemented
+            ? 'No red loop cards detected in this video (detector ran). ' + (s.zeroReason ? '(' + s.zeroReason + ')' : '')
+            : 'No red events yet. Loop-marker model is scaffolded pending real sample verification.';
+        tbody.innerHTML = '<tr><td colspan="5">' + escapeHtmlMini(emptyMsg) + '</td></tr>';
     }
 }
 

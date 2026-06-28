@@ -84,6 +84,7 @@ function applyLessonMarkerGlobalsFromFirestoreData(data) {
     if (Array.isArray(data.greenScreenRanges)) window.greenScreenRanges = data.greenScreenRanges;
     if (Array.isArray(data.greenStopMarkers)) window.greenStopMarkers = data.greenStopMarkers;
     if (data.redDetection) window.redDetection = data.redDetection;
+    if (Array.isArray(data.redScreenRanges)) window.redScreenRanges = data.redScreenRanges;
     if (Array.isArray(data.redStopMarkers)) window.redStopMarkers = data.redStopMarkers;
     var hasYellow = (Array.isArray(window.yellowStopMarkers) && window.yellowStopMarkers.length > 0) ||
         (Array.isArray(window.yellowScreenRanges) && window.yellowScreenRanges.length > 0);
@@ -91,6 +92,7 @@ function applyLessonMarkerGlobalsFromFirestoreData(data) {
         (Array.isArray(window.greenScreenRanges) && window.greenScreenRanges.length > 0) ||
         (window.greenDetection && Array.isArray(window.greenDetection.events) && window.greenDetection.events.length > 0);
     var hasRed = (Array.isArray(window.redStopMarkers) && window.redStopMarkers.length > 0) ||
+        (Array.isArray(window.redScreenRanges) && window.redScreenRanges.length > 0) ||
         (window.redDetection && Array.isArray(window.redDetection.events) && window.redDetection.events.length > 0);
     if (hasYellow || hasGreen || hasRed) {
         window.shouldSkipColorCards = true;

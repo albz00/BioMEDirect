@@ -312,8 +312,8 @@
                             </div>
                             <div id="redDetectionScaffoldWrap" class="red-detection-scaffold" hidden>
                                 <details open>
-                                    <summary class="red-detection-summary">Red Loop Markers (provisional scaffold)</summary>
-                                    <p class="red-detection-hint">From <code>redDetection</code>. Red loop behavior is intentionally provisional until a creator-intended playback sample is reviewed.</p>
+                                    <summary class="red-detection-summary">Red Loop Markers</summary>
+                                    <p class="red-detection-hint">From <code>redDetection</code>. Detected red cards define loops: on reaching a red card, playback returns to the previous freeze marker's content and replays until the user clicks. Calibrate <code>RED_ENTER/EXIT</code> thresholds if red anatomy content causes false positives.</p>
                                     <h4 class="red-detection-h4">Summary</h4>
                                     <pre id="redDetectionSummaryPre" class="red-detection-pre"></pre>
                                     <h4 class="red-detection-h4">Detected / candidate red events</h4>
@@ -336,9 +336,9 @@
                             <div id="markerModelContextWrap" class="marker-model-context" hidden>
                                 <details open>
                                     <summary class="marker-model-summary">Color Marker Model Context (project alignment)</summary>
-                                    <p class="marker-model-hint">The system supports mixed source logic: yellow and green can both represent freeze frames; red loop behavior is scaffolded and pending refinement.</p>
+                                    <p class="marker-model-hint">The system supports mixed source logic: yellow and green both represent freeze frames; red defines a loop back to the previous freeze marker until the user clicks.</p>
                                     <pre id="markerModelContextPre" class="marker-model-pre"></pre>
-                                    <p class="marker-model-sample-note"><strong>Sample needed:</strong> Please provide a video sample showing creator-intended yellow, green, and red behavior together so final loop and combined-marker behavior can be tuned accurately.</p>
+                                    <p class="marker-model-sample-note"><strong>Calibration note:</strong> Yellow/green/red detection and runtime behavior are implemented. If a specific video mis-detects red (e.g. red tissue/blood content), tune <code>RED_ENTER_THRESHOLD</code> / <code>RED_EXIT_THRESHOLD</code> in <code>functions/index.js</code> and regenerate.</p>
                                 </details>
                             </div>
                             <div id="unmappedChaptersWrap" class="unmapped-chapters-wrap" hidden>

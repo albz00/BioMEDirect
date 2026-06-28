@@ -8,7 +8,8 @@ const { Storage } = require("@google-cloud/storage");
  * PRIMARY TIMELINE PATH (all call runDeterministicYellowPipeline):
  *   - Yellow detector remains primary freeze-frame timeline source.
  *   - Green detector runs in parallel as separate freeze/menu-anchor pipeline.
- *   - Red loop-marker model is scaffolded/persisted as provisional (not fully implemented).
+ *   - Red detector runs in parallel; red cards define loops (runtime returns to the previous freeze
+ *     marker's content and replays until the user clicks). Persisted as redStopMarkers/redScreenRanges.
  *   generateSrcArray              Storage trigger, videos/*.mp4 upload; lessonId from metadata/videoPaths
  *   generateSrcArrayWithYellowOptions  HTTPS — admin "Generate source" (minDurationSeconds only)
  *   detectYellowScreen            HTTPS — "Regenerate from yellow" in admin (same pipeline)
@@ -49,7 +50,7 @@ const MARKER_MODEL_VERSION = "color-marker-v1";
 /**
  * Shared marker model context for real-world source videos with overlapping marker usage.
  * Yellow stays primary freeze behavior. Green is also freeze-capable and supports menu/AI hooks.
- * Red loop behavior is intentionally provisional until creator sample playback is reviewed.
+ * Red defines a loop back to the previous freeze marker's content until the user clicks.
  */
 function buildMarkerModelContext(sourceLabel = "pipeline") {
   return {
@@ -66,18 +67,21 @@ function buildMarkerModelContext(sourceLabel = "pipeline") {
         aiTitleMappingSource: true,
       },
       red: {
-        role: "loop_marker_provisional",
-        fullLoopLogicImplemented: false,
+        role: "loop_marker",
+        fullLoopLogicImplemented: true,
+        loopReturnTarget: "previous_freeze_marker_content",
+        breaksOnUserClick: true,
       },
     },
     realWorldNotes: [
       "Source videos can use overlapping and inconsistent color-marker logic.",
       "Yellow and green must coexist as a dual freeze-frame model.",
+      "Red loops back to the previous freeze marker's content until the user clicks.",
       "Do not assume one perfectly clean marker system across source material.",
     ],
     samplePlaybackRequired: {
-      needed: true,
-      reason: "Need creator-intended yellow/green/red playback sample to finalize combined and red loop behavior.",
+      needed: false,
+      reason: "Yellow/green/red detection and runtime loop behavior are implemented; calibrate red thresholds against a real marked video if needed.",
       checklist: [
         "Show yellow markers in context.",
         "Show green markers in context.",
@@ -114,6 +118,59 @@ function buildRedDetectionScaffold({
       "Loop break timing and click semantics across repeated loops.",
     ],
     samplePlaybackRequired: true,
+    normalization: streamInfo ? {
+      streamWidth: streamInfo.width,
+      streamHeight: streamInfo.height,
+      streamFrameRate: streamInfo.frameRate,
+      streamCodec: streamInfo.codec,
+    } : null,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+}
+
+/**
+ * Real red loop-marker detection object (replaces the scaffold when the detector ran). Loop logic is
+ * fully implemented in the runtime player; this carries detected red card events so it can light up.
+ */
+function buildRedDetectionResult({
+  lessonId = null,
+  sourceLabel = "pipeline",
+  analyzedVideoBasename = null,
+  durationSec = null,
+  streamInfo = null,
+  redResult = {},
+} = {}) {
+  const events = Array.isArray(redResult.redEvents) ? redResult.redEvents : [];
+  return {
+    version: 1,
+    lessonId,
+    sourceLabel,
+    analyzedVideoBasename,
+    durationSec,
+    status: events.length > 0 ? "ok" : "no_red_detected",
+    loopModel: {
+      description: "When playback reaches a red marker, jump back to the previous freeze marker's content and replay until the user clicks.",
+      implemented: true,
+      confidence: "deterministic_color_detection",
+    },
+    thresholds: {
+      enter: RED_ENTER_THRESHOLD,
+      exit: RED_EXIT_THRESHOLD,
+      minAverageRedRatio: RED_EVENT_MIN_AVG_RATIO,
+      minPeakRedRatio: RED_EVENT_MIN_PEAK_RATIO,
+    },
+    colorPipeline: RED_COLOR_PIPELINE_LABEL,
+    events,
+    acceptedEventCount: events.length,
+    rawCandidateSpans: redResult.rawCandidateSpans || [],
+    rejectedSpans: redResult.rejectedSpans || [],
+    rejectionReasonSummary: redResult.rejectionReasonSummary || {},
+    candidateSpanSummary: redResult.candidateSpanSummary || null,
+    groupingStats: redResult.groupingStats || null,
+    detectionSummary: redResult.detectionSummary || null,
+    frameCount: redResult.frameCount,
+    decodeFrameRate: redResult.frameRate,
+    zeroReason: redResult.zeroReason || null,
     normalization: streamInfo ? {
       streamWidth: streamInfo.width,
       streamHeight: streamInfo.height,
@@ -242,6 +299,8 @@ exports.generateSrcArray = onObjectFinalized(
             greenDetection: pipeline.greenDetection || null,
             greenStopMarkers: pipeline.greenStopMarkers || null,
             redDetection: pipeline.redDetection || null,
+            redStopMarkers: pipeline.redStopMarkers || null,
+            redScreenRanges: pipeline.redRanges || null,
             markerModelContext: pipeline.markerModelContext || buildMarkerModelContext("upload-trigger"),
             chapterTimeline: pipeline.chapterTimeline,
             timelineReview: pipeline.review,
@@ -266,6 +325,8 @@ exports.generateSrcArray = onObjectFinalized(
             greenDetection: pipeline.greenDetection || null,
             greenStopMarkers: pipeline.greenStopMarkers || null,
             redDetection: pipeline.redDetection || null,
+            redStopMarkers: pipeline.redStopMarkers || null,
+            redScreenRanges: pipeline.redRanges || null,
             markerModelContext: pipeline.markerModelContext || buildMarkerModelContext("upload-trigger"),
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -478,7 +539,7 @@ function clamp(v, min, max) {
  * Broad warm title-card band: yellow / gold / mustard / yellow-orange via HSV + loose RGB.
  */
 const COLOR_PIPELINE_LABEL = "title_card_v3_maroon_reject+coverage_gate+tighter_hsv46-64+structure24/19";
-const GREEN_COLOR_PIPELINE_LABEL = "freeze_green_v1_strict_hsv95-150+coverage_gate+flatness22/16";
+const GREEN_COLOR_PIPELINE_LABEL = "freeze_green_v2_exact_hsv109-131(card#00D800)+coverage_gate+flatness22/16";
 
 function pixelWarmTitleCard(r, g, b) {
   const maxc = Math.max(r, g, b);
@@ -514,7 +575,22 @@ function pixelWarmTitleCard(r, g, b) {
 }
 
 /**
- * Narrow HSV band for bright saturated yellow TITLE cards (full-frame), not beige/skin.
+ * EXACT creator card colors (sampled from provided swatches). The strict per-pixel classifiers
+ * below are centered tightly on these hues so detection keys on the real card colors and rejects
+ * off-hue anatomy/skin content. Saturation/value floors stay below 100% to tolerate H.264 chroma
+ * subsampling on a flat full-frame fill.
+ *   Yellow  #FFF000  -> HSV( 56.5, 100%, 100% )
+ *   Green   #00D800  -> HSV( 120.0, 100%,  85% )
+ *   Red     #FF1800  -> HSV(  5.6, 100%, 100% )
+ */
+const CARD_YELLOW_HUE = 56.5;
+const CARD_GREEN_HUE = 120;
+const CARD_RED_HUE = 5.6;
+/** Hue half-window (degrees). Tight because the three card hues are well separated. */
+const CARD_HUE_TOLERANCE = 11;
+
+/**
+ * Narrow HSV band centered on the exact yellow card hue (#FFF000), not beige/skin.
  */
 function pixelStrictTitleYellow(r, g, b) {
   const maxc = Math.max(r, g, b);
@@ -523,13 +599,13 @@ function pixelStrictTitleYellow(r, g, b) {
   const h = hsv[0];
   const s = hsv[1] / 100;
   const v = hsv[2] / 100;
-  if (v < 0.32 || s < 0.42) return false;
-  if (h >= 46 && h <= 64) return true;
+  if (v < 0.5 || s < 0.5) return false;
+  if (h >= CARD_YELLOW_HUE - CARD_HUE_TOLERANCE && h <= CARD_YELLOW_HUE + CARD_HUE_TOLERANCE) return true;
   return false;
 }
 
 /**
- * Deliberate freeze marker card: dominant saturated green with bright value.
+ * Deliberate freeze marker card: green centered on the exact green card hue (#00D800).
  * Kept independent from yellow logic so thresholds can evolve separately.
  */
 function pixelStrictFreezeGreen(r, g, b) {
@@ -539,9 +615,31 @@ function pixelStrictFreezeGreen(r, g, b) {
   const h = hsv[0];
   const s = hsv[1] / 100;
   const v = hsv[2] / 100;
-  if (v < 0.46 || s < 0.5) return false;
-  if (h < 95 || h > 150) return false;
-  if (g < r + 18 || g < b + 14) return false;
+  if (v < 0.5 || s < 0.55) return false;
+  if (h < CARD_GREEN_HUE - CARD_HUE_TOLERANCE || h > CARD_GREEN_HUE + CARD_HUE_TOLERANCE) return false;
+  if (g < r + 40 || g < b + 40) return false;
+  return true;
+}
+
+/**
+ * Deliberate loop marker card: dominant saturated bright red with red channel clearly leading.
+ * Red hue wraps around 0/360, so both ends of the hue circle are accepted. Kept independent from
+ * yellow/green so thresholds evolve separately, and deliberately stricter on saturation/value than
+ * pixelMaroonOrDarkRedContent so dark maroon anatomy slides are NOT treated as loop cards.
+ */
+function pixelStrictLoopRed(r, g, b) {
+  const maxc = Math.max(r, g, b);
+  if (maxc < 64) return false;
+  const hsv = convert.rgb.hsv([r, g, b]);
+  const h = hsv[0];
+  const s = hsv[1] / 100;
+  const v = hsv[2] / 100;
+  if (v < 0.5 || s < 0.6) return false;
+  // Red hue wraps around 0/360; window centered on the exact red card hue (#FF1800, ~5.6deg).
+  const lowEnd = CARD_RED_HUE + CARD_HUE_TOLERANCE; // ~16.6
+  const highEnd = 360 + (CARD_RED_HUE - CARD_HUE_TOLERANCE); // wraps below 0 -> ~354.4
+  if (h > lowEnd && h < highEnd) return false;
+  if (r < g + 60 || r < b + 60) return false;
   return true;
 }
 
@@ -794,6 +892,117 @@ function scoreFreezeGreenFrame(frameData, width, height, sampleStep = 4) {
   };
 }
 
+const RED_LUMA_STD_MAX = 22;
+const RED_EDGE_MEAN_MAX = 16;
+
+function redStructureGateFromMetrics(lumaStd, edgeMean) {
+  const u = lumaStd <= RED_LUMA_STD_MAX
+    ? 1
+    : Math.max(0, 1 - (lumaStd - RED_LUMA_STD_MAX) / 40);
+  const e = edgeMean <= RED_EDGE_MEAN_MAX
+    ? 1
+    : Math.max(0, 1 - (edgeMean - RED_EDGE_MEAN_MAX) / 48);
+  return Math.min(1, u * e);
+}
+
+/**
+ * Mirror of scoreFreezeGreenFrame for the loop-marker (red) card. Full-frame saturated red with a
+ * flatness/coverage/saturation/brightness gate so red anatomy content (tissue, blood) does not
+ * register as a loop card.
+ */
+function scoreFreezeRedFrame(frameData, width, height, sampleStep = 4) {
+  let strictFull = 0;
+  let samples = 0;
+  const lumas = [];
+  let satSum = 0;
+  let valSum = 0;
+
+  for (let y = 0; y < height; y += sampleStep) {
+    for (let x = 0; x < width; x += sampleStep) {
+      const offset = (y * width + x) * 3;
+      const r = frameData[offset];
+      const g = frameData[offset + 1];
+      const b = frameData[offset + 2];
+      if (r == null || g == null || b == null) continue;
+      samples++;
+      if (pixelStrictLoopRed(r, g, b)) strictFull++;
+      lumas.push(lumaAtOffset(frameData, offset));
+      const hsv = convert.rgb.hsv([r, g, b]);
+      satSum += hsv[1] / 100;
+      valSum += hsv[2] / 100;
+    }
+  }
+
+  const strictFullRatio = samples ? strictFull / samples : 0;
+  const avgSaturation = samples ? satSum / samples : 0;
+  const avgBrightness = samples ? valSum / samples : 0;
+
+  const x0 = Math.floor(width * 0.2);
+  const x1 = Math.floor(width * 0.8);
+  const y0 = Math.floor(height * 0.2);
+  const y1 = Math.floor(height * 0.8);
+  let strictCt = 0;
+  let sampC = 0;
+  for (let y = y0; y < y1; y += sampleStep) {
+    for (let x = x0; x < x1; x += sampleStep) {
+      const offset = (y * width + x) * 3;
+      const r = frameData[offset];
+      const g = frameData[offset + 1];
+      const b = frameData[offset + 2];
+      if (r == null || g == null || b == null) continue;
+      sampC++;
+      if (pixelStrictLoopRed(r, g, b)) strictCt++;
+    }
+  }
+  const strictCenterRatio = sampC ? strictCt / sampC : 0;
+  const strictCombined = Math.max(strictFullRatio, strictCenterRatio * 0.86 + strictFullRatio * 0.14);
+
+  const meanL = lumas.length ? lumas.reduce((a, b) => a + b, 0) / lumas.length : 0;
+  const varL = lumas.length
+    ? lumas.reduce((s, x) => s + (x - meanL) * (x - meanL), 0) / lumas.length
+    : 0;
+  const lumaStd = Math.sqrt(varL);
+
+  let edgeSum = 0;
+  let edgeN = 0;
+  for (let y = 0; y < height - sampleStep; y += sampleStep) {
+    for (let x = 0; x < width - sampleStep; x += sampleStep) {
+      const o = (y * width + x) * 3;
+      const ox = (y * width + x + sampleStep) * 3;
+      const oy = ((y + sampleStep) * width + x) * 3;
+      const l0 = lumaAtOffset(frameData, o);
+      const l1 = lumaAtOffset(frameData, ox);
+      const l2 = lumaAtOffset(frameData, oy);
+      edgeSum += Math.abs(l0 - l1) + Math.abs(l0 - l2);
+      edgeN++;
+    }
+  }
+  const edgeMean = edgeN ? edgeSum / edgeN : 0;
+  const structureGate = redStructureGateFromMetrics(lumaStd, edgeMean);
+
+  const coverageOk = strictFullRatio >= 0.76 && strictCenterRatio >= 0.74;
+  const saturationOk = avgSaturation >= 0.55;
+  const brightnessOk = avgBrightness >= 0.42;
+  const coveragePenalty = coverageOk ? 1 : 0.4;
+  const satPenalty = saturationOk ? 1 : 0.55;
+  const brightPenalty = brightnessOk ? 1 : 0.6;
+  const redRatio = strictCombined * structureGate * coveragePenalty * satPenalty * brightPenalty;
+
+  return {
+    redRatio: Math.round(redRatio * 10000) / 10000,
+    strictFullRatio: Math.round(strictFullRatio * 10000) / 10000,
+    strictCenterRatio: Math.round(strictCenterRatio * 10000) / 10000,
+    strictCombined: Math.round(strictCombined * 10000) / 10000,
+    avgSaturation: Math.round(avgSaturation * 10000) / 10000,
+    avgBrightness: Math.round(avgBrightness * 10000) / 10000,
+    lumaStd: Math.round(lumaStd * 1000) / 1000,
+    edgeMean: Math.round(edgeMean * 1000) / 1000,
+    structureGate: Math.round(structureGate * 1000) / 1000,
+    coveragePenalty: Math.round(coveragePenalty * 1000) / 1000,
+    samplePixels: samples,
+  };
+}
+
 function estimateYellowDominance(frameData, width, height, sampleStep = 4) {
   let yellowCount = 0;
   let brightCount = 0;
@@ -857,6 +1066,16 @@ const GREEN_ENTER_THRESHOLD = 0.72;
 const GREEN_EXIT_THRESHOLD = 0.62;
 const GREEN_EVENT_MIN_AVG_RATIO = 0.68;
 const GREEN_EVENT_MIN_PEAK_RATIO = 0.78;
+/**
+ * Red loop-marker thresholds. Mirror green's strict gating; red cards are full-frame saturated red.
+ * Tuned conservatively to avoid false positives on red anatomy content; expect one calibration pass
+ * against a real marked video (red is harder than green due to hue wrap + skin/tissue reds).
+ */
+const RED_ENTER_THRESHOLD = 0.72;
+const RED_EXIT_THRESHOLD = 0.62;
+const RED_EVENT_MIN_AVG_RATIO = 0.68;
+const RED_EVENT_MIN_PEAK_RATIO = 0.78;
+const RED_COLOR_PIPELINE_LABEL = "loop_red_v2_exact_hsv354-17(card#FF1800)+coverage_gate+flatness22/16";
 
 function buildYellowEventsFromFrames(frameDetections, frameRate, minDurationSeconds = 0.06) {
   if (!frameDetections.length) {
@@ -1161,6 +1380,198 @@ function buildGreenEventsFromFrames(frameDetections, frameRate, minDurationSecon
   }
 
   if (inEvent) closeEvent(lastGreenIdx >= 0 ? lastGreenIdx : frameDetections.length - 1);
+  const rejectedSpans = rawCandidateSpans.filter((s) => s.rejected);
+  const durations = rawCandidateSpans.map((s) => s.duration).filter((d) => Number.isFinite(d));
+  const shortestCandidate = durations.length ? Math.min(...durations) : null;
+  const longestCandidate = durations.length ? Math.max(...durations) : null;
+
+  return {
+    events,
+    rawCandidateSpans,
+    rejectedSpans,
+    candidateSpanSummary: {
+      candidateSpanCount: rawCandidateSpans.length,
+      acceptedEventCount: events.length,
+      rejectedSpanCount: rejectedSpans.length,
+      shortestCandidate: shortestCandidate != null ? Math.round(shortestCandidate * 1000) / 1000 : null,
+      longestCandidate: longestCandidate != null ? Math.round(longestCandidate * 1000) / 1000 : null,
+      minDurationSecondsUsed: minDurationSeconds,
+    },
+    stats: {
+      framesDecoded: frameDetections.length,
+      framesAtOrAboveEnter,
+      minFramesRequired: minFrames,
+      eventsAccepted: events.length,
+      eventsRejected: rejectedSpans.length,
+      enterThreshold,
+      exitThreshold,
+      minDurationSeconds,
+    },
+  };
+}
+
+/**
+ * Group dense per-frame red ratios into red loop-marker events. Mirror of
+ * buildGreenEventsFromFrames so the proven hysteresis/min-duration/confidence logic is reused.
+ */
+function buildRedEventsFromFrames(frameDetections, frameRate, minDurationSeconds = 0.06) {
+  if (!frameDetections.length) {
+    return {
+      events: [],
+      rawCandidateSpans: [],
+      rejectedSpans: [],
+      candidateSpanSummary: {
+        candidateSpanCount: 0,
+        acceptedEventCount: 0,
+        rejectedSpanCount: 0,
+        shortestCandidate: null,
+        longestCandidate: null,
+        minDurationSecondsUsed: minDurationSeconds,
+      },
+      stats: {
+        framesDecoded: 0,
+        framesAtOrAboveEnter: 0,
+        minFramesRequired: 0,
+        eventsAccepted: 0,
+        eventsRejected: 0,
+        enterThreshold: RED_ENTER_THRESHOLD,
+        exitThreshold: RED_EXIT_THRESHOLD,
+        minDurationSeconds,
+      },
+    };
+  }
+
+  const frameInterval = frameRate > 0 ? 1 / frameRate : 1 / 30;
+  const minFrames = Math.max(1, Math.ceil(minDurationSeconds / frameInterval));
+  const enterThreshold = RED_ENTER_THRESHOLD;
+  const exitThreshold = RED_EXIT_THRESHOLD;
+  const exitDebounceFrames = 1;
+
+  const framesAtOrAboveEnter = frameDetections.filter((f) => (f.redRatio || 0) >= enterThreshold).length;
+
+  let inEvent = false;
+  let eventStartIdx = 0;
+  let lastRedIdx = -1;
+  let belowCount = 0;
+  let peakRed = 0;
+  let sumRed = 0;
+  let sumSat = 0;
+  let sumBright = 0;
+  let metricFrames = 0;
+  const events = [];
+  const rawCandidateSpans = [];
+
+  const closeEvent = (endIdx) => {
+    const frames = endIdx - eventStartIdx + 1;
+    const avgRed = metricFrames > 0 ? sumRed / metricFrames : 0;
+    const avgSat = metricFrames > 0 ? sumSat / metricFrames : 0;
+    const avgBright = metricFrames > 0 ? sumBright / metricFrames : 0;
+    const startTime = eventStartIdx * frameInterval;
+    const endTime = (endIdx + 1) * frameInterval;
+    const duration = endTime - startTime;
+
+    let rejected = false;
+    let rejectionReason = "accepted";
+    if (frames < minFrames) {
+      rejected = true;
+      rejectionReason = "below_min_duration_seconds";
+    } else if (avgRed < RED_EVENT_MIN_AVG_RATIO) {
+      rejected = true;
+      rejectionReason = "below_min_average_red_ratio";
+    } else if (peakRed < RED_EVENT_MIN_PEAK_RATIO) {
+      rejected = true;
+      rejectionReason = "below_min_peak_red_ratio";
+    }
+
+    rawCandidateSpans.push({
+      startFrame: eventStartIdx,
+      endFrame: endIdx,
+      startTime: Math.round(startTime * 1000) / 1000,
+      endTime: Math.round(endTime * 1000) / 1000,
+      duration: Math.round(duration * 1000) / 1000,
+      averageRedRatio: Math.round(avgRed * 1000) / 1000,
+      peakRedRatio: Math.round(peakRed * 1000) / 1000,
+      averageSaturation: Math.round(avgSat * 1000) / 1000,
+      averageBrightness: Math.round(avgBright * 1000) / 1000,
+      minDurationSecondsUsed: minDurationSeconds,
+      minFramesRequired: minFrames,
+      frames,
+      rejected,
+      rejectionReason,
+    });
+
+    if (rejected) return;
+
+    const confidence = clamp(
+      ((avgRed - RED_EVENT_MIN_AVG_RATIO) / 0.28) * 0.72 +
+      ((peakRed - RED_EVENT_MIN_PEAK_RATIO) / 0.22) * 0.28,
+      0,
+      1,
+    );
+    const redStart = Math.round(startTime * 1000) / 1000;
+    const redEnd = Math.round(endTime * 1000) / 1000;
+    events.push({
+      eventIndex: events.length + 1,
+      startFrame: eventStartIdx,
+      endFrame: endIdx,
+      startTime: redStart,
+      endTime: redEnd,
+      duration: Math.round((redEnd - redStart) * 1000) / 1000,
+      redStart,
+      redEnd,
+      // Loop is triggered when playback reaches the red card start.
+      freezeTime: redStart,
+      // Content past the red card (runtime loops back to the PREVIOUS freeze, not here).
+      contentStart: redEnd,
+      detectionConfidence: Math.round(confidence * 1000) / 1000,
+      metrics: {
+        peakRedRatio: Math.round(peakRed * 1000) / 1000,
+        averageRedRatio: Math.round(avgRed * 1000) / 1000,
+        averageSaturation: Math.round(avgSat * 1000) / 1000,
+        averageBrightness: Math.round(avgBright * 1000) / 1000,
+        frames,
+      },
+    });
+  };
+
+  for (let i = 0; i < frameDetections.length; i++) {
+    const frame = frameDetections[i];
+    const ratio = frame.redRatio || 0;
+
+    if (!inEvent) {
+      if (ratio >= enterThreshold) {
+        inEvent = true;
+        eventStartIdx = i;
+        lastRedIdx = i;
+        belowCount = 0;
+        peakRed = ratio;
+        sumRed = ratio;
+        sumSat = Number.isFinite(frame.avgSaturation) ? frame.avgSaturation : 0;
+        sumBright = Number.isFinite(frame.avgBrightness) ? frame.avgBrightness : 0;
+        metricFrames = 1;
+      }
+      continue;
+    }
+
+    peakRed = Math.max(peakRed, ratio);
+    sumRed += ratio;
+    sumSat += Number.isFinite(frame.avgSaturation) ? frame.avgSaturation : 0;
+    sumBright += Number.isFinite(frame.avgBrightness) ? frame.avgBrightness : 0;
+    metricFrames++;
+
+    if (ratio >= exitThreshold) {
+      lastRedIdx = i;
+      belowCount = 0;
+    } else {
+      belowCount++;
+      if (belowCount >= exitDebounceFrames) {
+        closeEvent(lastRedIdx);
+        inEvent = false;
+      }
+    }
+  }
+
+  if (inEvent) closeEvent(lastRedIdx >= 0 ? lastRedIdx : frameDetections.length - 1);
   const rejectedSpans = rawCandidateSpans.filter((s) => s.rejected);
   const durations = rawCandidateSpans.map((s) => s.duration).filter((d) => Number.isFinite(d));
   const shortestCandidate = durations.length ? Math.min(...durations) : null;
@@ -2644,10 +3055,151 @@ function detectGreenEventsDense(video, streamInfo, options = {}) {
   });
 }
 
+/** Dense sequential red loop-marker detection. Mirror of detectGreenEventsDense. */
+function detectRedEventsDense(video, streamInfo, options = {}) {
+  const minDurationSeconds = Number.isFinite(options.minDurationSeconds) && options.minDurationSeconds > 0
+    ? options.minDurationSeconds
+    : 0.06;
+
+  return new Promise((resolve, reject) => {
+    const sourceWidth = Number.isFinite(streamInfo.width) ? streamInfo.width : 1280;
+    const sourceHeight = Number.isFinite(streamInfo.height) ? streamInfo.height : 720;
+    const frameRate = Number.isFinite(streamInfo.frameRate) && streamInfo.frameRate > 0 ? streamInfo.frameRate : 30;
+
+    const targetWidth = Math.min(480, sourceWidth);
+    const targetHeight = Math.max(2, Math.floor((sourceHeight / sourceWidth) * targetWidth / 2) * 2);
+    const frameSize = targetWidth * targetHeight * 3;
+    let buffer = Buffer.alloc(0);
+    const frameDetections = [];
+    let stderrTail = "";
+
+    const proc = spawn(ffmpegPath, [
+      "-i", video,
+      "-vf", `scale=${targetWidth}:${targetHeight}:flags=fast_bilinear`,
+      "-f", "rawvideo",
+      "-pix_fmt", "rgb24",
+      "-vsync", "cfr",
+      "-an",
+      "-",
+    ]);
+
+    proc.stderr.on("data", (data) => {
+      const s = data.toString();
+      stderrTail = (stderrTail + s).slice(-4000);
+    });
+
+    proc.stdout.on("data", (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.length >= frameSize) {
+        const frameData = buffer.slice(0, frameSize);
+        buffer = buffer.slice(frameSize);
+        const scored = scoreFreezeRedFrame(frameData, targetWidth, targetHeight, 4);
+        frameDetections.push({
+          redRatio: scored.redRatio,
+          strictFullRatio: scored.strictFullRatio,
+          strictCenterRatio: scored.strictCenterRatio,
+          strictCombined: scored.strictCombined,
+          avgSaturation: scored.avgSaturation,
+          avgBrightness: scored.avgBrightness,
+          lumaStd: scored.lumaStd,
+          edgeMean: scored.edgeMean,
+          structureGate: scored.structureGate,
+          coveragePenalty: scored.coveragePenalty,
+        });
+      }
+    });
+
+    proc.on("close", (code) => {
+      if (code !== 0 && code !== 1) {
+        console.error("[red-dense] ffmpeg failed code", code, stderrTail.slice(-800));
+        reject(new Error(`Dense red detection failed (ffmpeg code ${code})`));
+        return;
+      }
+
+      const built = buildRedEventsFromFrames(frameDetections, frameRate, minDurationSeconds);
+      const redEvents = built.events || [];
+      const rawCandidateSpans = built.rawCandidateSpans || [];
+      const rejectedSpans = built.rejectedSpans || [];
+      const rejectionReasonSummary = {};
+      for (const span of rejectedSpans) {
+        const reason = span.rejectionReason || "unknown";
+        rejectionReasonSummary[reason] = (rejectionReasonSummary[reason] || 0) + 1;
+      }
+      const zeroReason = (() => {
+        if (frameDetections.length === 0) return "no_frames_decoded_check_video_and_ffmpeg_stderr";
+        if ((built.stats && built.stats.framesAtOrAboveEnter) === 0) {
+          return "no_frames_met_red_enter_threshold_color_may_not_match_red_card_rule";
+        }
+        if (redEvents.length > 0) return null;
+        if (rejectedSpans.length > 0) return "red_candidates_rejected_by_duration_or_confidence_rules";
+        return "grouping_produced_zero_red_events";
+      })();
+
+      const topRatioSnapshot = frameDetections
+        .map((f, i) => ({
+          frameIndex: i,
+          timeSec: Math.round((i / frameRate) * 1000) / 1000,
+          redRatio: Math.round((f.redRatio || 0) * 10000) / 10000,
+          passedEnter: (f.redRatio || 0) >= RED_ENTER_THRESHOLD,
+          passedExit: (f.redRatio || 0) >= RED_EXIT_THRESHOLD,
+        }))
+        .sort((a, b) => b.redRatio - a.redRatio)
+        .slice(0, 20);
+
+      console.log("[red-dense]", JSON.stringify({
+        video: path.basename(video),
+        frameRate,
+        frameCount: frameDetections.length,
+        minDurationSeconds,
+        colorPipeline: RED_COLOR_PIPELINE_LABEL,
+        thresholds: {
+          enter: RED_ENTER_THRESHOLD,
+          exit: RED_EXIT_THRESHOLD,
+          minAvg: RED_EVENT_MIN_AVG_RATIO,
+          minPeak: RED_EVENT_MIN_PEAK_RATIO,
+        },
+        candidateSpanCount: rawCandidateSpans.length,
+        acceptedEventCount: redEvents.length,
+        rejectedSpanCount: rejectedSpans.length,
+        rejectionReasonSummary,
+        topFramesByRatio: topRatioSnapshot,
+        zeroReason,
+      }));
+
+      resolve({
+        frameRate,
+        frameCount: frameDetections.length,
+        redEvents,
+        rawCandidateSpans,
+        rejectedSpans,
+        rejectionReasonSummary,
+        candidateSpanSummary: built.candidateSpanSummary || null,
+        groupingStats: built.stats || null,
+        detectionSummary: {
+          topFramesByRatio: topRatioSnapshot,
+          colorPipeline: RED_COLOR_PIPELINE_LABEL,
+        },
+        zeroReason,
+        stderrTail: frameDetections.length === 0 ? stderrTail.slice(-2000) : undefined,
+      });
+    });
+    proc.on("error", reject);
+  });
+}
+
 function deriveYellowRangesFromEvents(events) {
   return events.map((e) => ({
     start: Math.round((e.yellowStart != null ? e.yellowStart : e.startTime) * 1000) / 1000,
     end: Math.round((e.yellowEnd != null ? e.yellowEnd : e.endTime) * 1000) / 1000,
+    contentStart: e.contentStart != null ? Math.round(Number(e.contentStart) * 1000) / 1000 : null,
+  }));
+}
+
+/** Red loop-marker ranges for runtime ingestion (window.redScreenRanges). */
+function deriveRedRangesFromEvents(events) {
+  return (events || []).map((e) => ({
+    start: Math.round((e.redStart != null ? e.redStart : e.startTime) * 1000) / 1000,
+    end: Math.round((e.redEnd != null ? e.redEnd : e.endTime) * 1000) / 1000,
     contentStart: e.contentStart != null ? Math.round(Number(e.contentStart) * 1000) / 1000 : null,
   }));
 }
@@ -2678,6 +3230,27 @@ function buildGreenStopMarkers(events) {
     contentStart: e.contentStart != null ? Math.round(Number(e.contentStart) * 1000) / 1000 : null,
     detectionConfidence: e.detectionConfidence != null ? Math.round(Number(e.detectionConfidence) * 1000) / 1000 : null,
   }));
+}
+
+/**
+ * Red loop markers for player runtime. crossAt is the red card start: when playback reaches it the
+ * runtime loops back to the previous freeze marker's content until the user clicks (see
+ * getLoopReturnTimeForRedMarker / breakRedLoopAndResumePastRed in masterUIcontrol.js).
+ */
+function buildRedStopMarkers(events) {
+  return (events || []).map((e, idx) => {
+    const start = Math.round((e.redStart != null ? e.redStart : e.startTime) * 1000) / 1000;
+    const end = Math.round((e.redEnd != null ? e.redEnd : e.endTime) * 1000) / 1000;
+    return {
+      markerIndex: idx + 1,
+      start,
+      end,
+      crossAt: start,
+      freezeTime: start,
+      contentStart: e.contentStart != null ? Math.round(Number(e.contentStart) * 1000) / 1000 : end,
+      detectionConfidence: e.detectionConfidence != null ? Math.round(Number(e.detectionConfidence) * 1000) / 1000 : null,
+    };
+  });
 }
 
 function mapYellowEventsToChapters(chapterTitles, yellowEvents) {
@@ -3095,11 +3668,19 @@ async function runDeterministicYellowPipeline({
       minDurationSeconds: minSeg,
       lessonId: lessonId || null,
     });
+    // Stage 2c: dense sequential red loop-marker detection (separate pipeline/object).
+    const redResult = await detectRedEventsDense(prepared.preparedPath, prepared.info, {
+      minDurationSeconds: minSeg,
+      lessonId: lessonId || null,
+    });
     const greenEvents = Array.isArray(greenResult.greenEvents) ? greenResult.greenEvents : [];
+    const redEvents = Array.isArray(redResult.redEvents) ? redResult.redEvents : [];
     const yellowEvents = detection.yellowEvents;
     const yellowRanges = deriveYellowRangesFromEvents(yellowEvents);
     const yellowStopMarkers = buildYellowStopMarkers(yellowEvents);
     const greenStopMarkers = buildGreenStopMarkers(greenEvents);
+    const redStopMarkers = buildRedStopMarkers(redEvents);
+    const redRanges = deriveRedRangesFromEvents(redEvents);
 
     const yellowDetection = {
       version: 2,
@@ -3184,12 +3765,13 @@ async function runDeterministicYellowPipeline({
       },
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
-    const redDetection = buildRedDetectionScaffold({
+    const redDetection = buildRedDetectionResult({
       lessonId: lessonId || null,
       sourceLabel: effectiveSourceLabel,
       analyzedVideoBasename: path.basename(prepared.preparedPath),
       durationSec: Math.round(analysisDuration * 1000) / 1000,
       streamInfo: prepared.info,
+      redResult,
     });
     console.log("[green-pipeline] detection", JSON.stringify({
       source: sourceLabel || "pipeline",
@@ -3198,6 +3780,14 @@ async function runDeterministicYellowPipeline({
       rejectedSpanCount: greenDetection.rejectedSpans.length,
       rejectionReasonSummary: greenDetection.rejectionReasonSummary,
       zeroReason: greenDetection.zeroReason,
+    }));
+    console.log("[red-pipeline] detection", JSON.stringify({
+      source: sourceLabel || "pipeline",
+      acceptedEventCount: redDetection.acceptedEventCount,
+      rejectedSpanCount: (redDetection.rejectedSpans || []).length,
+      rejectionReasonSummary: redDetection.rejectionReasonSummary,
+      status: redDetection.status,
+      zeroReason: redDetection.zeroReason,
     }));
 
     // Stage 3: deterministic ordered chapter mapping (bootstrap strategy).
@@ -3284,6 +3874,9 @@ async function runDeterministicYellowPipeline({
       greenDetection,
       greenStopMarkers,
       redDetection,
+      redStopMarkers,
+      redRanges,
+      redEvents,
       markerModelContext,
       hasYellowEvents: yellowEvents.length > 0,
       chapterTimeline: mapping.mappings,
@@ -3326,7 +3919,10 @@ async function persistLessonYellowDetectionFailure(lessonId, videoPath, sourceLa
     {
       yellowDetection: pipeline.yellowDetection,
       greenDetection: pipeline.greenDetection || null,
+      greenStopMarkers: pipeline.greenStopMarkers || null,
       redDetection: pipeline.redDetection || buildRedDetectionScaffold({ lessonId, sourceLabel }),
+      redStopMarkers: pipeline.redStopMarkers || null,
+      redScreenRanges: pipeline.redRanges || null,
       markerModelContext: pipeline.markerModelContext || buildMarkerModelContext(sourceLabel || "pipeline"),
       yellowScreenEvents: [],
       yellowScreenRanges: [],
@@ -3556,6 +4152,8 @@ exports.detectYellowScreen = onCall(
         greenDetection: pipeline.greenDetection || null,
         greenStopMarkers: pipeline.greenStopMarkers || null,
         redDetection: pipeline.redDetection || buildRedDetectionScaffold({ lessonId, sourceLabel: "manual-yellow-regenerate" }),
+        redStopMarkers: pipeline.redStopMarkers || null,
+        redScreenRanges: pipeline.redRanges || null,
         markerModelContext: pipeline.markerModelContext || buildMarkerModelContext("manual-yellow-regenerate"),
         chapterTimeline: pipeline.chapterTimeline,
         timelineReview: pipeline.review,
@@ -3683,6 +4281,8 @@ exports.generateSrcArrayWithYellowOptions = onCall(
           greenDetection: pipeline.greenDetection || null,
           greenStopMarkers: pipeline.greenStopMarkers || null,
           redDetection: pipeline.redDetection || buildRedDetectionScaffold({ lessonId, sourceLabel: "manual-editor" }),
+          redStopMarkers: pipeline.redStopMarkers || null,
+          redScreenRanges: pipeline.redRanges || null,
           markerModelContext: pipeline.markerModelContext || buildMarkerModelContext("manual-editor"),
           chapterTimeline: pipeline.chapterTimeline,
           timelineReview: pipeline.review,
@@ -4518,6 +5118,8 @@ exports.generateSrcArrayFromYellowScreens = onCall(
           greenDetection: pipeline.greenDetection || null,
           greenStopMarkers: pipeline.greenStopMarkers || null,
           redDetection: pipeline.redDetection || buildRedDetectionScaffold({ lessonId, sourceLabel: "manual-generate-from-yellow" }),
+          redStopMarkers: pipeline.redStopMarkers || null,
+          redScreenRanges: pipeline.redRanges || null,
           markerModelContext: pipeline.markerModelContext || buildMarkerModelContext("manual-generate-from-yellow"),
           chapterTimeline: pipeline.chapterTimeline,
           timelineReview: pipeline.review,
