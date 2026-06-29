@@ -9,6 +9,11 @@
     <link rel="stylesheet" href="../../../../CommonFiles/MasterLessons.css">
     <link rel="stylesheet" href="../../../../CommonFiles/LessonSpecificStylesheets/Transcription.css">
     <title>Transcription</title>
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
+    <script src="../../../../CommonFiles/ApplyLessonChapterOverrides.js"></script>
 </head>
 
 <body>
@@ -96,8 +101,7 @@
         <div id="lesson" class="lesson">
             <div class="animation" id="animation" onclick="nextSlide()">
                 <video class="video" id="videoId">
-				    <source id="videoSrc" src='TranscriptionX.mp4' type="video/mp4">
-				    Video tag not supported
+Video tag not supported
                 </video>
             </div>
             <div class="lessonButtons">
@@ -110,8 +114,98 @@
     </div>
 </body>
 
-<script src="TranscriptionX_src_array.js"></script>
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
-<script src="../../../../CommonFiles/masterUIcontrol.js"></script>
-<script src="TranscriptionX.js"></script>
+<script>
+    // Initialize Firebase
+    const firebaseConfig = {
+        apiKey: "AIzaSyB0KbGW-4znfF19ikrUahdCyd_bEungkH4",
+        authDomain: "biome-865cc.firebaseapp.com",
+        projectId: "biome-865cc",
+        storageBucket: "biome-865cc.firebasestorage.app",
+        messagingSenderId: "952652458408",
+        appId: "1:952652458408:web:23e7f0689e9cf973be959d"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    window.shouldSkipYellow = false;
+    window.yellowScreenRanges = [];
+
+        // Load srcArray from Firestore (timeline keyed by lessonId only)
+    async function loadSrcArray(lessonId) {
+        try {
+            const lessonDoc = await db.collection("lessons").doc(lessonId).get();
+            if (!lessonDoc.exists) return [];
+            const data = lessonDoc.data() || {};
+            applyLessonMarkerGlobalsFromFirestoreData(data);
+            return data.srcArray || [];
+        } catch (error) {
+            console.error("Error loading srcArray:", error);
+            return [];
+        }
+    }
+
+    // Load video URL from Firebase Storage
+    async function loadVideoUrl(lessonId) {
+        try {
+            // Check videoPaths collection for custom videoPath
+            const videoPathDoc = await db.collection("videoPaths").doc(lessonId).get();
+            let videoPath;
+
+            if (videoPathDoc.exists && videoPathDoc.data().videoPath) {
+                // Use custom video path from videoPaths collection
+                videoPath = videoPathDoc.data().videoPath;
+            } else {
+                // Fall back to default path
+                videoPath = `videos/${lessonId}.mp4`;
+            }
+
+            const storageRef = firebase.storage().ref();
+            const fileRef = storageRef.child(videoPath);
+            return await fileRef.getDownloadURL();
+        } catch (error) {
+            console.error('Error loading video URL:', error);
+            // Return null if video doesn't exist, don't break the page
+            return null;
+        }
+    }
+
+    // Load masterUIcontrol.js first
+    const masterUIScript = document.createElement('script');
+    masterUIScript.src = '../../../../CommonFiles/masterUIcontrol.js';
+    document.body.appendChild(masterUIScript);
+
+    masterUIScript.onload = function() {
+        // Load srcArray from Firestore and initialize player
+        (async () => {
+            const lessonId = "transcription_x";
+
+            const srcArray = await loadSrcArray(lessonId);
+            const videoUrl = await loadVideoUrl(lessonId);
+
+            if (!window.shouldSkipColorCards && !window.shouldSkipYellow &&
+                ((window.yellowScreenRanges && window.yellowScreenRanges.length > 0) ||
+                 (window.greenDetection && window.greenDetection.events && window.greenDetection.events.length > 0))) {
+                window.shouldSkipColorCards = true;
+                window.shouldSkipYellow = true;
+            }
+
+            console.log("Loaded timing array:", srcArray);
+            console.log("Loaded video URL:", videoUrl);
+
+            // Always initialize player to set window.srcArray (required by masterUIcontrol.js)
+            if (videoUrl && srcArray && srcArray.length > 0) {
+                initializePlayer(videoUrl, srcArray);
+            } else {
+                console.warn("Video URL or srcArray missing. Video URL:", videoUrl, "srcArray length:", srcArray ? srcArray.length : 0);
+                // Always initialize with at least empty array to prevent "srcArray is not defined" errors
+                initializePlayer(videoUrl || "", srcArray || []);
+            }
+
+            // Load lesson-specific script
+            const lessonScript = document.createElement('script');
+            lessonScript.src = 'TranscriptionX.js';
+            document.body.appendChild(lessonScript);
+        })();
+    };
+</script>
 </html>
