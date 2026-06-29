@@ -1988,25 +1988,6 @@ html {
     border-color: #3b82f6;
 }
 
-.chapter-index-label {
-    font-size: 0.75rem;
-    color: #94a3b8;
-    white-space: nowrap;
-}
-
-.chapter-index-input {
-    width: 100%;
-    min-width: 0;
-    max-width: 4rem;
-    padding: 0.3rem 0.35rem;
-    border-radius: 4px;
-    border: 1px solid rgba(148, 163, 184, 0.4);
-    background: rgba(15, 23, 42, 0.85);
-    color: #e2e8f0;
-    font-size: 0.8rem;
-    box-sizing: border-box;
-}
-
 .chapter-row .btn-chapter-save {
     min-width: 5rem;
     padding: 0.3rem 0.5rem;
@@ -3121,7 +3102,6 @@ body::before {
 .section-index-input,
 .chapters-dropdown,
 .chapter-row .chapter-name-input,
-.chapter-index-input,
 .lesson-assignment select,
 .srcarray-editor-label input[type="number"],
 .srcarray-editor-table input,
@@ -3137,7 +3117,6 @@ body::before {
 .section-index-input:focus,
 .chapters-dropdown:focus,
 .chapter-row .chapter-name-input:focus,
-.chapter-index-input:focus,
 .lesson-assignment select:focus,
 .srcarray-editor-label input[type="number"]:focus,
 .srcarray-editor-table input:focus,
@@ -3270,5 +3249,127 @@ body:not(.dev-mode) .srcarray-editor-toolbar {
     align-items: center;
     gap: 12px;
     flex-wrap: wrap;
+}
+
+/* ===== Unified button sizing (global btn-sm) =====
+   btn-sm was previously only honored inside a couple of containers, so timeline
+   actions rendered full-size. Make it consistent everywhere. */
+.btn-sm {
+    padding: 0.35rem 0.75rem;
+    font-size: 0.82rem;
+}
+
+/* ===== Consolidated lesson-pipeline action bar ===== */
+.srcarray-editor-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.5rem;
+}
+
+.srcarray-editor-actions .btn {
+    margin: 0;
+}
+
+/* Push the destructive action to the right edge of the action bar. */
+.srcarray-editor-actions .srcarray-editor-actions-spacer {
+    margin-left: auto;
+}
+
+/* ===== Bottom-right toast (replaces the old top status bar) ===== */
+.controls-section .status-indicator {
+    display: none;
+}
+
+.toast-host {
+    position: fixed;
+    right: 1.25rem;
+    bottom: 1.25rem;
+    z-index: 2600;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    max-width: 360px;
+    pointer-events: none;
+}
+
+.toast {
+    pointer-events: auto;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.7rem 0.9rem;
+    background: #1e293b;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-left-width: 3px;
+    border-radius: 8px;
+    color: #e2e8f0;
+    font-size: 0.85rem;
+    line-height: 1.35;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    animation: toast-in 0.18s ease-out;
+}
+
+@keyframes toast-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.toast.toast-hide {
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 0.18s ease-in, transform 0.18s ease-in;
+}
+
+.toast-message {
+    flex: 1;
+    word-break: break-word;
+}
+
+.toast-spinner {
+    flex: 0 0 auto;
+    width: 1em;
+    height: 1em;
+    margin-top: 0.15em;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: btn-spin 0.6s linear infinite;
+}
+
+.toast-close {
+    flex: 0 0 auto;
+    background: transparent;
+    border: none;
+    color: inherit;
+    opacity: 0.7;
+    cursor: pointer;
+    font-size: 1.1rem;
+    line-height: 1;
+    padding: 0 0.1rem;
+}
+
+.toast-close:hover {
+    opacity: 1;
+}
+
+.toast.toast-scanning {
+    border-left-color: #fbbf24;
+    color: #fde68a;
+}
+
+.toast.toast-success {
+    border-left-color: #34d399;
+    color: #6ee7b7;
+}
+
+.toast.toast-error {
+    border-left-color: #f87171;
+    color: #fecaca;
+}
+
+.toast.toast-info {
+    border-left-color: #38bdf8;
 }
 

@@ -206,8 +206,19 @@
                             <div id="detectionGlanceStrip" class="detection-glance dev-only" hidden></div>
                             <h3 class="admin-step-header dev-only"><span class="admin-step-badge">Dev</span> Generate the timeline from the assigned video's markers</h3>
                             <div class="srcarray-editor-toolbar">
-                                <button type="button" id="srcArraySaveAllBtn" class="btn btn-primary btn-sm">Save all</button>
+                                <div class="srcarray-editor-actions">
+                                    <button type="button" id="srcArrayGenerateFromYellowBtn" class="btn btn-secondary btn-sm" title="Re-run detection (yellow + green + red) and rebuild the timeline from the assigned video">
+                                        Generate source
+                                    </button>
+                                    <button type="button" id="aiTitleMappingBtn" class="btn btn-secondary btn-sm" title="Run GPT vision on the detected green title cards and match each to one of this lesson's chapter titles. Builds a menu→green seek mapping. Does not change the timeline.">Run AI green&rarr;menu mapping</button>
+                                    <button type="button" id="saveGreenMenuMappingBtn" class="btn btn-primary btn-sm" title="Save the green→menu mapping. Every chapter with a selection becomes a live link that jumps to that timestamp at playback.">Save menu mapping</button>
+                                    <button type="button" id="srcArraySaveAllBtn" class="btn btn-primary btn-sm" title="Save the timeline rows below">Save all</button>
+                                    <button type="button" id="wipeTimelineBtn" class="btn btn-danger btn-sm srcarray-editor-actions-spacer" title="Delete all timeline + detection data for this lesson (Firestore). Keeps the assigned video so you can Generate source again from a clean state.">
+                                        Wipe timeline
+                                    </button>
+                                </div>
                                 <span id="srcArrayEditorStatus" class="srcarray-editor-status"></span>
+                                <p id="aiTitleMappingStatus" class="srcarray-editor-ai-status ai-mapping-idle" aria-live="polite">Idle</p>
                                 <div class="srcarray-editor-generate dev-only">
                                     <label class="srcarray-editor-label">
                                         Min card duration (s)
@@ -226,28 +237,17 @@
                                         <input type="checkbox" id="srcArrayYellowDebugCal" title="Yellow only: upload yellow frame PNGs + masks to Storage; extra logs. Does not affect green/red.">
                                         Yellow cal debug
                                     </label>
-                                    <button type="button" id="srcArrayGenerateFromYellowBtn" class="btn btn-secondary btn-sm" title="Re-run detection (yellow + green + red) and rebuild the timeline from the assigned video">
-                                        Generate source
-                                    </button>
-                                    <button type="button" id="wipeTimelineBtn" class="btn btn-danger btn-sm" title="Delete all timeline + detection data for this lesson (Firestore). Keeps the assigned video so you can Generate source again from a clean state.">
-                                        Wipe timeline
-                                    </button>
                                 </div>
+                                <label class="srcarray-editor-label srcarray-ai-instructions-label dev-only">
+                                    Matching instructions (optional)
+                                    <textarea id="aiMappingInstructions" class="srcarray-ai-instructions" rows="2" placeholder="e.g. The title text is the large word near the top of the green card; ignore subtitles."></textarea>
+                                </label>
                                 <p class="srcarray-editor-hint dev-only">Generate source re-runs all three color detectors (yellow = freeze, green = freeze + future menu anchor, red = loop). Dense scan uses native video FPS. The timeline rows below now list every detected card (yellow/green/red) in time order; each color also drives freeze/loop at playback. Playback start/end are content after the card; source/confidence are debug-only.</p>
                                 <div class="cursor-prompt-row dev-only">
                                     <span class="cursor-prompt-row-label">Export for Cursor:</span>
                                     <button type="button" id="copyTimelinePromptBtn" class="btn btn-secondary btn-sm cursor-prompt-btn" title="Copy a timeline/playback summary to paste back into Cursor">Copy timeline prompt</button>
                                     <button type="button" id="copyErrorPromptBtn" class="btn btn-danger btn-sm cursor-prompt-btn" title="Copy the last Generate-source error (stage + stack) to paste back into Cursor">Copy error report</button>
                                     <button type="button" id="copyFullPromptBtn" class="btn btn-primary btn-sm cursor-prompt-btn" title="Copy a full duration + yellow/green/red + timeline + error report to paste back into Cursor">Copy full report</button>
-                                </div>
-                                <div class="srcarray-editor-ai-row dev-only">
-                                    <button type="button" id="aiTitleMappingBtn" class="btn btn-secondary btn-sm" title="Run GPT vision on the detected green title cards and match each to one of this lesson's chapter titles. Builds a menu→green seek mapping. Does not change the timeline.">Run AI green&rarr;menu mapping</button>
-                                    <button type="button" id="saveGreenMenuMappingBtn" class="btn btn-primary btn-sm" title="Save the green→menu mapping. Every chapter with a selection becomes a live link that jumps to that timestamp at playback.">Save menu mapping</button>
-                                    <p id="aiTitleMappingStatus" class="srcarray-editor-ai-status ai-mapping-idle" aria-live="polite">Idle</p>
-                                    <label class="srcarray-editor-label srcarray-ai-instructions-label">
-                                        Matching instructions (optional)
-                                        <textarea id="aiMappingInstructions" class="srcarray-ai-instructions" rows="2" placeholder="e.g. The title text is the large word near the top of the green card; ignore subtitles."></textarea>
-                                    </label>
                                 </div>
                                 <div id="aiTitleMappingResults" class="srcarray-editor-ai-results dev-only" hidden></div>
                             </div>
@@ -263,8 +263,8 @@
                                             <th>ch#</th>
                                             <th>chapter name<br><span class="th-sub">from editor</span></th>
                                             <th>menu link</th>
-                                            <th>flag</th>
-                                            <th>lock</th>
+                                            <th class="dev-only">flag</th>
+                                            <th class="dev-only">lock</th>
                                             <th class="dev-only">card / debug<br><span class="th-sub">yellow event</span></th>
                                         </tr>
                                     </thead>
@@ -311,7 +311,7 @@
                                     </details>
                                 </details>
                             </div>
-                            <div id="greenMappingScaffoldWrap" class="green-mapping-scaffold dev-only" hidden>
+                            <div id="greenMappingScaffoldWrap" class="green-mapping-scaffold" hidden>
                                 <details open>
                                     <summary class="green-mapping-summary">Green &rarr; menu mapping (review &amp; confirm)</summary>
                                     <p class="green-mapping-hint">Each detected green title card and the chapter the AI matched it to. Pick or override the chapter with the dropdown, then <strong>Save menu mapping</strong>. Any row with a chapter selected becomes a live link: that menu click jumps straight to the green's timestamp at playback. Set a row to <em>&mdash; none &mdash;</em> to leave that chapter starting at the beginning. The <strong>reviewed</strong> checkbox is optional and does not affect playback. This never changes the timeline.</p>
@@ -578,6 +578,8 @@
             </div>
         </div>
     </div>
+
+    <div id="toastHost" class="toast-host" aria-live="polite" aria-atomic="true"></div>
 
     <script src="admin.js"></script>
 </body>

@@ -557,9 +557,78 @@ function showDashboard() {
     }
 }
 
+// Single in-place toast shown bottom-right. Reused across all setStatus calls so the admin's
+// ~120 status messages surface as a floating popup that stays visible while the page scrolls.
+let activeToastEl = null;
+let activeToastTimer = null;
+
+function dismissActiveToast() {
+    if (activeToastTimer) {
+        clearTimeout(activeToastTimer);
+        activeToastTimer = null;
+    }
+    const el = activeToastEl;
+    activeToastEl = null;
+    if (!el) return;
+    el.classList.add('toast-hide');
+    setTimeout(() => { if (el && el.parentNode) el.parentNode.removeChild(el); }, 200);
+}
+
 function setStatus(text, type = '') {
-    statusText.textContent = text;
-    statusText.parentElement.className = 'status-indicator' + (type ? ' ' + type : '');
+    // Keep the (now hidden) legacy status element in sync for a11y / back-compat.
+    if (typeof statusText !== 'undefined' && statusText) {
+        statusText.textContent = text;
+        if (statusText.parentElement) {
+            statusText.parentElement.className = 'status-indicator' + (type ? ' ' + type : '');
+        }
+    }
+
+    const host = document.getElementById('toastHost');
+    if (!host) return;
+
+    // Empty / "Ready" idle states just clear any visible toast.
+    if (!text || (type === '' && /^ready$/i.test(String(text).trim()))) {
+        dismissActiveToast();
+        return;
+    }
+
+    const variant = type === 'scanning' ? 'scanning'
+        : type === 'success' ? 'success'
+        : type === 'error' ? 'error'
+        : 'info';
+
+    if (activeToastTimer) {
+        clearTimeout(activeToastTimer);
+        activeToastTimer = null;
+    }
+
+    // Reuse one toast element, updating it in place (matches the single-message model).
+    let el = activeToastEl;
+    if (!el) {
+        el = document.createElement('div');
+        host.appendChild(el);
+        activeToastEl = el;
+    }
+    el.className = 'toast toast-' + variant;
+
+    const showSpinner = variant === 'scanning';
+    const showClose = variant === 'error';
+    el.innerHTML =
+        (showSpinner ? '<span class="toast-spinner" aria-hidden="true"></span>' : '') +
+        '<span class="toast-message"></span>' +
+        (showClose ? '<button type="button" class="toast-close" aria-label="Dismiss">&times;</button>' : '');
+    el.querySelector('.toast-message').textContent = text;
+    if (showClose) {
+        const closeBtn = el.querySelector('.toast-close');
+        if (closeBtn) closeBtn.addEventListener('click', dismissActiveToast);
+    }
+
+    // scanning + error stay until replaced/dismissed; success and info auto-clear.
+    if (variant === 'success') {
+        activeToastTimer = setTimeout(dismissActiveToast, 3000);
+    } else if (variant === 'info') {
+        activeToastTimer = setTimeout(dismissActiveToast, 2500);
+    }
 }
 
 async function loadAvailableVideos() {
@@ -1251,7 +1320,6 @@ function getLessonCardHTML(lesson, playbackOpts) {
                     <button type="button" class="btn btn-secondary btn-chapters" onclick="showChaptersForLesson('${escId}')"><span class="btn-label">Show chapters</span></button>
                     <div id="chapters-container-${lesson.lessonId}" class="chapters-container" style="display:none;">
                         <div class="chapters-toolbar">
-                            <button type="button" class="btn btn-secondary btn-sm" onclick="adjustChapterIndexSequence('${escId}')">Adjust index sequence</button>
                             <button type="button" class="btn btn-primary btn-sm" onclick="saveAllChapters('${escId}', this)">Save all</button>
                         </div>
                         <div id="chapters-edit-list-${lesson.lessonId}" class="chapters-edit-list"></div>
@@ -1801,8 +1869,8 @@ function renderSrcArrayTable(srcArray, lessonId, chapterTitles, panelExtras) {
             <td><input type="number" step="1" min="0" class="srcarray-input-chapterIndex" value="${chNum === '' ? '' : chNum}" data-index="${index}" placeholder="—"></td>
             <td class="srcarray-chapter-name" title="From lesson chapter editor (ordered list)">${esc(fromEditor || '—')}</td>
             <td><input type="text" class="srcarray-input-menuLink" value="${esc(menuLink)}" data-index="${index}" placeholder="menu link"></td>
-            <td><input type="checkbox" class="srcarray-input-flagged" data-index="${index}" ${flagged ? 'checked' : ''}></td>
-            <td><input type="checkbox" class="srcarray-input-manualOverride" data-index="${index}" ${manualOverride ? 'checked' : ''} title="Preserve on regenerate"></td>
+            <td class="dev-only"><input type="checkbox" class="srcarray-input-flagged" data-index="${index}" ${flagged ? 'checked' : ''}></td>
+            <td class="dev-only"><input type="checkbox" class="srcarray-input-manualOverride" data-index="${index}" ${manualOverride ? 'checked' : ''} title="Preserve on regenerate"></td>
             <td class="dev-only">
                 <details class="srcarray-details">
                     <summary>debug</summary>
@@ -2811,9 +2879,6 @@ async function showChaptersForLesson(lessonId) {
         const metaDoc = await db.collection('lessonMetadata').doc(lessonId).get();
         const meta = metaDoc.exists ? metaDoc.data() : {};
         const chapterDisplayNames = meta.chapterDisplayNames || {};
-        const chapterSegmentMap = meta.chapterSegmentMap || {};
-        const lessonDoc = await db.collection('lessons').doc(lessonId).get().catch(() => null);
-        const srcArrayData = (lessonDoc && lessonDoc.exists) ? (lessonDoc.data().srcArray || []) : [];
 
         const chapters = menuLinks.map(m => ({
             menuId: m.menuId,
@@ -2828,23 +2893,15 @@ async function showChaptersForLesson(lessonId) {
             chapterMenuLabels,
         }, { merge: true });
 
-        editList.innerHTML = chapters.map((ch, idx) => {
+        editList.innerHTML = chapters.map((ch) => {
             const safeOriginal = ch.originalLabel.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
             const safeDisplay = ch.displayName.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
             const safeMenuIdAttr = ch.menuId.replace(/"/g, '&quot;');
             const menuIdEscaped = ch.menuId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-            // Segment index: saved map > srcArray freezeFrame > mirror order (1, 2, 3, ...)
-            const fromMap = chapterSegmentMap[ch.menuId];
-            const fromSrc = (srcArrayData[idx] && typeof srcArrayData[idx].freezeFrame === 'number') ? srcArrayData[idx].freezeFrame : null;
-            const currentSegmentIndex = (fromMap != null && !Number.isNaN(Number(fromMap)) && Number(fromMap) > 0)
-                ? Number(fromMap)
-                : (fromSrc != null ? fromSrc : idx + 1);
             return `
                 <div class="chapter-row" data-menu-id="${safeMenuIdAttr}">
                     <span class="chapter-menu-id">${ch.menuId}</span>
                     <input type="text" class="chapter-name-input" value="${safeDisplay}" data-original="${safeOriginal}" data-menu-id="${safeMenuIdAttr}">
-                    <label class="chapter-index-label">Segment index:</label>
-                    <input type="number" class="chapter-index-input" min="1" value="${currentSegmentIndex}" data-menu-id="${safeMenuIdAttr}">
                     <button type="button" class="btn-section-save btn-chapter-save" onclick="saveChapterDisplayName('${lessonId.replace(/'/g, "\\'")}', '${menuIdEscaped}', this)">Save</button>
                 </div>`;
         }).join('');
@@ -2871,15 +2928,12 @@ async function saveChapterDisplayName(lessonId, menuId, btn) {
     const row = document.querySelector(`#chapters-edit-list-${lessonId} .chapter-row[data-menu-id="${menuId}"]`);
     if (!row) return;
     const input = row.querySelector('.chapter-name-input');
-    const indexInput = row.querySelector('.chapter-index-input');
-    if (!input || !indexInput) return;
+    if (!input) return;
 
     setButtonLoading(btn, true);
     try {
         const newName = input.value.trim();
         const originalLabel = input.getAttribute('data-original') || '';
-        const segmentIndexRaw = indexInput.value.trim();
-        const segmentIndex = segmentIndexRaw ? parseInt(segmentIndexRaw, 10) : null;
 
         const lesson = lessonsData.find(l => l.lessonId === lessonId);
         if (!lesson) return;
@@ -2905,31 +2959,11 @@ async function saveChapterDisplayName(lessonId, menuId, btn) {
             input.setAttribute('data-original', newName);
         }
 
-        // Update chapter → segment index mapping
-        if (segmentIndex && !Number.isNaN(segmentIndex) && segmentIndex > 0) {
-            const snapIdx = await metaRef.get();
-            const existingMap = (snapIdx.exists && snapIdx.data().chapterSegmentMap) ? { ...snapIdx.data().chapterSegmentMap } : {};
-            existingMap[menuId] = segmentIndex;
-            await metaRef.set({ chapterSegmentMap: existingMap }, { merge: true });
-        }
-
         setStatus('Chapter mapping saved', 'success');
         setTimeout(() => setStatus('Ready'), 2000);
     } finally {
         setButtonLoading(btn, false);
     }
-}
-
-function adjustChapterIndexSequence(lessonId) {
-    const editList = document.getElementById(`chapters-edit-list-${lessonId}`);
-    if (!editList) return;
-    const rows = editList.querySelectorAll('.chapter-row');
-    rows.forEach((row, idx) => {
-        const input = row.querySelector('.chapter-index-input');
-        if (input) input.value = idx + 1;
-    });
-    setStatus('Indexes set to 1, 2, 3… — click Save all to persist', 'success');
-    setTimeout(() => setStatus('Ready'), 2500);
 }
 
 async function saveAllChapters(lessonId, btn) {
@@ -2956,7 +2990,6 @@ async function saveAllChapters(lessonId, btn) {
     const metaSnap = await metaRef.get();
     const existing = metaSnap.exists ? metaSnap.data() : {};
     const chapterDisplayNames = { ...(existing.chapterDisplayNames || {}) };
-    const chapterSegmentMap = { ...(existing.chapterSegmentMap || {}) };
     const chapterMenuLabels = { ...(existing.chapterMenuLabels || {}) };
     const chapterOrder = [];
 
@@ -2965,11 +2998,8 @@ async function saveAllChapters(lessonId, btn) {
         if (!menuId) continue;
         chapterOrder.push(menuId);
         const nameInput = row.querySelector('.chapter-name-input');
-        const indexInput = row.querySelector('.chapter-index-input');
         const newName = nameInput ? nameInput.value.trim() : '';
         const originalLabel = nameInput ? (nameInput.getAttribute('data-original') || '') : '';
-        const segmentIndexRaw = indexInput ? indexInput.value.trim() : '';
-        const segmentIndex = segmentIndexRaw ? parseInt(segmentIndexRaw, 10) : null;
 
         if (originalLabel) {
             chapterMenuLabels[menuId] = originalLabel;
@@ -2984,17 +3014,11 @@ async function saveAllChapters(lessonId, btn) {
             chapterDisplayNames[menuId] = newName;
             if (nameInput) nameInput.setAttribute('data-original', newName);
         }
-        if (segmentIndex != null && !Number.isNaN(segmentIndex) && segmentIndex > 0) {
-            chapterSegmentMap[menuId] = segmentIndex;
-        } else {
-            delete chapterSegmentMap[menuId];
-        }
     }
 
     try {
         await metaRef.set({
             chapterDisplayNames,
-            chapterSegmentMap,
             chapterOrder,
             chapterMenuLabels,
         }, { merge: true });
@@ -3673,7 +3697,6 @@ window.toggleYellowScreen = toggleYellowScreen;
 window.saveLessonMetadata = saveLessonMetadata;
 window.showChaptersForLesson = showChaptersForLesson;
 window.saveChapterDisplayName = saveChapterDisplayName;
-window.adjustChapterIndexSequence = adjustChapterIndexSequence;
 window.saveAllChapters = saveAllChapters;
 window.resetLessonAssignment = resetLessonAssignment;
 window.resetLessonForReattach = resetLessonForReattach;
