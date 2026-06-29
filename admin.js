@@ -18,8 +18,10 @@ const functions = firebase.functions();
 let availableVideos = [];
 let lessonsData = [];
 let loginScreen, dashboardScreen, loginForm, refreshVideosBtn, statusText, loginError, videosList;
+let loginInfo, forgotPasswordBtn;
 let uploadVideoBtn, uploadVideoInput;
 let instructionsBtn, changelogBtn, instructionsModal, changelogModal;
+let roadmapBtn, roadmapModal;
 let profileBtn, profileModal;
 let searchInput, filterButtons;
 let currentFilter = 'all';
@@ -123,14 +125,18 @@ document.addEventListener('DOMContentLoaded', () => {
     profileModal = document.getElementById('profileModal');
     instructionsBtn = document.getElementById('instructionsBtn');
     changelogBtn = document.getElementById('changelogBtn');
+    roadmapBtn = document.getElementById('roadmapBtn');
     refreshVideosBtn = document.getElementById('refreshVideosBtn');
     uploadVideoBtn = document.getElementById('uploadVideoBtn');
     uploadVideoInput = document.getElementById('uploadVideoInput');
     statusText = document.getElementById('statusText');
     loginError = document.getElementById('loginError');
+    loginInfo = document.getElementById('loginInfo');
+    forgotPasswordBtn = document.getElementById('forgotPasswordBtn');
     videosList = document.getElementById('videosList');
     instructionsModal = document.getElementById('instructionsModal');
     changelogModal = document.getElementById('changelogModal');
+    roadmapModal = document.getElementById('roadmapModal');
     searchInput = document.getElementById('searchInput');
     filterButtons = document.querySelectorAll('.filter-btn');
 
@@ -180,6 +186,10 @@ function setupEventListeners() {
             if (loginError) {
                 loginError.textContent = '';
                 loginError.style.display = 'none';
+            }
+            if (loginInfo) {
+                loginInfo.textContent = '';
+                loginInfo.style.display = 'none';
             }
             
             const emailInput = document.getElementById('email');
@@ -241,6 +251,46 @@ function setupEventListeners() {
         });
     }
 
+    // Forgot password (Firebase password reset email)
+    if (forgotPasswordBtn) {
+        forgotPasswordBtn.addEventListener('click', async () => {
+            const emailInput = document.getElementById('email');
+            const email = emailInput ? emailInput.value.trim() : '';
+
+            if (!email) {
+                showError('Enter your email above, then click "Forgot password?" to get a reset link.');
+                if (emailInput) emailInput.focus();
+                return;
+            }
+
+            forgotPasswordBtn.disabled = true;
+            try {
+                await auth.sendPasswordResetEmail(email);
+                showInfo(`If an account exists for ${email}, a password reset link has been sent. Check your inbox (and spam folder).`);
+            } catch (error) {
+                console.error('Password reset error:', error);
+                let errorMessage = 'Could not send the reset email. Please try again.';
+                if (error.code === 'auth/invalid-email') {
+                    errorMessage = 'That email address is not valid.';
+                } else if (error.code === 'auth/user-not-found') {
+                    // Avoid leaking which emails exist; show the same neutral message as success.
+                    showInfo(`If an account exists for ${email}, a password reset link has been sent. Check your inbox (and spam folder).`);
+                    forgotPasswordBtn.disabled = false;
+                    return;
+                } else if (error.code === 'auth/too-many-requests') {
+                    errorMessage = 'Too many requests. Please wait a moment and try again.';
+                } else if (error.code === 'auth/network-request-failed') {
+                    errorMessage = 'Network error. Please check your connection.';
+                } else if (error.message) {
+                    errorMessage = error.message;
+                }
+                showError(errorMessage);
+            } finally {
+                forgotPasswordBtn.disabled = false;
+            }
+        });
+    }
+
     // View Main Menu
     const viewMainMenuBtn = document.getElementById('viewMainMenuBtn');
     if (viewMainMenuBtn) {
@@ -262,31 +312,73 @@ function setupEventListeners() {
         modal.setAttribute('aria-hidden', 'true');
     }
 
-    if (instructionsBtn && instructionsModal) {
-        instructionsBtn.addEventListener('click', () => openModal(instructionsModal));
+    // Instructions modal tabs (Documentation / Workflow)
+    function setInstructionsTab(tabName) {
+        if (!instructionsModal) return;
+        const tabs = instructionsModal.querySelectorAll('.instructions-tab');
+        const panels = instructionsModal.querySelectorAll('.inst-doc[data-inst-panel]');
+        tabs.forEach((tab) => {
+            const on = tab.getAttribute('data-inst-tab') === tabName;
+            tab.classList.toggle('active', on);
+            tab.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        panels.forEach((panel) => {
+            const on = panel.getAttribute('data-inst-panel') === tabName;
+            panel.classList.toggle('hidden', !on);
+            if (on) { panel.removeAttribute('hidden'); } else { panel.setAttribute('hidden', ''); }
+        });
+        const body = instructionsModal.querySelector('.instructions-body');
+        if (body) body.scrollTop = 0;
     }
 
+    if (instructionsModal) {
+        instructionsModal.querySelectorAll('.instructions-tab').forEach((tab) => {
+            tab.addEventListener('click', () => setInstructionsTab(tab.getAttribute('data-inst-tab')));
+        });
+    }
+
+    if (instructionsBtn && instructionsModal) {
+        instructionsBtn.addEventListener('click', () => {
+            setInstructionsTab('doc');
+            openModal(instructionsModal);
+        });
+    }
+
+    const workflowBtn = document.getElementById('workflowBtn');
+    if (workflowBtn && instructionsModal) {
+        workflowBtn.addEventListener('click', () => {
+            setInstructionsTab('workflow');
+            openModal(instructionsModal);
+        });
+    }
+
+    // Serialize the currently visible document panel into plain markdown-style text
     function getInstructionsPlainText(container) {
         if (!container) return '';
+        const panel = container.querySelector('.inst-doc[data-inst-panel]:not(.hidden)')
+            || container.querySelector('.inst-doc[data-inst-panel]');
+        if (!panel) return '';
         const parts = [];
-        const sections = container.querySelectorAll('.inst-section');
-        sections.forEach((sec) => {
-            const h3 = sec.querySelector('h3');
-            const title = h3 ? h3.innerText.trim() : '';
-            if (title) parts.push(title);
-            const lists = sec.querySelectorAll('ul, ol');
-            lists.forEach((list) => {
-                const isOrdered = list.tagName === 'OL';
-                list.querySelectorAll('li').forEach((li, i) => {
-                    const pre = isOrdered ? `${i + 1}. ` : '• ';
+        panel.querySelectorAll(':scope > *').forEach((node) => {
+            const tag = node.tagName;
+            const text = node.innerText.trim().replace(/\s+/g, ' ');
+            if (!text && tag !== 'UL' && tag !== 'OL') return;
+            if (tag === 'H2') {
+                parts.push('', `## ${text}`, '');
+            } else if (tag === 'H3') {
+                parts.push('', `### ${text}`);
+            } else if (tag === 'UL' || tag === 'OL') {
+                const ordered = tag === 'OL';
+                node.querySelectorAll(':scope > li').forEach((li, i) => {
+                    const pre = ordered ? `${i + 1}. ` : '- ';
                     parts.push(pre + li.innerText.trim().replace(/\s+/g, ' '));
                 });
-            });
-            const p = sec.querySelector('p');
-            if (p) parts.push(p.innerText.trim().replace(/\s+/g, ' '));
-            parts.push('');
+                parts.push('');
+            } else {
+                parts.push(text);
+            }
         });
-        return parts.join('\n').trim();
+        return parts.join('\n').replace(/\n{3,}/g, '\n\n').trim();
     }
 
     const instructionsPrintBtn = document.getElementById('instructionsPrintBtn');
@@ -317,8 +409,34 @@ function setupEventListeners() {
         changelogBtn.addEventListener('click', () => openModal(changelogModal));
     }
 
+    if (roadmapBtn && roadmapModal) {
+        roadmapBtn.addEventListener('click', () => openModal(roadmapModal));
+    }
+
+    // Edit menu (structure editor) modal
+    const editMenuBtn = document.getElementById('editMenuBtn');
+    const menuStructureModal = document.getElementById('menuStructureModal');
+    if (editMenuBtn && menuStructureModal) {
+        editMenuBtn.addEventListener('click', async () => {
+            openModal(menuStructureModal);
+            await openMenuStructureEditor();
+        });
+    }
+    const menuStructureSaveBtn = document.getElementById('menuStructureSaveBtn');
+    if (menuStructureSaveBtn) {
+        menuStructureSaveBtn.addEventListener('click', (e) => saveMenuStructureFromEditor(e.currentTarget));
+    }
+    const menuStructureResetBtn = document.getElementById('menuStructureResetBtn');
+    if (menuStructureResetBtn) {
+        menuStructureResetBtn.addEventListener('click', (e) => resetMenuStructure(e.currentTarget));
+    }
+    const menuStructureAddSectionBtn = document.getElementById('menuStructureAddSectionBtn');
+    if (menuStructureAddSectionBtn) {
+        menuStructureAddSectionBtn.addEventListener('click', () => addMenuStructureSection());
+    }
+
     // Generic close handlers (backdrop or [data-close-modal] button)
-    [instructionsModal, changelogModal, profileModal].forEach((modal) => {
+    [instructionsModal, changelogModal, roadmapModal, profileModal, menuStructureModal].forEach((modal) => {
         if (!modal) return;
 
         modal.addEventListener('click', (e) => {
@@ -365,7 +483,7 @@ function setupEventListeners() {
     // Close modals with Escape key
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
-            [instructionsModal, changelogModal, profileModal].forEach((modal) => {
+            [instructionsModal, changelogModal, roadmapModal, profileModal].forEach((modal) => {
                 if (modal && !modal.classList.contains('hidden')) {
                     closeModal(modal);
                 }
@@ -415,7 +533,7 @@ function setupEventListeners() {
             try {
                 requireAuth();
             } catch {
-                setStatus('Authentication required', 'error');
+                setStatus('You need to be logged in', 'error');
                 return;
             }
 
@@ -434,7 +552,7 @@ function setupEventListeners() {
                     await fileRef.put(file, metadata);
                 }
 
-                setStatus('Upload complete. Refreshing dashboard (timeline will update when Cloud Function runs)...', 'success');
+                setStatus('Upload finished. Refreshing the list…', 'success');
                 await loadAvailableVideos();
                 // If a single file was uploaded and its name matches a lessonId, assign it so the lesson uses this video
                 if (files.length === 1) {
@@ -515,6 +633,10 @@ function setupEventListeners() {
 
 // Show error message
 function showError(message) {
+    if (loginInfo) {
+        loginInfo.textContent = '';
+        loginInfo.style.display = 'none';
+    }
     if (loginError) {
         loginError.textContent = message;
         loginError.style.display = 'block';
@@ -522,6 +644,22 @@ function showError(message) {
         loginError.style.opacity = '1';
     } else {
         console.error('Error element not found:', message);
+        alert(message);
+    }
+}
+
+// Show informational / success message (e.g. password reset sent)
+function showInfo(message) {
+    if (loginError) {
+        loginError.textContent = '';
+        loginError.style.display = 'none';
+    }
+    if (loginInfo) {
+        loginInfo.textContent = message;
+        loginInfo.style.display = 'block';
+        loginInfo.style.visibility = 'visible';
+        loginInfo.style.opacity = '1';
+    } else {
         alert(message);
     }
 }
@@ -645,11 +783,11 @@ async function loadAvailableVideos() {
     try {
         requireAuth(); // Ensure user is authenticated
     } catch (error) {
-        setStatus('Authentication required', 'error');
+        setStatus('You need to be logged in', 'error');
         return;
     }
     
-    setStatus('Loading available videos...', 'scanning');
+    setStatus('Loading your videos…', 'scanning');
     refreshVideosBtn.disabled = true;
     
     try {
@@ -716,7 +854,7 @@ function updateVideosCountDisplay() {
     const countEl = document.getElementById('videosCount');
     if (!countEl) return;
     const inUse = getAssignedVideoCount();
-    countEl.textContent = `(${availableVideos.length} available · ${inUse} tied to lessons)`;
+    countEl.textContent = `(${availableVideos.length} uploaded · ${inUse} in use)`;
 }
 
 async function displayAvailableVideos() {
@@ -726,7 +864,7 @@ async function displayAvailableVideos() {
     }
 
     if (availableVideos.length === 0) {
-        videosList.innerHTML = '<p class="placeholder">No videos found in Storage</p>';
+        videosList.innerHTML = '<p class="placeholder">No videos uploaded yet. Use "Upload Video" at the top to add some.</p>';
         updateVideosCountDisplay();
         return;
     }
@@ -758,7 +896,7 @@ async function displayAvailableVideos() {
             <div class="videos-group-header">${label} <span class="videos-group-count">${list.length}</span></div>
             ${list.length ? list.map(renderItem).join('') : '<p class="placeholder videos-group-empty">None yet</p>'}
         </div>`;
-    videosList.innerHTML = group('Text', textVideos) + group('No-Text', noTextVideos);
+    videosList.innerHTML = group('With Text', textVideos) + group('Without Text', noTextVideos);
 
     // Preview click (video row, or Preview button)
     videosList.querySelectorAll('.video-item-preview').forEach(btn => {
@@ -1001,6 +1139,12 @@ function lessonIdFromPath(lessonPath) {
 // The canonical lesson list comes from the TextT menu (lessonId *_t, path .../TextT/...T.html).
 // The No-Text variant mirrors it: lessonId *_x and the parallel TextX/...X.html page.
 
+/** Variant-agnostic lesson key: lessonId with a trailing _t/_x removed (e.g. mendelian_genetics_t -> mendelian_genetics).
+ *  Used to key the menu-structure overlay so one Firestore doc drives both the Text and No-Text menus. */
+function baseLessonKey(lessonId) {
+    return String(lessonId || '').replace(/_(t|x)$/i, '');
+}
+
 /** Map a canonical *_t lessonId to the requested variant ('t' | 'x'). */
 function toVariantLessonId(baseTId, variant) {
     if (!baseTId) return baseTId;
@@ -1079,11 +1223,11 @@ async function scanLessons() {
     try {
         requireAuth(); // Ensure user is authenticated
     } catch (error) {
-        setStatus('Authentication required', 'error');
+        setStatus('You need to be logged in', 'error');
         return;
     }
     
-    setStatus('Scanning lessons from menu...', 'scanning');
+    setStatus('Loading lessons…', 'scanning');
     const refreshBtn = refreshVideosBtn;
     if (refreshBtn) refreshBtn.disabled = true;
     const lessonDetailEl = document.getElementById('lessonDetail');
@@ -1093,12 +1237,12 @@ async function scanLessons() {
     
     try {
         // Step 1: Parse central menu to get all lesson paths
-        setStatus('Parsing central menu...', 'scanning');
+        setStatus('Reading the menu…', 'scanning');
         const menuLessons = await parseCentralMenu();
         console.log(`Found ${menuLessons.length} lessons in menu`);
         
         // Step 2: Extract lessonIds from each HTML file
-        setStatus('Extracting lesson IDs and sections...', 'scanning');
+        setStatus('Loading lesson details…', 'scanning');
         lessonsData = [];
         const extractPromises = [];
         
@@ -1124,7 +1268,7 @@ async function scanLessons() {
         console.log(`Extracted ${extractedLessons.length} lesson IDs`);
         
         // Step 3: Check Firestore for videoPath, lesson metadata, section names, and video availability
-        setStatus('Checking video availability and metadata...', 'scanning');
+        setStatus('Checking which lessons have videos…', 'scanning');
         const checkPromises = [];
         
         for (const lesson of extractedLessons) {
@@ -1184,7 +1328,10 @@ async function scanLessons() {
             if (!a.hasVideo && b.hasVideo) return -1;
             return a.name.localeCompare(b.name);
         });
-        
+
+        // Load the menu-structure overlay so the sidebar mirrors the live menu order/hidden state.
+        await loadMenuStructure();
+
         renderSidebarTree();
         displaySelectedLesson();
         
@@ -1192,11 +1339,11 @@ async function scanLessons() {
         const totalCount = lessonsData.length;
         
         updateVideosCountDisplay();
-        setStatus(`Scan complete: ${missingCount} missing, ${totalCount - missingCount} found`, 
+        setStatus(`Loaded ${totalCount} lessons — ${missingCount} still need a video, ${totalCount - missingCount} have one`, 
                   missingCount > 0 ? 'error' : 'success');
     } catch (error) {
         console.error('Error scanning lessons:', error);
-        setStatus('Error scanning lessons: ' + error.message, 'error');
+        setStatus("Couldn't load lessons: " + error.message, 'error');
         const lessonDetail = document.getElementById('lessonDetail');
         if (lessonDetail) lessonDetail.innerHTML = '<p class="placeholder">Error loading lessons</p>';
     } finally {
@@ -1279,7 +1426,7 @@ function renderSidebarTree() {
     const treeEl = document.getElementById('sidebarTree');
     if (!treeEl) return;
     if (lessonsData.length === 0) {
-        treeEl.innerHTML = '<p class="placeholder">Click "Scan All Lessons" to load the tree</p>';
+        treeEl.innerHTML = '<p class="placeholder">Click "Load Lessons &amp; Videos" at the top to see your lessons here.</p>';
         return;
     }
     const filteredLessons = getFilteredLessons();
@@ -1287,6 +1434,13 @@ function renderSidebarTree() {
         treeEl.innerHTML = '<p class="placeholder">No lessons match your search/filter</p>';
         return;
     }
+
+    // Structure-aware rendering: mirror the live menu order + hidden state when an overlay exists.
+    if (menuStructure && Array.isArray(menuStructure.sections)) {
+        renderSidebarTreeStructured(treeEl, filteredLessons);
+        return;
+    }
+
     const groups = {};
     for (const lesson of filteredLessons) {
         const key = lesson.originalSection || 'Uncategorized';
@@ -1338,6 +1492,431 @@ function renderSidebarTree() {
     treeEl.innerHTML = html;
 }
 
+// ============================================================
+// Menu structure overlay (Edit menu) — data + editor logic
+// ============================================================
+let menuStructure = null;          // persisted menuStructure/central doc (or null)
+let editorStructure = null;        // working copy mutated by the Edit menu modal
+let pendingSectionRenames = {};    // sectionKey -> new display name (persisted on Save)
+let pendingLessonRenames = {};     // baseLessonKey -> new display name (persisted on Save)
+
+function msEsc(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+/** Index lessonsData by variant-agnostic base key. */
+function lessonByBaseKey() {
+    const map = {};
+    lessonsData.forEach(l => {
+        const key = baseLessonKey(l.baseId || l.lessonId);
+        if (key && !map[key]) map[key] = l;
+    });
+    return map;
+}
+
+async function loadMenuStructure() {
+    try {
+        const doc = await db.collection('menuStructure').doc('central').get();
+        menuStructure = doc.exists ? (doc.data() || null) : null;
+    } catch (e) {
+        console.warn('Failed to load menu structure', e);
+        menuStructure = null;
+    }
+    return menuStructure;
+}
+
+/** Seed a default structure from the current scan: sections in first-seen order, lessons in scan order. */
+function buildDefaultStructureFromScan() {
+    const sections = [];
+    const indexBySection = {};
+    lessonsData.forEach(l => {
+        const secKey = l.originalSection || 'Uncategorized';
+        if (!(secKey in indexBySection)) {
+            indexBySection[secKey] = sections.length;
+            sections.push({ key: secKey, order: sections.length, hidden: false, isCustom: false, displayName: null, lessons: [] });
+        }
+        const sec = sections[indexBySection[secKey]];
+        const lk = baseLessonKey(l.baseId || l.lessonId);
+        if (lk) sec.lessons.push({ key: lk, order: sec.lessons.length, hidden: false });
+    });
+    return { version: 1, sections };
+}
+
+/** Reconcile the saved structure against the current scan so new lessons/sections appear and removed ones drop. */
+function buildEffectiveEditorStructure() {
+    const def = buildDefaultStructureFromScan();
+    if (!menuStructure || !Array.isArray(menuStructure.sections)) {
+        return def;
+    }
+
+    const lessonExists = {};
+    const sectionExists = {};
+    def.sections.forEach(s => {
+        sectionExists[s.key] = true;
+        s.lessons.forEach(ls => { lessonExists[ls.key] = true; });
+    });
+
+    const placed = {};
+    const sections = [];
+
+    (menuStructure.sections || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0)).forEach(sec => {
+        if (!sec.isCustom && !sectionExists[sec.key]) return; // section removed from HTML
+        const lessons = [];
+        (sec.lessons || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0)).forEach(ls => {
+            if (!lessonExists[ls.key]) return;
+            if (placed[ls.key]) return;
+            placed[ls.key] = true;
+            lessons.push({ key: ls.key, order: lessons.length, hidden: !!ls.hidden });
+        });
+        sections.push({
+            key: sec.key,
+            order: sections.length,
+            hidden: !!sec.hidden,
+            isCustom: !!sec.isCustom,
+            displayName: sec.displayName || null,
+            lessons
+        });
+    });
+
+    // New sections present in scan but missing from the saved doc → append.
+    def.sections.forEach(ds => {
+        if (!sections.find(s => s.key === ds.key)) {
+            sections.push({
+                key: ds.key, order: sections.length, hidden: false, isCustom: false, displayName: null,
+                lessons: ds.lessons.filter(l => !placed[l.key]).map((l, i) => {
+                    placed[l.key] = true;
+                    return { key: l.key, order: i, hidden: false };
+                })
+            });
+        }
+    });
+
+    // Lessons discovered but not yet placed → append to their original section (create it if needed).
+    const sectionByKey = {};
+    sections.forEach(s => { sectionByKey[s.key] = s; });
+    lessonsData.forEach(l => {
+        const lk = baseLessonKey(l.baseId || l.lessonId);
+        if (!lk || placed[lk]) return;
+        placed[lk] = true;
+        const secKey = l.originalSection || 'Uncategorized';
+        let target = sectionByKey[secKey];
+        if (!target) {
+            target = { key: secKey, order: sections.length, hidden: false, isCustom: false, displayName: null, lessons: [] };
+            sections.push(target);
+            sectionByKey[secKey] = target;
+        }
+        target.lessons.push({ key: lk, order: target.lessons.length, hidden: false });
+    });
+
+    return { version: 1, sections };
+}
+
+function renderSidebarTreeStructured(treeEl, filteredLessons) {
+    const eff = buildEffectiveEditorStructure();
+    const lessonMap = lessonByBaseKey();
+    const allowedIds = new Set(filteredLessons.map(l => l.lessonId));
+    const secDisplay = {};
+    lessonsData.forEach(l => { secDisplay[l.originalSection] = l.section; });
+    const searching = !!searchQuery || currentFilter !== 'all';
+    const esc = (s) => String(s == null ? '' : s).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    const html = eff.sections.map(sec => {
+        const sectionName = sec.isCustom ? (sec.displayName || sec.key) : (secDisplay[sec.key] || sec.key);
+        const rows = sec.lessons.map(ls => {
+            const lesson = lessonMap[ls.key];
+            if (!lesson) return '';
+            if (!allowedIds.has(lesson.lessonId)) return '';
+            const safeLessonName = esc(lesson.name);
+            const statusClass = lesson.hasVideo ? 'has-video' : 'missing';
+            const isSelected = selectedLessonId === lesson.lessonId;
+            const selectedClass = isSelected ? ' selected' : '';
+            const hiddenClass = ls.hidden ? ' tree-item-hidden' : '';
+            const escId = lesson.lessonId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            const variantTag = isSelected
+                ? `<span class="tree-lesson-variant">${currentVariant === 'x' ? 'No-Text' : 'Text'}</span>`
+                : '';
+            const hiddenBadge = ls.hidden ? '<span class="tree-hidden-badge">Hidden</span>' : '';
+            return `<div class="tree-lesson ${statusClass}${selectedClass}${hiddenClass}" data-lesson-id="${lesson.lessonId}" onclick="selectLesson('${escId}')"><span class="tree-lesson-status">●</span><span class="tree-lesson-name">${safeLessonName}</span>${hiddenBadge}${variantTag}</div>`;
+        }).join('');
+
+        if (!rows && searching) return '';
+
+        const isCollapsed = collapsedSections.has(sec.key);
+        const secHiddenBadge = sec.hidden ? '<span class="tree-hidden-badge">Hidden</span>' : '';
+        const sectionKeyAttr = sec.key.replace(/"/g, '&quot;');
+        const children = rows || '<p class="placeholder tree-section-empty">No lessons</p>';
+        return `
+            <div class="tree-section${isCollapsed ? ' collapsed' : ''}${sec.hidden ? ' tree-item-hidden' : ''}" data-section="${sectionKeyAttr}">
+                <div class="tree-section-header">
+                    <span class="tree-section-chevron">▼</span>
+                    <span class="tree-section-title">${esc(sectionName)}</span>
+                    ${secHiddenBadge}
+                </div>
+                <div class="tree-section-children">${children}</div>
+            </div>`;
+    }).join('');
+
+    treeEl.innerHTML = html || '<p class="placeholder">No lessons match your search/filter</p>';
+}
+
+async function openMenuStructureEditor() {
+    pendingSectionRenames = {};
+    pendingLessonRenames = {};
+    const body = document.getElementById('menuStructureBody');
+    if (body) body.innerHTML = '<p class="placeholder">Loading menu...</p>';
+    if (!lessonsData.length) {
+        if (body) body.innerHTML = '<p class="placeholder">Click "Load Lessons &amp; Videos" first, then reopen Edit Menu.</p>';
+        return;
+    }
+    await loadMenuStructure();
+    editorStructure = buildEffectiveEditorStructure();
+    renderMenuStructureEditor();
+}
+
+function renderMenuStructureEditor() {
+    const body = document.getElementById('menuStructureBody');
+    if (!body || !editorStructure) return;
+    const lessonMap = lessonByBaseKey();
+    const secDisplay = {};
+    lessonsData.forEach(l => { secDisplay[l.originalSection] = l.section; });
+    const sections = editorStructure.sections;
+
+    const sectionDisplayName = (sec) => {
+        if (sec.isCustom) return sec.displayName || sec.key;
+        if (pendingSectionRenames[sec.key] !== undefined) return pendingSectionRenames[sec.key];
+        return secDisplay[sec.key] || sec.key;
+    };
+    const lessonDisplayName = (ls) => {
+        if (pendingLessonRenames[ls.key] !== undefined) return pendingLessonRenames[ls.key];
+        const lesson = lessonMap[ls.key];
+        return lesson ? lesson.name : ls.key;
+    };
+
+    body.innerHTML = sections.map((sec, sIdx) => {
+        const lessonsHtml = sec.lessons.length ? sec.lessons.map((ls, lIdx) => {
+            const moveOpts = sections.map((s2, i2) =>
+                `<option value="${i2}"${i2 === sIdx ? ' selected' : ''}>${msEsc(sectionDisplayName(s2))}</option>`
+            ).join('');
+            return `<div class="ms-lesson${ls.hidden ? ' ms-hidden' : ''}">
+                <button type="button" class="ms-btn ms-lesson-up" data-s="${sIdx}" data-l="${lIdx}" title="Move up"${lIdx === 0 ? ' disabled' : ''}>&#8593;</button>
+                <button type="button" class="ms-btn ms-lesson-down" data-s="${sIdx}" data-l="${lIdx}" title="Move down"${lIdx === sec.lessons.length - 1 ? ' disabled' : ''}>&#8595;</button>
+                <input type="text" class="ms-lesson-name" data-s="${sIdx}" data-l="${lIdx}" value="${msEsc(lessonDisplayName(ls))}" title="Rename lesson (applies to both menus)">
+                <select class="ms-move-select" data-s="${sIdx}" data-l="${lIdx}" title="Move to another section">${moveOpts}</select>
+                <button type="button" class="ms-btn ms-btn-hide ms-lesson-hide${ls.hidden ? ' is-hidden' : ''}" data-s="${sIdx}" data-l="${lIdx}" title="${ls.hidden ? 'Show' : 'Hide'} this lesson">${ls.hidden ? 'Show' : 'Hide'}</button>
+            </div>`;
+        }).join('') : '<div class="ms-empty-lessons">No lessons in this section.</div>';
+
+        return `<div class="ms-section${sec.hidden ? ' ms-hidden' : ''}" data-s="${sIdx}">
+            <div class="ms-section-header">
+                <button type="button" class="ms-btn ms-section-up" data-s="${sIdx}" title="Move section up"${sIdx === 0 ? ' disabled' : ''}>&#8593;</button>
+                <button type="button" class="ms-btn ms-section-down" data-s="${sIdx}" title="Move section down"${sIdx === sections.length - 1 ? ' disabled' : ''}>&#8595;</button>
+                <input type="text" class="ms-section-name" data-s="${sIdx}" value="${msEsc(sectionDisplayName(sec))}" title="Rename section">
+                ${sec.isCustom ? '<span class="ms-custom-tag">Custom</span>' : ''}
+                <button type="button" class="ms-btn ms-btn-hide ms-section-hide${sec.hidden ? ' is-hidden' : ''}" data-s="${sIdx}" title="${sec.hidden ? 'Show' : 'Hide'} this section">${sec.hidden ? 'Show' : 'Hide'}</button>
+            </div>
+            <div class="ms-lessons">${lessonsHtml}</div>
+        </div>`;
+    }).join('');
+
+    wireMenuStructureEditorEvents();
+}
+
+function captureEditorNamesFromDOM() {
+    const body = document.getElementById('menuStructureBody');
+    if (!body || !editorStructure) return;
+    body.querySelectorAll('.ms-section-name').forEach(inp => {
+        const sec = editorStructure.sections[+inp.dataset.s];
+        if (!sec) return;
+        if (sec.isCustom) sec.displayName = inp.value;
+        else pendingSectionRenames[sec.key] = inp.value;
+    });
+    body.querySelectorAll('.ms-lesson-name').forEach(inp => {
+        const sec = editorStructure.sections[+inp.dataset.s];
+        const ls = sec && sec.lessons[+inp.dataset.l];
+        if (ls) pendingLessonRenames[ls.key] = inp.value;
+    });
+}
+
+function wireMenuStructureEditorEvents() {
+    const body = document.getElementById('menuStructureBody');
+    if (!body) return;
+    const S = editorStructure.sections;
+
+    body.querySelectorAll('.ms-section-up').forEach(b => b.addEventListener('click', () => { captureEditorNamesFromDOM(); moveMenuSection(+b.dataset.s, -1); }));
+    body.querySelectorAll('.ms-section-down').forEach(b => b.addEventListener('click', () => { captureEditorNamesFromDOM(); moveMenuSection(+b.dataset.s, 1); }));
+    body.querySelectorAll('.ms-section-hide').forEach(b => b.addEventListener('click', () => {
+        captureEditorNamesFromDOM();
+        const sec = S[+b.dataset.s];
+        if (sec) sec.hidden = !sec.hidden;
+        renderMenuStructureEditor();
+    }));
+    body.querySelectorAll('.ms-lesson-up').forEach(b => b.addEventListener('click', () => { captureEditorNamesFromDOM(); moveMenuLesson(+b.dataset.s, +b.dataset.l, -1); }));
+    body.querySelectorAll('.ms-lesson-down').forEach(b => b.addEventListener('click', () => { captureEditorNamesFromDOM(); moveMenuLesson(+b.dataset.s, +b.dataset.l, 1); }));
+    body.querySelectorAll('.ms-lesson-hide').forEach(b => b.addEventListener('click', () => {
+        captureEditorNamesFromDOM();
+        const sec = S[+b.dataset.s];
+        const ls = sec && sec.lessons[+b.dataset.l];
+        if (ls) ls.hidden = !ls.hidden;
+        renderMenuStructureEditor();
+    }));
+    body.querySelectorAll('.ms-move-select').forEach(sel => sel.addEventListener('change', () => {
+        captureEditorNamesFromDOM();
+        moveMenuLessonToSection(+sel.dataset.s, +sel.dataset.l, +sel.value);
+    }));
+}
+
+function moveMenuSection(idx, dir) {
+    const S = editorStructure.sections;
+    const j = idx + dir;
+    if (j < 0 || j >= S.length) return;
+    const tmp = S[idx]; S[idx] = S[j]; S[j] = tmp;
+    renderMenuStructureEditor();
+}
+
+function moveMenuLesson(sIdx, lIdx, dir) {
+    const sec = editorStructure.sections[sIdx];
+    if (!sec) return;
+    const j = lIdx + dir;
+    if (j < 0 || j >= sec.lessons.length) return;
+    const tmp = sec.lessons[lIdx]; sec.lessons[lIdx] = sec.lessons[j]; sec.lessons[j] = tmp;
+    renderMenuStructureEditor();
+}
+
+function moveMenuLessonToSection(sIdx, lIdx, targetIdx) {
+    const S = editorStructure.sections;
+    if (sIdx === targetIdx) { renderMenuStructureEditor(); return; }
+    const src = S[sIdx], tgt = S[targetIdx];
+    if (!src || !tgt) return;
+    const moved = src.lessons.splice(lIdx, 1)[0];
+    if (moved) tgt.lessons.push(moved);
+    renderMenuStructureEditor();
+}
+
+function addMenuStructureSection() {
+    if (!editorStructure) return;
+    captureEditorNamesFromDOM();
+    const name = (window.prompt('New section name:', 'New Section') || '').trim();
+    if (!name) return;
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    const key = 'custom_' + (slug || 'section') + '_' + Date.now().toString(36);
+    editorStructure.sections.push({ key, order: editorStructure.sections.length, hidden: false, isCustom: true, displayName: name, lessons: [] });
+    renderMenuStructureEditor();
+}
+
+function closeMenuStructureModal() {
+    const m = document.getElementById('menuStructureModal');
+    if (m) { m.classList.add('hidden'); m.setAttribute('aria-hidden', 'true'); }
+}
+
+async function saveMenuStructureFromEditor(btn) {
+    if (!editorStructure) return;
+    captureEditorNamesFromDOM();
+    setButtonLoading(btn, true);
+    setStatus('Saving menu...', 'scanning');
+    try {
+        const sectionsOut = editorStructure.sections.map((sec, si) => ({
+            key: sec.key,
+            order: si,
+            hidden: !!sec.hidden,
+            isCustom: !!sec.isCustom,
+            displayName: sec.isCustom ? (sec.displayName || sec.key) : null,
+            lessons: sec.lessons.map((ls, li) => ({ key: ls.key, order: li, hidden: !!ls.hidden }))
+        }));
+
+        await db.collection('menuStructure').doc('central').set({
+            version: 1,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            sections: sectionsOut
+        });
+        menuStructure = { version: 1, sections: sectionsOut };
+
+        const writes = [];
+        const del = firebase.firestore.FieldValue.delete();
+
+        // Current effective names so we only persist renames that actually changed.
+        const secDisplay = {};
+        lessonsData.forEach(l => { secDisplay[l.originalSection] = l.section; });
+        const lessonMap = lessonByBaseKey();
+
+        Object.keys(pendingSectionRenames).forEach(secKey => {
+            const name = (pendingSectionRenames[secKey] || '').trim();
+            const current = secDisplay[secKey] || secKey;
+            if (name === current) return; // unchanged
+            const ref = db.collection('sectionNames').doc(secKey);
+            writes.push(ref.set({ displayName: (!name || name === secKey) ? del : name }, { merge: true }));
+        });
+
+        Object.keys(pendingLessonRenames).forEach(baseKey => {
+            const name = (pendingLessonRenames[baseKey] || '').trim();
+            const lesson = lessonMap[baseKey];
+            if (!lesson) return;
+            const current = lesson.name || lesson.originalName || '';
+            if (name === current) return; // unchanged
+            const original = lesson.originalName || '';
+            ['_t', '_x'].forEach(suf => {
+                const ref = db.collection('lessonMetadata').doc(baseKey + suf);
+                writes.push(ref.set({ displayName: (!name || name === original) ? del : name }, { merge: true }));
+            });
+        });
+
+        await Promise.all(writes);
+        applyEditorRenamesToLessonsData();
+
+        renderSidebarTree();
+        displaySelectedLesson();
+        setStatus('Menu saved', 'success');
+        setTimeout(() => setStatus('Ready'), 2500);
+        closeMenuStructureModal();
+    } catch (e) {
+        console.error('Error saving menu structure:', e);
+        setStatus('Error saving menu: ' + e.message, 'error');
+    } finally {
+        setButtonLoading(btn, false);
+    }
+}
+
+function applyEditorRenamesToLessonsData() {
+    const lessonMap = lessonByBaseKey();
+    Object.keys(pendingLessonRenames).forEach(baseKey => {
+        const lesson = lessonMap[baseKey];
+        if (!lesson) return;
+        const name = (pendingLessonRenames[baseKey] || '').trim();
+        lesson.name = name || lesson.originalName || lesson.name;
+    });
+    Object.keys(pendingSectionRenames).forEach(secKey => {
+        const name = (pendingSectionRenames[secKey] || '').trim();
+        lessonsData.forEach(l => {
+            if (l.originalSection === secKey) l.section = name || secKey;
+        });
+    });
+}
+
+async function resetMenuStructure(btn) {
+    if (!window.confirm('Reset the menu to its original order and show all hidden sections/lessons? This clears reorder/hide/move changes. (Renames are kept.)')) return;
+    setButtonLoading(btn, true);
+    setStatus('Resetting menu...', 'scanning');
+    try {
+        await db.collection('menuStructure').doc('central').delete();
+        menuStructure = null;
+        pendingSectionRenames = {};
+        pendingLessonRenames = {};
+        editorStructure = buildEffectiveEditorStructure();
+        renderMenuStructureEditor();
+        renderSidebarTree();
+        setStatus('Menu reset to default', 'success');
+        setTimeout(() => setStatus('Ready'), 2500);
+    } catch (e) {
+        console.error('Error resetting menu structure:', e);
+        setStatus('Error resetting menu: ' + e.message, 'error');
+    } finally {
+        setButtonLoading(btn, false);
+    }
+}
+
 async function displaySelectedLesson() {
     const panel = document.getElementById('lessonDetail');
     if (!panel) return;
@@ -1364,7 +1943,7 @@ async function displaySelectedLesson() {
 
 function getLessonCardHTML(lesson, playbackOpts) {
     const statusClass = lesson.hasVideo ? 'has-video' : 'missing';
-    const statusText = lesson.hasVideo ? 'Has Video' : 'Missing';
+    const statusText = lesson.hasVideo ? 'Has Video' : 'Needs Video';
     const forceAtZero = playbackOpts && playbackOpts.forceFirstChapterStartAtZero === true;
     const forceAtZeroChecked = forceAtZero ? ' checked' : '';
     const videoOptions = availableVideos.map(entry => {
@@ -1415,7 +1994,7 @@ function getLessonCardHTML(lesson, playbackOpts) {
                     <button type="button" class="btn btn-danger btn-sm dev-only" onclick="resetLessonForReattach('${escId}', this)" title="Detach the current video AND wipe all timeline/detection data so you can attach or upload a fresh video. Chapter metadata is kept."><span class="btn-label">Reset for reattach</span></button>
                     <!-- Regenerate-from-yellow disabled now that generation handles yellow in a single path -->
                 </div>
-                <p class="lesson-attach-hint">After assigning a video, open the <strong>Timeline</strong> below to review and save.</p>
+                <p class="lesson-attach-hint">After attaching a video, open <strong>Video Pauses &amp; Chapters</strong> below and click <strong>Scan Video</strong>.</p>
                 <div class="lesson-playback-settings dev-only">
                     <h4 class="lesson-playback-settings-title">Playback (temporary)</h4>
                     <label class="lesson-playback-settings-label">
@@ -1729,7 +2308,7 @@ function renderGreenMenuMappingTable(greenDetection, chapters, greenMenuMapping)
     });
 
     if (events.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="green-mapping-placeholder">No green events detected. Generate source first, then run AI mapping.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="green-mapping-placeholder">No chapter screens found yet. Click "Scan Video" first, then "Auto-Match Chapters".</td></tr>';
         return;
     }
 
@@ -1960,7 +2539,11 @@ function renderSrcArrayTable(srcArray, lessonId, chapterTitles, panelExtras) {
         const markerSemantics = seg.markerSemantics != null
             ? String(seg.markerSemantics)
             : (seg.loop === true ? 'loop' : (markerColor === 'opening' ? 'menu' : 'freeze'));
-        const typeCell = `<span class="srcarray-type-chip srcarray-type-${esc(markerColor)}" title="${esc(markerColor)} card · ${esc(markerSemantics)}">${esc(markerColor)}<br><span class="srcarray-type-sem">${esc(markerSemantics)}</span></span>`;
+        const plainTypeLabels = { yellow: 'Pause', green: 'Chapter', red: 'Replay', opening: 'Start' };
+        const plainTypeSubs = { freeze: 'pauses the video', loop: 'replays a section', menu: 'starts a chapter' };
+        const plainTypeLabel = plainTypeLabels[markerColor] || (markerColor.charAt(0).toUpperCase() + markerColor.slice(1));
+        const plainTypeSub = plainTypeSubs[markerSemantics] || markerSemantics;
+        const typeCell = `<span class="srcarray-type-chip srcarray-type-${esc(markerColor)}" title="${esc(markerColor)} card · ${esc(markerSemantics)}">${esc(plainTypeLabel)}<br><span class="srcarray-type-sem">${esc(plainTypeSub)}</span></span>`;
         const greenStart = seg.greenStart != null ? Number(seg.greenStart) : '';
         const greenEnd = seg.greenEnd != null ? Number(seg.greenEnd) : '';
         const redStart = seg.redStart != null ? Number(seg.redStart) : '';
@@ -1999,7 +2582,7 @@ function resetAiTitleMappingPanel() {
     const st = document.getElementById('aiTitleMappingStatus');
     const res = document.getElementById('aiTitleMappingResults');
     if (st) {
-        st.textContent = 'Idle';
+        st.textContent = 'Not run yet';
         st.className = 'srcarray-editor-ai-status ai-mapping-idle';
     }
     if (res) {
@@ -2460,7 +3043,7 @@ function setupCursorPromptButtons() {
         if (!btn) return;
         btn.addEventListener('click', () => {
             if (!currentDetectionDataForEditor) {
-                setStatus('No detection data loaded yet — select a lesson and Generate source.', 'error');
+                setStatus('Nothing scanned yet — pick a lesson and click "Scan Video".', 'error');
                 return;
             }
             copyCursorPrompt(builder(currentDetectionDataForEditor), btn);
@@ -2569,7 +3152,7 @@ function setupSrcArrayEditorListeners() {
     if (saveBtn) {
         saveBtn.addEventListener('click', async () => {
             if (!currentSrcArrayLessonId || currentSrcArrayForEditor.length === 0) {
-                setStatus('No timeline to save. Select a lesson and open the editor.', 'error');
+                setStatus('Nothing to save yet. Pick a lesson and scan its video first.', 'error');
                 return;
             }
             const tbody = document.getElementById('srcArrayEditorTbody');
@@ -2611,16 +3194,16 @@ function setupSrcArrayEditorListeners() {
             const playableOnly = updated.filter((seg) => rowIncludedInPlayableTimeline(seg));
             const dropped = updated.length - playableOnly.length;
             setButtonLoading(saveBtn, true);
-            setStatus('Saving timeline…', 'scanning');
+            setStatus('Saving…', 'scanning');
             try {
                 await db.collection('lessons').doc(currentSrcArrayLessonId).set({ srcArray: playableOnly }, { merge: true });
                 currentSrcArrayForEditor = playableOnly;
-                const saveNote = dropped > 0 ? ` (${dropped} invalid row(s) omitted)` : '';
-                setStatus(`Timeline saved${saveNote}`, 'success');
+                const saveNote = dropped > 0 ? ` (${dropped} row(s) skipped because the times didn't make sense)` : '';
+                setStatus(`Saved${saveNote}`, 'success');
                 const statusEl = document.getElementById('srcArrayEditorStatus');
-                if (statusEl) statusEl.textContent = `${playableOnly.length} segment(s) saved`;
+                if (statusEl) statusEl.textContent = `${playableOnly.length} item(s) saved`;
             } catch (e) {
-                setStatus('Save failed: ' + e.message, 'error');
+                setStatus("Couldn't save: " + e.message, 'error');
             } finally {
                 setButtonLoading(saveBtn, false);
             }
@@ -2635,7 +3218,7 @@ function setupSrcArrayEditorListeners() {
             try {
                 requireAuth();
             } catch (error) {
-                setStatus('Authentication required', 'error');
+                setStatus('You need to be logged in', 'error');
                 return;
             }
 
@@ -2644,11 +3227,11 @@ function setupSrcArrayEditorListeners() {
 
             try {
                 setButtonLoading(generateBtn, true);
-                setStatus(`Generating timeline (min card duration ${minSegmentSeconds}s; detecting yellow + green + red)…`, 'scanning');
+                setStatus('Scanning the video for pauses, chapters, and replays… this can take a moment.', 'scanning');
 
                 const videoPath = await getVideoPathForLesson(selectedLessonId);
                 if (!videoPath) {
-                    setStatus('No video path for this lesson', 'error');
+                    setStatus('This lesson has no video attached yet. Attach one first.', 'error');
                     return;
                 }
 
@@ -2677,12 +3260,12 @@ function setupSrcArrayEditorListeners() {
                             errorStack: data.errorStack || '',
                             source: 'manual-editor',
                         };
-                        setStatus(`Generate errored at stage "${data.stage || 'unknown'}": ${msg}. Timeline not overwritten — use "Copy error report" to send the details to Cursor.`, 'error');
+                        setStatus(`Couldn't finish scanning the video: ${msg}. Nothing was changed — try again, or turn on Developer Tools at the bottom for technical details.`, 'error');
                         await refreshSrcArrayEditor();
                         return;
                     }
                     const gLine = buildGreenSummaryLineFromResponse(data.greenDetectionSummary);
-                    setStatus(`Generate failed: ${msg}. Timeline not overwritten. Check lesson yellowDetection in Firestore.${gLine}`, 'error');
+                    setStatus(`Scan didn't work: ${msg}. Nothing was changed.${gLine}`, 'error');
                     await refreshSrcArrayEditor();
                     return;
                 }
@@ -2707,9 +3290,9 @@ function setupSrcArrayEditorListeners() {
                 const gLine = buildGreenSummaryLineFromResponse(data.greenDetectionSummary);
                 const rLine = buildRedSummaryLineFromResponse(data.redDetectionSummary);
                 if (staleTimelineBuildDetected) {
-                    setStatus(`Generated ${segs} timeline row(s) but the deployed functions returned an OLD timeline model (got "${data.timelineModel || 'none'}", expected "${EXPECTED_TIMELINE_MODEL}"). Run: firebase deploy --only functions.${yLine}${chLine}${tgLine}${gLine}${rLine}`, 'error');
+                    setStatus(`Built ${segs} item(s), but the server is running an outdated version and needs to be updated by the developer.${yLine}${chLine}${tgLine}${gLine}${rLine}`, 'error');
                 } else {
-                    setStatus(`Generated ${segs} timeline row(s).${yLine}${chLine}${tgLine}${gLine}${rLine}${sum}${states}`, 'success');
+                    setStatus(`Done! Found ${segs} item(s) in the video. Next, click "Auto-Match Chapters".`, 'success');
                 }
 
                 await refreshSrcArrayEditor();
@@ -2723,7 +3306,7 @@ function setupSrcArrayEditorListeners() {
                     errorStack: (e && e.stack) ? String(e.stack).slice(0, 4000) : '',
                     source: 'manual-editor',
                 };
-                setStatus('Error generating timeline: ' + (e && e.message ? e.message : String(e)) + ' — use "Copy error report" to send details to Cursor.', 'error');
+                setStatus('Something went wrong while scanning: ' + (e && e.message ? e.message : String(e)) + '. Please try again.', 'error');
                 await refreshSrcArrayEditor();
             } finally {
                 setButtonLoading(generateBtn, false);
@@ -2741,20 +3324,20 @@ function setupSrcArrayEditorListeners() {
             try {
                 requireAuth();
             } catch (error) {
-                setStatus('Authentication required', 'error');
+                setStatus('You need to be logged in', 'error');
                 return;
             }
-            const confirmed = window.confirm('Wipe all timeline and detection data for this lesson? The video assignment stays, and you can Generate source again afterward.');
+            const confirmed = window.confirm('Erase the pauses and chapters for this lesson and start over? The video stays attached, so you can scan it again afterward.');
             if (!confirmed) return;
 
             setButtonLoading(wipeTimelineBtn, true);
-            setStatus('Wiping timeline and detection data…', 'scanning');
+            setStatus('Clearing…', 'scanning');
             try {
                 const wipeFn = functions.httpsCallable('wipeLessonPipelineData');
                 const result = await wipeFn({ lessonId: selectedLessonId, mode: 'timeline' });
                 const data = result.data || {};
                 if (data.success === false) {
-                    setStatus('Wipe failed: ' + (data.message || 'unknown error'), 'error');
+                    setStatus("Couldn't clear: " + (data.message || 'unknown error'), 'error');
                     return;
                 }
                 lastGenerateError = null;
@@ -2762,10 +3345,10 @@ function setupSrcArrayEditorListeners() {
                 currentDetectionDataForEditor = null;
                 currentSrcArrayForEditor = [];
                 await refreshSrcArrayEditor();
-                setStatus('Timeline and detection data wiped. Video still assigned — click Generate source to rebuild.', 'success');
+                setStatus('Cleared. The video is still attached — click "Scan Video" to start over.', 'success');
             } catch (e) {
                 console.error('wipeLessonPipelineData (timeline) failed:', e);
-                setStatus('Wipe failed: ' + (e && e.message ? e.message : String(e)), 'error');
+                setStatus("Couldn't clear: " + (e && e.message ? e.message : String(e)), 'error');
             } finally {
                 setButtonLoading(wipeTimelineBtn, false);
             }
@@ -2784,13 +3367,13 @@ function setupSrcArrayEditorListeners() {
             try {
                 requireAuth();
             } catch (err) {
-                setAiTitleMappingStatus('failed', 'Authentication required');
-                setStatus('Authentication required', 'error');
+                setAiTitleMappingStatus('failed', 'You need to be logged in');
+                setStatus('You need to be logged in', 'error');
                 return;
             }
 
             setButtonLoading(aiTitleMappingBtn, true);
-            setAiTitleMappingStatus('running', 'Matching green title cards to chapters…');
+            setAiTitleMappingStatus('running', 'Reading the chapter titles in the video and matching them to the menu…');
             if (resEl) {
                 resEl.hidden = true;
                 resEl.innerHTML = '';
@@ -2806,25 +3389,25 @@ function setupSrcArrayEditorListeners() {
                 const data = result.data || {};
 
                 if (data.success === false) {
-                    const msg = data.message || data.reason || 'Green→menu mapping failed';
+                    const msg = data.message || data.reason || "Couldn't match chapters";
                     setAiTitleMappingStatus('failed', msg);
-                    setStatus(`Green→menu mapping: ${msg}`, 'error');
+                    setStatus(`Chapter matching: ${msg}`, 'error');
                     return;
                 }
 
-                const line = `OK · processed ${data.processedEventCount}, matched ${data.mappedCount}, review ${data.manualReviewCount}`;
+                const line = `Matched ${data.mappedCount} of ${data.processedEventCount}; ${data.manualReviewCount} need a quick check`;
                 setAiTitleMappingStatus('success', line);
-                setStatus('Green→menu mapping completed — review & confirm below, then Save', 'success');
+                setStatus('Chapters matched — check them below, then click "Save Chapter Links".', 'success');
                 // Reload persisted greenMenuMapping + AI results into the editable table.
                 await refreshSrcArrayEditor();
             } catch (err) {
                 console.error('mapGreenEventsToChaptersWithAI failed:', err);
                 let msg = err.message || String(err);
                 if (err.code === 'functions/failed-precondition') {
-                    msg = 'Server: OPENAI_API_KEY missing or AI not configured.';
+                    msg = 'The AI is not set up on the server yet — ask the developer to add the AI key.';
                 }
                 setAiTitleMappingStatus('failed', msg);
-                setStatus('Green→menu mapping failed: ' + msg, 'error');
+                setStatus("Couldn't match chapters: " + msg, 'error');
             } finally {
                 setButtonLoading(aiTitleMappingBtn, false);
             }
@@ -2841,7 +3424,7 @@ function setupSrcArrayEditorListeners() {
             try {
                 requireAuth();
             } catch (err) {
-                setStatus('Authentication required', 'error');
+                setStatus('You need to be logged in', 'error');
                 return;
             }
 
@@ -2852,15 +3435,15 @@ function setupSrcArrayEditorListeners() {
                 const result = await saveFn({ lessonId: selectedLessonId, byMenuId });
                 const data = result.data || {};
                 if (data.success === false) {
-                    setStatus('Save menu mapping failed', 'error');
+                    setStatus("Couldn't save chapter links", 'error');
                     return;
                 }
-                setStatus(`Saved ${data.savedCount} chapter link(s) — live at playback`, 'success');
-                setAiTitleMappingStatus('success', `Saved ${data.savedCount} chapter link(s). Menu clicks now jump to these timestamps (reload the lesson).`);
+                setStatus(`Saved ${data.savedCount} chapter link(s) — they're live for students now.`, 'success');
+                setAiTitleMappingStatus('success', `Saved ${data.savedCount} chapter link(s). Clicking those chapters now jumps to the right spot in the video.`);
                 await refreshSrcArrayEditor();
             } catch (err) {
                 console.error('saveGreenMenuMapping failed:', err);
-                setStatus('Save menu mapping failed: ' + (err.message || String(err)), 'error');
+                setStatus("Couldn't save chapter links: " + (err.message || String(err)), 'error');
             } finally {
                 setButtonLoading(saveGreenMenuMappingBtn, false);
             }
@@ -3638,7 +4221,7 @@ async function mapAllSegmentLinks() {
     try {
         requireAuth(); // Ensure user is authenticated
     } catch (error) {
-        setStatus('Authentication required', 'error');
+        setStatus('You need to be logged in', 'error');
         return;
     }
     
@@ -3740,7 +4323,7 @@ async function generateSrcArrayFromYellowScreensForLesson(lessonId) {
     try {
         requireAuth();
     } catch (error) {
-        setStatus('Authentication required', 'error');
+        setStatus('You need to be logged in', 'error');
         return;
     }
 
@@ -3804,7 +4387,7 @@ async function detectVideoTitlesForAllLessons() {
     try {
         requireAuth(); // Ensure user is authenticated
     } catch (error) {
-        setStatus('Authentication required', 'error');
+        setStatus('You need to be logged in', 'error');
         return;
     }
     

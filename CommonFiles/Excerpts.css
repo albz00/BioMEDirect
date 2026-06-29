@@ -1,3 +1,5 @@
+@import url("PixelButtons.css");
+
 .excerptsMain {
     /* font-family: Arial Rounded MT Black, sans-serif; */
     color: darkblue;
@@ -27,6 +29,61 @@
     width: 97.5%;
     line-height: 6vmin;
     padding-left: 4vmin;
+    /* Establish a stacking context so thumbnails render in front of the
+       ridge/groove border of .excerptsMain instead of being clipped behind it. */
+    z-index: 1;
+}
+
+/* --- Excerpt list items with thumbnail + description ---
+   Keeps the existing <dl>/<dt> list layout but lets each entry carry a
+   thumbnail image and a short description alongside the download link. */
+dt.excerptItem {
+    display: flex;
+    align-items: center;
+    gap: 3vmin;
+    margin-bottom: 3vmin;
+    position: relative; /* needed for z-index lift on hover */
+}
+
+.excerptThumb {
+    flex: 0 0 auto;
+    max-height: 12vmin;
+    max-width: 12vmin;
+    border: 0.4vmin solid darkcyan;
+    border-radius: 0.6vmin;
+    background: #fff;
+    object-fit: cover;
+    /* Bring the thumbnail to the front so it is never hidden behind the
+       bordered panel; enlarge slightly on hover for a clearer preview. */
+    position: relative;
+    z-index: 2;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.excerptThumb:hover {
+    transform: scale(2.2);
+    transform-origin: left center;
+    box-shadow: 0 0 2vmin rgba(0, 0, 0, 0.5);
+    z-index: 10; /* lift above sibling rows while zoomed */
+}
+
+.excerptText {
+    display: flex;
+    flex-direction: column;
+    text-align: left;
+}
+
+.excerptText > a {
+    text-align: left;
+}
+
+.excerptDesc {
+    font-family: arial, sans-serif;
+    font-size: 1.5vw;
+    color: #333;
+    line-height: 2.2vmin;
+    margin: 0.5vmin 0 0 0;
+    text-align: left;
 }
 
 /* http://jsfiddle.net/c6oLrztm/1/ */

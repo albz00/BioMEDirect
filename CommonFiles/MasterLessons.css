@@ -1,3 +1,5 @@
+@import url("PixelButtons.css");
+
 header {
 	margin-top: 4vmin; /* Space between border and title */
 	/* padding-bottom: 2vmin; Space between title and button Bank */
@@ -220,6 +222,11 @@ button:focus {
 }
 
 .headBank {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	align-items: center;
+	gap: 1vmin 1.4vmin;
 	padding-top: 0.5vmin; /* Space between title and button bank */ 
 	padding-bottom: 2.5vmin; /* Space between button bank and menu links */ 
 	z-index: 1;
@@ -231,6 +238,11 @@ button:focus {
 }
 
 .lessonButtons {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	align-items: center;
+	gap: 1vmin 1.4vmin;
     width: 100%;
 	position: absolute;
 	bottom: 1vmin;
@@ -238,13 +250,13 @@ button:focus {
 }
 
 .btnFooter {
-	float: left;
+	float: none;
 	height: 5.9vh;
 	position: relative;  /* Relative to video field */
 }
 
 .btnRate {
-    float: left;
+    float: none;
 	height: 5.9vh;
 	position: relative;  /* Relative to video field */
 }

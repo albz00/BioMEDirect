@@ -247,6 +247,47 @@ html {
     border-radius: 4px;
 }
 
+.info-message {
+    color: #34d399;
+    margin-top: 1rem;
+    text-align: center;
+    font-size: 0.9rem;
+    padding: 0.5rem;
+    background-color: rgba(52, 211, 153, 0.1);
+    border: 1px solid #34d399;
+    border-radius: 4px;
+}
+
+.login-options-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.btn-link {
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    color: #60a5fa;
+    font-size: 0.9rem;
+    font-family: inherit;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.btn-link:hover {
+    color: #93c5fd;
+}
+
+.btn-link:disabled {
+    color: #64748b;
+    cursor: default;
+    text-decoration: none;
+}
+
 /* Dashboard */
 .dashboard-header {
     background: #1e293b;
@@ -273,14 +314,28 @@ html {
 
 .header-buttons {
     display: flex;
-    gap: 1rem;
+    gap: 0.5rem;
     align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
 }
 
 /* Header buttons: same color as panel/box content (muted slate), not white */
 .header-buttons .btn {
     color: #94a3b8;
     border-color: rgba(255, 255, 255, 0.15);
+    padding: 0.4rem 0.7rem;
+    font-size: 0.8rem;
+    gap: 0.25rem;
+}
+
+.header-buttons .btn .btn-icon {
+    margin-right: 0.15rem;
+}
+
+.header-buttons .btn .btn-icon.heroicon {
+    width: 16px;
+    height: 16px;
 }
 
 .header-buttons .btn:hover {
@@ -304,37 +359,6 @@ html {
     gap: 1rem;
     align-items: center;
     flex-wrap: wrap;
-}
-
-.admin-tabs {
-    margin-top: 1rem;
-    margin-bottom: 1.5rem;
-    display: flex;
-    gap: 0.5rem;
-}
-
-.admin-tab {
-    padding: 0.4rem 1rem;
-    border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    background: #1e293b;
-    color: #b8c5d4;
-    font-size: 0.85rem;
-    cursor: default;
-}
-
-.admin-tab.active {
-    background: #3b82f6;
-    color: #ffffff;
-    border-color: #3b82f6;
-}
-
-.admin-tab.disabled {
-    opacity: 0.5;
-}
-
-.admin-tab-label {
-    white-space: nowrap;
 }
 
 .status-indicator {
@@ -2278,6 +2302,145 @@ html {
     max-height: none;
 }
 
+/* Roadmap modal — phased "what's next" list + contact card */
+.roadmap-modal-content {
+    display: flex;
+    flex-direction: column;
+    max-height: 85vh;
+    padding-bottom: 1rem;
+}
+
+.roadmap-asof {
+    margin: -0.5rem 0 0.75rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #94a3b8;
+}
+
+.roadmap-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    max-height: none;
+}
+
+.roadmap-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    counter-reset: roadmap;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+}
+
+.roadmap-step {
+    position: relative;
+    padding: 0.85rem 1rem 0.95rem 2.9rem;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-left: 3px solid #1aa6a4;
+    border-radius: 10px;
+}
+
+.roadmap-step::before {
+    counter-increment: roadmap;
+    content: counter(roadmap);
+    position: absolute;
+    left: 0.85rem;
+    top: 0.95rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.6rem;
+    height: 1.6rem;
+    border-radius: 50%;
+    background: #15333b;
+    color: #9DFFFF;
+    font-size: 0.85rem;
+    font-weight: 700;
+}
+
+.roadmap-phase {
+    display: inline-block;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #9DFFFF;
+}
+
+.roadmap-step-title {
+    margin: 0.2rem 0 0.4rem;
+    font-size: 1.02rem;
+    font-weight: 600;
+    color: #d4fcff;
+}
+
+.roadmap-step p {
+    margin: 0;
+    font-size: 0.9rem;
+    line-height: 1.6;
+    color: #d4dde8;
+}
+
+.roadmap-contact {
+    margin-top: 1.1rem;
+    padding: 0.95rem 1.1rem 1.05rem;
+    background: rgba(2, 232, 229, 0.05);
+    border: 1px solid rgba(2, 232, 229, 0.22);
+    border-radius: 10px;
+}
+
+.roadmap-contact-title {
+    margin: 0 0 0.2rem;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #d4fcff;
+}
+
+.roadmap-contact-note {
+    margin: 0 0 0.65rem;
+    font-size: 0.82rem;
+    color: #94a3b8;
+}
+
+.roadmap-contact-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+
+.roadmap-contact-list li {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    font-size: 0.95rem;
+}
+
+.roadmap-contact-label {
+    flex: 0 0 4rem;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #94a3b8;
+}
+
+.roadmap-contact-list a {
+    color: #9DFFFF;
+    text-decoration: none;
+}
+
+.roadmap-contact-list a:hover {
+    text-decoration: underline;
+}
+
 /* Instructions modal — same dark style as other admin boxes */
 .instructions-paper {
     max-width: min(920px, 92vw);
@@ -2983,25 +3146,6 @@ body::before {
     border-color: var(--biome-cyan-soft) !important;
 }
 
-/* ---- Tabs ---- */
-.admin-tab {
-    background: transparent !important;
-    border: 1px solid var(--biome-line) !important;
-    border-radius: var(--biome-radius) !important;
-    color: var(--biome-text-muted) !important;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    font-size: 0.75rem !important;
-    padding: 0.45rem 0.95rem !important;
-}
-
-.admin-tab.active {
-    background: rgba(2, 232, 229, 0.12) !important;
-    color: var(--biome-cyan) !important;
-    border-color: var(--biome-cyan) !important;
-    box-shadow: var(--biome-glow-sm);
-}
-
 /* ---- Status indicator ---- */
 .status-indicator {
     background: #1e293b !important;
@@ -3240,7 +3384,6 @@ body::before {
 .btn-metadata-save,
 .btn-section-save:hover,
 .chapter-row .btn-chapter-save:hover,
-.admin-tab.active,
 .filter-btn.active {
     box-shadow: none !important;
 }
@@ -3376,10 +3519,6 @@ body::before {
 
 .btn-secondary {
     color: #cbd5e1 !important;
-}
-
-.admin-tab {
-    color: #b8c5d4 !important;
 }
 
 .collapsible-card-header:hover,
@@ -3678,14 +3817,12 @@ body:not(.dev-mode) .srcarray-editor-toolbar {
     box-shadow: none !important;
 }
 
-/* ---- Tabs / filters: solid active state, no glow ---- */
-.admin-tab,
+/* ---- Filters: solid active state, no glow ---- */
 .filter-btn {
     background: #2a3b50 !important;
     border: 1px solid var(--biome-line) !important;
     box-shadow: none !important;
 }
-.admin-tab.active,
 .filter-btn.active {
     background: var(--biome-bg-active) !important;
     color: var(--biome-cyan-soft) !important;
@@ -3848,6 +3985,39 @@ body:not(.dev-mode) .srcarray-editor-toolbar {
     white-space: nowrap;
 }
 
+/* Hidden (menu-overlay) indicator in the sidebar tree */
+.tree-hidden-badge {
+    margin-left: auto;
+    padding: 0.05rem 0.4rem;
+    border-radius: var(--biome-radius);
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--biome-text-muted);
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.tree-lesson.tree-item-hidden .tree-lesson-name,
+.tree-section.tree-item-hidden > .tree-section-header .tree-section-title {
+    opacity: 0.55;
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+}
+
+.tree-section-empty {
+    margin: 0;
+    padding: 0.3rem 0.6rem;
+    font-size: 0.75rem;
+    font-style: italic;
+}
+
+/* Keep section header badge from pushing layout when both chevron + title present */
+.tree-section.tree-item-hidden > .tree-section-header .tree-hidden-badge {
+    margin-left: auto;
+}
+
 /* ===== Sidebar controls: clean, labeled, vertical stack ===== */
 .sidebar-controls.search-filter-controls {
     margin-top: 0;
@@ -3954,8 +4124,8 @@ body:not(.dev-mode) .srcarray-editor-toolbar {
 }
 
 .instructions-tab {
-    appearance: none;
     -webkit-appearance: none;
+    appearance: none;
     border: 1px solid var(--biome-line);
     background: rgba(255, 255, 255, 0.04);
     color: var(--biome-text-muted);
@@ -4097,5 +4267,179 @@ body:not(.dev-mode) .srcarray-editor-toolbar {
     border-top: 1px solid rgba(255, 255, 255, 0.1);
     font-size: 0.86rem;
     color: var(--biome-text-muted);
+}
+
+/* ============================================================
+   Menu structure editor (Edit menu modal)
+   ============================================================ */
+.menu-structure-content {
+    width: min(760px, 94vw);
+    max-width: 760px;
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.menu-structure-header {
+    padding-right: 2rem;
+}
+
+.menu-structure-subtitle {
+    margin: 0.4rem 0 0;
+    font-size: 0.85rem;
+    color: var(--biome-text-muted);
+    line-height: 1.5;
+}
+
+.menu-structure-body {
+    flex: 1;
+    overflow-y: auto;
+    margin-top: 1rem;
+    padding-right: 0.4rem;
+}
+
+.menu-structure-footer {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--biome-line);
+}
+
+.menu-structure-footer-spacer {
+    flex: 1;
+}
+
+/* Section block */
+.ms-section {
+    border: 1px solid var(--biome-line);
+    border-radius: var(--biome-radius-lg);
+    background: rgba(255, 255, 255, 0.03);
+    margin-bottom: 0.85rem;
+    overflow: hidden;
+}
+
+.ms-section.ms-hidden {
+    opacity: 0.55;
+}
+
+.ms-section-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.55rem 0.6rem;
+    background: rgba(2, 232, 229, 0.06);
+    border-bottom: 1px solid var(--biome-line);
+}
+
+.ms-section-name {
+    flex: 1;
+    min-width: 0;
+    padding: 0.4rem 0.55rem;
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: var(--biome-text) !important;
+    background: #1e293b !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    border-radius: var(--biome-radius) !important;
+}
+
+.ms-custom-tag {
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--biome-cyan-soft);
+    background: var(--biome-bg-active);
+    padding: 0.1rem 0.4rem;
+    border-radius: var(--biome-radius);
+    white-space: nowrap;
+}
+
+.ms-lessons {
+    padding: 0.4rem 0.6rem 0.55rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.ms-lesson {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.35rem 0.45rem;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--biome-radius);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.ms-lesson.ms-hidden {
+    opacity: 0.5;
+}
+
+.ms-lesson-name {
+    flex: 1;
+    min-width: 0;
+    padding: 0.3rem 0.5rem;
+    font-size: 0.85rem;
+    color: var(--biome-text) !important;
+    background: #1e293b !important;
+    border: 1px solid rgba(255, 255, 255, 0.16) !important;
+    border-radius: var(--biome-radius) !important;
+}
+
+.ms-empty-lessons {
+    font-size: 0.8rem;
+    font-style: italic;
+    color: var(--biome-text-muted);
+    padding: 0.3rem 0.45rem;
+}
+
+/* Compact control buttons */
+.ms-btn {
+    -webkit-appearance: none;
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.9rem;
+    height: 1.9rem;
+    padding: 0 0.45rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--biome-text-muted);
+    background: #2a3b50;
+    border: 1px solid var(--biome-line);
+    border-radius: var(--biome-radius);
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.ms-btn:hover {
+    background: #33485f;
+    color: #ffffff;
+}
+
+.ms-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.ms-btn.ms-btn-hide.is-hidden {
+    color: var(--biome-cyan-soft);
+    border-color: var(--biome-cyan-dim);
+    background: var(--biome-bg-active);
+}
+
+.ms-move-select {
+    height: 1.9rem;
+    max-width: 11rem;
+    padding: 0 0.4rem;
+    font-size: 0.78rem;
+    color: var(--biome-text) !important;
+    background: #1e293b !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    border-radius: var(--biome-radius) !important;
 }
 

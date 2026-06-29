@@ -1,0 +1,339 @@
+/* ============================================================
+   PixelButtons.css
+   Coded replacement for the legacy image (.jpg) buttons.
+   Visual style adapted from the "Original Pixel" design in
+   "Button Examples.html": a beveled metallic frame with a
+   recessed inner face, crisp pixel line work, and a tactile
+   press animation. Fully responsive (vmin units) so the
+   buttons scale and re-flow on any screen.
+
+   Markup it styles:
+     <button class="<context> pixelBtn"><span class="label">Text</span></button>
+
+   Box SIZE is owned by the context class (.btnHeader, .btnFooter,
+   .nav-btn, .downloadButton, .btnToCentralMenuX, ...). This file
+   only supplies the look, spacing, label, and animation.
+   ============================================================ */
+
+.pixelBtn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    /* Vertical padding must clear the recessed inner face (inset 0.7vmin + its
+       0.22vmin border) so the label never crosses the inner bevel lines on
+       auto-height buttons. Fixed-height buttons centre their text, so the extra
+       padding is harmless there. */
+    padding: 1.05vmin 2.2vmin;
+    border: 0.3vmin solid #050505;
+    border-radius: 0;
+    background: #7c8486;
+    color: #141414;
+    cursor: pointer;
+    image-rendering: pixelated;
+    -webkit-user-select: none;
+    user-select: none;
+    font-family: Arial, Helvetica, sans-serif;
+    /* Outer chrome bevel + hard pixel drop shadow */
+    box-shadow:
+        inset 0.3vmin 0.3vmin 0 #dde3e3,
+        inset -0.3vmin -0.3vmin 0 #2f3535,
+        0.5vmin 0.5vmin 0 #000;
+    transition:
+        transform 80ms linear,
+        box-shadow 80ms linear,
+        filter 120ms ease;
+}
+
+/* Recessed inner face — the crisp "line work" */
+.pixelBtn::after {
+    content: "";
+    position: absolute;
+    inset: 0.7vmin;
+    background: linear-gradient(180deg, #e9eced 0%, #c8cece 100%);
+    border: 0.22vmin solid #161616;
+    box-shadow:
+        inset 0.18vmin 0.18vmin 0 #ffffff,
+        inset -0.18vmin -0.18vmin 0 #8a9090;
+    z-index: 0;
+    pointer-events: none;
+}
+
+/* Label sits above the inner face */
+.pixelBtn > .label {
+    position: relative;
+    z-index: 1;
+    display: block;
+    text-align: center;
+    white-space: nowrap;
+    color: #141414;
+    font-weight: 900;
+    letter-spacing: -0.01em;
+    line-height: 1.05;
+    font-size: 2vmin;
+    text-shadow: 0.12vmin 0.12vmin 0 rgba(255, 255, 255, 0.9);
+}
+
+.pixelBtn:hover {
+    filter: brightness(1.07);
+}
+
+/* Tactile press: button sinks into its own shadow and the bevel flips */
+.pixelBtn:active,
+.pixelBtn.is-clicked {
+    transform: translate(0.4vmin, 0.4vmin);
+    box-shadow:
+        inset 0.3vmin 0.3vmin 0 #2f3535,
+        inset -0.3vmin -0.3vmin 0 #dde3e3,
+        0.15vmin 0.15vmin 0 #000;
+}
+
+.pixelBtn:focus-visible {
+    outline: 0.3vmin solid #02E8E5;
+    outline-offset: 0.3vmin;
+}
+
+/* ---------------------------------------------------------------
+   Context sizing of the label so text fits each button family.
+   --------------------------------------------------------------- */
+
+/* Lesson header bank + footer controls */
+.btnHeader.pixelBtn > .label,
+.btnFooter.pixelBtn > .label,
+.btnRate.pixelBtn > .label {
+    font-size: 1.9vmin;
+}
+
+/* Return / navigation buttons on Citations, Excerpts, PopUps, Resources */
+.nav-btn.pixelBtn {
+    /* These pages set max-height/width 10vmin; let the button size to text. */
+    max-width: none;
+    max-height: none;
+    padding: 1.4vmin 2.6vmin;
+}
+
+.nav-btn.pixelBtn > .label {
+    font-size: 3vmin;
+}
+
+/* PopUp download buttons */
+.downloadButton.pixelBtn {
+    width: auto;
+    height: auto;
+    padding: 1.2vmin 2.2vmin;
+}
+
+.downloadButton.pixelBtn > .label {
+    font-size: 1.7vmin;
+}
+
+/* Central menu "Show / Hide Explanatory Text" toggle (legacy width:8% was sized for an image) */
+.btnToCentralMenuX.pixelBtn,
+.btnToCentralMenuT.pixelBtn {
+    width: auto;
+    display: inline-flex;
+    padding: 0.8vmin 2.2vmin;
+}
+
+.btnToCentralMenuX.pixelBtn > .label,
+.btnToCentralMenuT.pixelBtn > .label {
+    font-size: 2.3vmin;
+}
+
+/* ---------------------------------------------------------------
+   Responsive: tighten the chrome a touch on small / portrait screens
+   so the labels keep breathing room when the banks wrap.
+   --------------------------------------------------------------- */
+@media (max-aspect-ratio: 1650/1300) {
+    .btnHeader.pixelBtn > .label,
+    .btnFooter.pixelBtn > .label,
+    .btnRate.pixelBtn > .label {
+        font-size: 1.7vmin;
+    }
+}
+
+@media (max-width: 640px) {
+    .pixelBtn {
+        padding: 1vmin 1.4vmin;
+    }
+
+    .pixelBtn > .label {
+        font-size: 2.4vw;
+    }
+
+    .nav-btn.pixelBtn {
+        padding: 1.3vmin 1.8vmin;
+    }
+
+    .nav-btn.pixelBtn > .label {
+        font-size: 3.4vw;
+    }
+
+    .downloadButton.pixelBtn {
+        padding: 1.2vmin 1.6vmin;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .pixelBtn {
+        transition: none;
+    }
+
+    .pixelBtn:active,
+    .pixelBtn.is-clicked {
+        transform: none;
+    }
+}
+
+/* ===============================================================
+   Show / Hide explanatory-text TOGGLE — faithful to the original
+   pixel design (BTN_TogLessonMenuX/T.jpg): a stacked-documents icon
+   (with a prohibition slash when text is hidden) and a two-line
+   "Text Shown" / "Text Hidden" label.
+
+   The current state is read from the button id, so no per-page HTML
+   edits are needed and the label is always correct even where the
+   inline text was inconsistent:
+       *MenuX  -> on the Text version    -> documents      -> "Text Shown"
+       *MenuT  -> on the No-Text version -> documents + slash -> "Text Hidden"
+   Applies to both the central-menu toggle (#btnToCentralMenuX/T)
+   and the in-lesson header toggle (#btnTogTextLessonMenuX/T).
+   =============================================================== */
+#btnToCentralMenuX.pixelBtn,
+#btnToCentralMenuT.pixelBtn,
+#btnTogTextLessonMenuX.pixelBtn,
+#btnTogTextLessonMenuT.pixelBtn {
+    padding: 1.35vmin 2vmin 1.35vmin 1.5vmin;
+}
+
+/* Lesson header toggle: let two lines breathe; the bank centres it */
+#btnTogTextLessonMenuX.pixelBtn,
+#btnTogTextLessonMenuT.pixelBtn {
+    height: auto;
+    min-height: 4.5vh;
+    align-self: center;
+}
+
+/* The label becomes [icon] [two-line text]; hide the inline text node */
+#btnToCentralMenuX.pixelBtn > .label,
+#btnToCentralMenuT.pixelBtn > .label,
+#btnTogTextLessonMenuX.pixelBtn > .label,
+#btnTogTextLessonMenuT.pixelBtn > .label {
+    display: inline-flex;
+    align-items: center;
+    gap: 1.4vmin;
+    white-space: normal;
+    font-size: 0 !important;
+}
+
+/* Stacked-documents icon */
+#btnToCentralMenuX.pixelBtn > .label::before,
+#btnToCentralMenuT.pixelBtn > .label::before,
+#btnTogTextLessonMenuX.pixelBtn > .label::before,
+#btnTogTextLessonMenuT.pixelBtn > .label::before {
+    content: "";
+    flex: 0 0 auto;
+    width: 4.6vmin;
+    height: 4.6vmin;
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
+}
+
+#btnToCentralMenuX.pixelBtn > .label::before,
+#btnTogTextLessonMenuX.pixelBtn > .label::before {
+    background-image: url("Buttons/IconTextShown.svg");
+}
+
+#btnToCentralMenuT.pixelBtn > .label::before,
+#btnTogTextLessonMenuT.pixelBtn > .label::before {
+    background-image: url("Buttons/IconTextHidden.svg");
+}
+
+/* Canonical two-line wording, restored regardless of the inline text */
+#btnToCentralMenuX.pixelBtn > .label::after,
+#btnToCentralMenuT.pixelBtn > .label::after,
+#btnTogTextLessonMenuX.pixelBtn > .label::after,
+#btnTogTextLessonMenuT.pixelBtn > .label::after {
+    white-space: pre;
+    text-align: left;
+    line-height: 1.04;
+    font-weight: 900;
+    letter-spacing: -0.01em;
+    color: #141414;
+    text-shadow: 0.12vmin 0.12vmin 0 rgba(255, 255, 255, 0.9);
+    font-size: 2.2vmin;
+}
+
+#btnToCentralMenuX.pixelBtn > .label::after,
+#btnTogTextLessonMenuX.pixelBtn > .label::after {
+    content: "Text\A Shown";
+}
+
+#btnToCentralMenuT.pixelBtn > .label::after,
+#btnTogTextLessonMenuT.pixelBtn > .label::after {
+    content: "Text\A Hidden";
+}
+
+/* Lesson header instances run a touch smaller than the central-menu toggle */
+#btnTogTextLessonMenuX.pixelBtn > .label::before,
+#btnTogTextLessonMenuT.pixelBtn > .label::before {
+    width: 3.9vmin;
+    height: 3.9vmin;
+}
+
+#btnTogTextLessonMenuX.pixelBtn > .label::after,
+#btnTogTextLessonMenuT.pixelBtn > .label::after {
+    font-size: 1.85vmin;
+}
+
+/* Central-menu toggle sits in a tight band between the title and the menu, so
+   keep it compact (a smaller icon, font and padding) to avoid crowding. */
+#btnToCentralMenuX.pixelBtn,
+#btnToCentralMenuT.pixelBtn {
+    padding: 1vmin 1.8vmin 1vmin 1.3vmin;
+}
+
+#btnToCentralMenuX.pixelBtn > .label::before,
+#btnToCentralMenuT.pixelBtn > .label::before {
+    width: 4vmin;
+    height: 4vmin;
+}
+
+#btnToCentralMenuX.pixelBtn > .label::after,
+#btnToCentralMenuT.pixelBtn > .label::after {
+    font-size: 2vmin;
+    line-height: 1.02;
+}
+
+@media (max-aspect-ratio: 1650/1300) {
+    #btnTogTextLessonMenuX.pixelBtn > .label::after,
+    #btnTogTextLessonMenuT.pixelBtn > .label::after {
+        font-size: 1.7vmin;
+    }
+}
+
+@media (max-width: 640px) {
+    #btnToCentralMenuX.pixelBtn > .label::after,
+    #btnToCentralMenuT.pixelBtn > .label::after {
+        font-size: 3vw;
+    }
+
+    #btnTogTextLessonMenuX.pixelBtn > .label::after,
+    #btnTogTextLessonMenuT.pixelBtn > .label::after {
+        font-size: 2.7vw;
+    }
+
+    #btnToCentralMenuX.pixelBtn > .label::before,
+    #btnToCentralMenuT.pixelBtn > .label::before {
+        width: 7vw;
+        height: 7vw;
+    }
+
+    #btnTogTextLessonMenuX.pixelBtn > .label::before,
+    #btnTogTextLessonMenuT.pixelBtn > .label::before {
+        width: 6.2vw;
+        height: 6.2vw;
+    }
+}

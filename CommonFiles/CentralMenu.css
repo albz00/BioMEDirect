@@ -1,3 +1,12 @@
+@import url("PixelButtons.css");
+@import url('https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&display=swap');
+
+:root {
+	/* Rounded display stack — "Baloo 2" matches the intended "Arial Rounded MT Bold" look,
+	   with system fonts as graceful fallbacks if the web font is blocked. */
+	--biome-rounded: 'Baloo 2', 'Arial Rounded MT Bold', 'Arial Rounded MT', 'Segoe UI', system-ui, sans-serif;
+}
+
 body {
 	background-color: black;
 	margin: 0;
@@ -61,7 +70,9 @@ body::before {
 	align-content: flex-start;
 	gap: 1.5vmin 4vmin;
 	position: absolute;
-	top: 48%;
+	/* Centred below mid-height so the menu never rides up under the title /
+	   Show-Hide-text toggle that sit in normal flow at the top. */
+	top: 57%;
 	left: 50%;
 	transform: translate(-50%, -50%);
 	width: 92%;
@@ -74,20 +85,14 @@ body::before {
 
 .centralMenu > div {
 	line-height: 2.8vmin;
-	position: relative;
-	z-index: 1;
+	/* static so the absolute .chapterDropdown anchors to .centralMenu (the box) */
+	position: static;
 	flex: 0 0 auto;
 	overflow: visible;
 }
 
-.centralMenu > div:has(.menuLists:hover),
-.centralMenu > div:has(.menuLists:focus-within),
-.centralMenu > div:has(.menuLists.is-open) {
-	z-index: 25;
-}
-
 .menuLists {
-	position: relative;
+	position: static;
 	display: inline-block;
 	padding: 0.5vmin 1vmin;
 	list-style-type: none;
@@ -95,119 +100,85 @@ body::before {
 	vertical-align: top;
 }
 
-/* Lesson list drops below chapter title — does not cover other chapters */
+/* Lessons panel: fills the menu box below the title row. CentralMenuChapterNav.js
+   anchors it to .centralMenu and sizes it to the box. Lessons flow left-to-right
+   and wrap onto new rows, staying inside the box width (never off-screen) and
+   centered. Every lesson is shown; no scrollbar. */
 .chapterDropdown {
-	display: block;
+	display: flex;
+	flex-flow: row wrap;
+	align-content: center;
+	justify-content: center;
+	align-items: baseline;
+	gap: 0.6vmin 3vmin;
+	/* Anchored to .centralMenu and sized by CentralMenuChapterNav.js */
 	position: absolute;
-	top: 100%;
-	left: 50%;
-	transform: translateX(-50%) translateY(-0.5vmin);
-	margin-top: 0.25vmin;
-	z-index: 30;
-	min-width: 100%;
-	width: max-content;
-	max-width: 40vmin;
-	padding: 1vmin 1.4vmin 1.2vmin;
-	background: transparent;
-	border: none;
-	border-radius: 0;
-	box-shadow: none;
-	/* Short lists size to content; long lists cap to the viewport and scroll internally. */
-	max-height: min(60vmin, calc(100vmin - 22vmin));
-	overflow-x: hidden;
-	overflow-y: auto;
-	-webkit-overflow-scrolling: touch;
-	overscroll-behavior: contain;
-	scrollbar-width: thin;
-	scrollbar-color: #02E8E5 rgba(2, 232, 229, 0.1);
+	z-index: 60;
+	padding: 1vmin 1.6vmin;
+	box-sizing: border-box;
+	overflow: visible;
 	text-align: center;
+	border-radius: 1.6vmin;
 	visibility: hidden;
 	opacity: 0;
 	pointer-events: none;
+	transform: translateY(-0.6vmin);
 	transition:
-		opacity 0.28s ease,
-		transform 0.28s ease,
-		visibility 0s linear 0.28s;
-}
-
-.chapterDropdown::before {
-	content: '';
-	position: absolute;
-	top: -0.55vmin;
-	left: 0;
-	right: 0;
-	height: 0.55vmin;
-}
-
-.chapterDropdown::-webkit-scrollbar {
-	width: 8px;
-}
-
-.chapterDropdown::-webkit-scrollbar-track {
-	background: rgba(2, 232, 229, 0.08);
-	border-radius: 0;
-}
-
-.chapterDropdown::-webkit-scrollbar-thumb {
-	background: #02E8E5;
-	border-radius: 0;
-}
-
-.chapterDropdown::-webkit-scrollbar-thumb:hover {
-	background: #9DFFFF;
+		opacity 0.26s ease,
+		transform 0.26s ease,
+		visibility 0s linear 0.26s;
 }
 
 .chapterDropdown li {
 	display: block;
+	flex: 0 0 auto;
 	list-style: none;
-	margin: 0.35vmin 0;
+	margin: 0;
 	padding: 0;
 }
 
-.menuLists:hover .chapterDropdown,
-.menuLists:focus-within .chapterDropdown,
-.menuLists.is-open .chapterDropdown {
+/* Shown via JS (.is-open) or keyboard focus. */
+.menuLists.is-open .chapterDropdown,
+.menuLists:focus-within .chapterDropdown {
 	visibility: visible;
 	opacity: 1;
 	pointer-events: auto;
-	transform: translateX(-50%) translateY(0);
+	transform: translateY(0);
+	/* Soft, edge-fading scrim (not a hard box): keeps lessons readable over the
+	   background art without a rectangle. */
+	background: radial-gradient(120% 100% at 50% 42%, rgba(0, 10, 14, 0.82) 0%, rgba(0, 10, 14, 0.5) 55%, rgba(0, 10, 14, 0) 86%);
+	-webkit-backdrop-filter: blur(6px);
+	backdrop-filter: blur(6px);
 	transition:
-		opacity 0.3s ease,
-		transform 0.3s ease,
+		opacity 0.28s ease,
+		transform 0.28s ease,
 		visibility 0s;
 }
 
-/* Keep dropdown inside left/right columns */
-.group1 .chapterDropdown {
-	left: 0;
-	transform: translateY(-0.5vmin);
+/* While a section is open, clearly dim the OTHER section titles (still visible and
+   hoverable so you can slide across to switch), and hide their "hover" hint. */
+.centralMenu.menu-active .menuLists:not(.is-open) > h1 {
+	opacity: 0.38;
+	transition: opacity 0.22s ease;
 }
 
-.group1 .menuLists:hover .chapterDropdown,
-.group1 .menuLists:focus-within .chapterDropdown,
-.group1 .menuLists.is-open .chapterDropdown {
-	transform: translateY(0);
+.centralMenu.menu-active .menuLists:not(.is-open) > h1::after {
+	opacity: 0;
 }
 
-.group4 .chapterDropdown {
-	left: auto;
-	right: 0;
-	transform: translateY(-0.5vmin);
-}
-
-.group4 .menuLists:hover .chapterDropdown,
-.group4 .menuLists:focus-within .chapterDropdown,
-.group4 .menuLists.is-open .chapterDropdown {
-	transform: translateY(0);
+/* When a section is open, lift the whole menu (and its lessons panel) above the
+   header art and footer links so nothing overlaps the open lessons. */
+.centralMenu.menu-active {
+	z-index: 50;
 }
 
 .menuLists > h1 {
-	font-family: Arial Rounded MT, san-serif;
+	font-family: var(--biome-rounded);
 	color: #9BFFFF;
 	background: transparent;
 	border: none;
 	font-weight: bold;
-	font-size: 4.2vmin;
+	font-size: clamp(1.35rem, 4.2vmin, 2.6rem);
 	margin: 0;
 	padding: 0.8vmin 1.2vmin 0.2vmin;
 	cursor: default;
@@ -220,7 +191,7 @@ body::before {
 	content: 'hover for lessons';
 	display: block;
 	font-family: Arial, sans-serif;
-	font-size: 1.5vmin;
+	font-size: clamp(0.7rem, 1.5vmin, 1rem);
 	font-weight: normal;
 	color: #02E8E5;
 	opacity: 0.7;
@@ -248,22 +219,22 @@ body::before {
 }
 
 h1 {
-	font-family: Arial Rounded MT, san-serif;
+	font-family: var(--biome-rounded);
 	color: #9BFFFF;
 	background: transparent;
 	border: none;
 	font-weight: bold;
-	font-size: 4vmin;
+	font-size: clamp(1.3rem, 4vmin, 2.4rem);
 } 
 
 /* ideally use JS to check for aspect ratio of menuLists? */
 @media (max-aspect-ratio: 1650/1400) {
 	button.linksLarge {
-		font-size: 3.5vmin !important;
+		font-size: clamp(1rem, 3.5vmin, 1.9rem) !important;
 	}
     
 	button.linksSmall {
-		font-size: 3.5vmin !important;
+		font-size: clamp(0.95rem, 3.2vmin, 1.7rem) !important;
 	}
     
     .btnTogText {
@@ -275,7 +246,7 @@ h1 {
     }
 
     .centralMenu {
-        top: 47% !important;
+        top: 60% !important;
     }
 
     .centralMenuTitle {
@@ -293,13 +264,13 @@ h1 {
 }
 
 button.linksLarge {
-	font-family: Arial Rounded MT, san-serif;
+	font-family: var(--biome-rounded);
 	color: #02E8E5;
 	background: transparent;
 	border: none;
 	font-weight: bold;
-	font-size: 2.3vw;
-	font-size: 2.6vh;
+	/* Fluid + proportional: scales with the smaller viewport axis, clamped for phones and large displays */
+	font-size: clamp(0.95rem, 2.5vmin, 1.6rem);
 	padding: 0;
 	/* Box behind text removed — shadow keeps lessons legible over the background art */
 	text-shadow: 0 0.12vmin 0.5vmin rgba(0, 0, 0, 0.9), 0 0 0.9vmin rgba(0, 0, 0, 0.75);
@@ -308,7 +279,7 @@ button.linksLarge {
 button:hover.linksLarge {
 	color: #9DFFFF;
 	cursor: pointer;
-    transform: scale(1.1);
+    transform: scale(1.04);
 }
 
 button:active.linksLarge {
@@ -317,13 +288,13 @@ button:active.linksLarge {
 }
 
 button.linksSmall {
-	font-family: Arial Rounded MT, san-serif;
+	font-family: var(--biome-rounded);
 	color: #02E8E5;
 	background: transparent;
 	border: none;
 	font-weight: bold;
-	font-size: 2vw;
-	font-size: 2.3vh;
+	/* Fluid + proportional: scales with the smaller viewport axis, clamped for phones and large displays */
+	font-size: clamp(0.85rem, 2.1vmin, 1.35rem);
 	padding: 0;
 	/* Box behind text removed — shadow keeps lessons legible over the background art */
 	text-shadow: 0 0.12vmin 0.5vmin rgba(0, 0, 0, 0.9), 0 0 0.9vmin rgba(0, 0, 0, 0.75);
@@ -332,7 +303,7 @@ button.linksSmall {
 button:hover.linksSmall {
 	color: #9DFFFF;
 	cursor: pointer;
-    transform: scale(1.1);
+    transform: scale(1.04);
 }
 
 button:active.linksSmall {
@@ -531,9 +502,11 @@ button:focus {
 	animation-delay: 0.54s;
 }
 
+/* Fade-in only (no transform): a lingering transform would make each column a
+   containing block and break the absolute lessons panel's anchoring to .centralMenu. */
 .centralMenu > div {
 	opacity: 0;
-	animation: biome-rise-in 0.45s ease-out both;
+	animation: biome-panel-fade-in 0.45s ease-out both;
 }
 
 .centralMenu > div:nth-child(1) { animation-delay: 0.48s; }
@@ -565,10 +538,17 @@ button.linksLarge {
 		transition: none;
 	}
 
-	.menuLists:hover .chapterDropdown,
 	.menuLists:focus-within .chapterDropdown,
 	.menuLists.is-open .chapterDropdown {
 		transition: none;
 	}
+}
+
+/* Custom (admin-added) section columns share the standard column sizing */
+.group-custom {
+	line-height: 2.8vmin;
+	position: static;
+	flex: 0 0 auto;
+	overflow: visible;
 }
 

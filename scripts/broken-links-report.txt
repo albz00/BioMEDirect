@@ -1,0 +1,263 @@
+Scanned 1479 HTML files, 5556 local references.
+
+=== REAL MISSING FILES (actionable) (47 unique targets, 47 references) ===
+
+  [1x] ../../BioMe Program/CommonFiles/CentralMenu.css
+        in TextT\CentralMenu2ColumnsT.html
+
+  [1x] MolecularDivisionT.mp4
+        in TextT\LessonsT\CellBiologyT\MolecularDivisionT\MolecularDivision T.html
+
+  [1x] QuestionBankNucleicAcidStructure.js
+        in TextT\LessonsT\CellBiologyT\MolecularDivisionT\QuestionsMolecularDivisionT.html
+
+  [1x] Fpump/FpumpT.mp4
+        in TextT\LessonsT\CellBiologyT\TransportProteinsT\TransportProteinsT.html
+
+  [1x] LoopColored/LoopColoredT.mp4
+        in TextT\LessonsT\EmbryologyT\CardiogenesisT\CardiogenesisT.html
+
+  [1x] AVcanal/AVcanalT.mp4
+        in TextT\LessonsT\EmbryologyT\CardiogenesisT\CardiogenesisT.html
+
+  [1x] Diaphragm/DiaphragmT.mp4
+        in TextT\LessonsT\EmbryologyT\DigestiveTractT\DigestiveTractT.html
+
+  [1x] Fusions/FusionsT.mp4
+        in TextT\LessonsT\EmbryologyT\DigestiveTractT\DigestiveTractT.html
+
+  [1x] Excerpts/EctopicImplantationsT.zip
+        in TextT\LessonsT\EmbryologyT\PrenatalDefectsT\ExcerptsPrenatalDefectsT.html
+
+  [1x] Excerpts/NeuralTubeDefectsT.zip
+        in TextT\LessonsT\EmbryologyT\PrenatalDefectsT\ExcerptsPrenatalDefectsT.html
+
+  [1x] Excerpts/RhIsoimmunizationT.zip
+        in TextT\LessonsT\EmbryologyT\PrenatalDefectsT\ExcerptsPrenatalDefectsT.html
+
+  [1x] Excerpts/RhoGamT.zip
+        in TextT\LessonsT\EmbryologyT\PrenatalDefectsT\ExcerptsPrenatalDefectsT.html
+
+  [1x] Excerpts/RhoGamInjectionT.zip
+        in TextT\LessonsT\EmbryologyT\PrenatalDefectsT\ExcerptsPrenatalDefectsT.html
+
+  [1x] LimbImages/LimbImagesT.mp4
+        in TextT\LessonsT\EmbryologyT\SkeletogenesisT\SkeletogenesisT.html
+
+  [1x] ../../../../CommonFiles/Excerpts.css
+        in TextT\LessonsT\EmbryologyT\UrogenitalT\Excerpts\ExcerptsUrogenitalT.html
+
+  [1x] Excerpts/NephrogenicCordsT.html
+        in TextT\LessonsT\EmbryologyT\UrogenitalT\Excerpts\ExcerptsUrogenitalT.html
+
+  [1x] Excerpts/KidneyMorphogenesisT.html
+        in TextT\LessonsT\EmbryologyT\UrogenitalT\Excerpts\ExcerptsUrogenitalT.html
+
+  [1x] Excerpts/IndifferentUrogenitalSystemT.html
+        in TextT\LessonsT\EmbryologyT\UrogenitalT\Excerpts\ExcerptsUrogenitalT.html
+
+  [1x] NephronReabsorption/NephronReabsorptionT.mp4
+        in TextT\LessonsT\EmbryologyT\UrogenitalT\UrogenitalT.html
+
+  [1x] Multiplier/MultiplierT.mp4
+        in TextT\LessonsT\EmbryologyT\UrogenitalT\UrogenitalT.html
+
+  [1x] Horseshoe/HorseshoeT.mp4
+        in TextT\LessonsT\EmbryologyT\UrogenitalT\UrogenitalT.html
+
+  [1x] TestesDescent/TestesDescentT.mp4
+        in TextT\LessonsT\EmbryologyT\UrogenitalT\UrogenitalT.html
+
+  [1x] Excerpts/X-LinkedCrossX.zip
+        in TextT\LessonsT\GeneticsT\SexualGeneticsT\ExcerptsSexualGeneticsX.html
+
+  [1x] Excerpts/X-InactivationDifferentiationX.zip
+        in TextT\LessonsT\GeneticsT\SexualGeneticsT\ExcerptsSexualGeneticsX.html
+
+  [1x] Excerpts/X-InactivationFullLessonX.zip
+        in TextT\LessonsT\GeneticsT\SexualGeneticsT\ExcerptsSexualGeneticsX.html
+
+  [1x] Excerpts/BarrBodiesX.zip
+        in TextT\LessonsT\GeneticsT\SexualGeneticsT\ExcerptsSexualGeneticsX.html
+
+  [1x] Excerpts/CalicoX.zip
+        in TextT\LessonsT\GeneticsT\SexualGeneticsT\ExcerptsSexualGeneticsX.html
+
+  [1x] Excerpts/AnhidroticEctodermalDysplasiaX.zip
+        in TextT\LessonsT\GeneticsT\SexualGeneticsT\ExcerptsSexualGeneticsX.html
+
+  [1x] Bang/BangT.mp4
+        in TextT\LessonsT\MolecularBiologyT\ReplicationT\ReplicationT.html
+
+  [1x] CytoskeletonIntroductionX.js
+        in TextX\LessonsX\CellBiologyX\CytoskeletonIntroductionX\CytoskeletonIntroductionX.html
+
+  [1x] IntermediateFilamentsX.js
+        in TextX\LessonsX\CellBiologyX\IntermediateFilamentsX\IntermediateFilamentsX.html
+
+  [1x] MicrofilamentsX.js
+        in TextX\LessonsX\CellBiologyX\MicrofilamentsX\MicrofilamentsX.html
+
+  [1x] MolecularDivisionX.js
+        in TextX\LessonsX\CellBiologyX\MolecularDivisionX\MolecularDivisionX.html
+
+  [1x] Fpump/FpumpX.mp4
+        in TextX\LessonsX\CellBiologyX\TransportProteinsX\TransportProteinsX.html
+
+  [1x] LoopColored/LoopColoredX.mp4
+        in TextX\LessonsX\EmbryologyX\CardiogenesisX\CardiogenesisX.html
+
+  [1x] AVcanal/AVcanalX.mp4
+        in TextX\LessonsX\EmbryologyX\CardiogenesisX\CardiogenesisX.html
+
+  [1x] Diaphragm/DiaphragmX.mp4
+        in TextX\LessonsX\EmbryologyX\DigestiveTractX\DigestiveTractX.html
+
+  [1x] Fusions/FusionsX.mp4
+        in TextX\LessonsX\EmbryologyX\DigestiveTractX\DigestiveTractX.html
+
+  [1x] Excerpts/EctopicImplantationsX.zip
+        in TextX\LessonsX\EmbryologyX\PrenatalDefectsX\ExcerptsPrenatalDefectsX.html
+
+  [1x] Excerpts/NeuralTubeDefectsX.zip
+        in TextX\LessonsX\EmbryologyX\PrenatalDefectsX\ExcerptsPrenatalDefectsX.html
+
+  [1x] LimbImages/LimbImagesX.mp4
+        in TextX\LessonsX\EmbryologyX\SkeletogenesisX\SkeletogenesisX.html
+
+  [1x] NephronReabsorption/NephronReabsorptionX.mp4
+        in TextX\LessonsX\EmbryologyX\UrogenitalX\UrogenitalX.html
+
+  [1x] Multiplier/MultiplierX.mp4
+        in TextX\LessonsX\EmbryologyX\UrogenitalX\UrogenitalX.html
+
+  [1x] Horseshoe/HorseshoeX.mp4
+        in TextX\LessonsX\EmbryologyX\UrogenitalX\UrogenitalX.html
+
+  [1x] TestesDescent/TestesDescentX.mp4
+        in TextX\LessonsX\EmbryologyX\UrogenitalX\UrogenitalX.html
+
+  [1x] QuestionBankGenomicOrganization.js
+        in TextX\LessonsX\MolecularBiologyX\GenomicOrganizationX\QuestionsGenomicOrganizationX.html
+
+  [1x] Bang/BangX.mp4
+        in TextX\LessonsX\MolecularBiologyX\ReplicationX\ReplicationX.html
+
+=== CASE-ONLY MISMATCHES (0 unique, break on case-sensitive hosts) ===
+
+=== TEMPLATE PLACEHOLDERS (expected - scaffold files) (11 unique targets, 59 references) ===
+
+  [22x] ExcerptNameT.mp4
+        in TextT\LessonsT\CellBiologyT\MicrofilamentsT\Excerpts\ExcerptNameT.html
+        in TextT\LessonsT\CellBiologyT\MicrotubulesT\Excerpts\ExcerptNameT.html
+        in TextT\LessonsT\MolecularBiologyT\ChromosomalStructureT\Thumbnails\Excerpts\ExcerptNameT.html
+        in TextT\LessonsT\MolecularBiologyT\GenomicOrganizationT\Thumbnails\Excerpts\ExcerptNameT.html
+        in TextT\LessonsT\MolecularBiologyT\MutationT\Thumbnails\Excerpts\ExcerptNameT.html
+        in TextT\LessonsT\MolecularBiologyT\NucleicAcidStructureT\Thumbnails\Excerpts\ExcerptNameT.html
+        ...and 16 more
+
+  [7x] Excerpts/ExcerptT.zip
+        in TextT\LessonsT\CellBiologyT\CellCycleControlT\ExcerptsCellCycleControlT.html
+        in TextT\LessonsT\CellBiologyT\ExtracellularMatrixT\ExcerptsExtracellularMatrixT.html
+        in TextT\LessonsT\CellBiologyT\JunctionsT\ExcerptsJunctionsT.html
+        in TextT\LessonsT\CellBiologyT\OrganellesT\ExcerptsOrganellesT.html
+        in TextT\LessonsT\CellBiologyT\ReceptorSignalingT\ExcerptsReceptorSignalingT.html
+        in TextT\LessonsT\CellBiologyT\TensegrityT\ExcerptsTensegrityT.html
+        ...and 1 more
+
+  [7x] Excerpts/ExcerptZ.zip
+        in TextT\LessonsT\CellBiologyT\CytoskeletonIntroductionT\ExcerptsCytoskeletonIntroductionT.html
+        in TextT\LessonsT\CellBiologyT\IntermediateFilamentsT\ExcerptsIntermediateFilamentsT.html
+        in TextT\LessonsT\CellBiologyT\MicrofilamentsT\ExcerptsMicrofilamentsT.html
+        in TextT\LessonsT\CellBiologyT\MicrotubulesT\ExcerptsMicrotubulesT.html
+        in TextX\LessonsX\CellBiologyX\IntermediateFilamentsX\ExcerptsLessonNameT.html
+        in TextX\LessonsX\CellBiologyX\MicrofilamentsX\ExcerptsLessonNameT.html
+        ...and 1 more
+
+  [7x] Excerpts/ExcerptX.zip
+        in TextX\LessonsX\CellBiologyX\CellCycleControlX\ExcerptsCellCycleControlX.html
+        in TextX\LessonsX\CellBiologyX\ExtracellularMatrixX\ExcerptsExtracellularMatrixX.html
+        in TextX\LessonsX\CellBiologyX\JunctionsX\ExcerptsJunctionsX.html
+        in TextX\LessonsX\CellBiologyX\OrganellesX\ExcerptsOrganellesX.html
+        in TextX\LessonsX\CellBiologyX\ReceptorSignalingX\ExcerptsReceptorSignalingX.html
+        in TextX\LessonsX\CellBiologyX\TensegrityX\ExcerptsTensegrityX.html
+        ...and 1 more
+
+  [5x] QuestionBankLessonName.js
+        in TextT\LessonsT\CellBiologyT\CytoskeletonIntroductionT\QuestionsCytoskeletonIntroductionT.html
+        in TextT\LessonsT\CellBiologyT\IntermediateFilamentsT\QuestionsIntermediateFilamentsT.html
+        in TextT\LessonsT\CellBiologyT\MicrofilamentsT\QuestionsMicrofilamentsT.html
+        in TextT\LessonsT\CellBiologyT\MicrotubulesT\QuestionsMicrotubulesT.html
+        in TextX\LessonsX\CellBiologyX\MicrotubulesX\QuestionsMicrotubulesX.html
+
+  [5x] PopUps/popPopUpName.html
+        in TextT\LessonsT\CellBiologyT\MicrofilamentsT\PopUpsMicrofilamentsT.html
+        in TextT\LessonsT\CellBiologyT\MicrotubulesT\PopUpsMicrotubulesT.html
+        in TextT\LessonsT\CellBiologyT\MolecularDivisionT\PopUpsMolecularDivisionT.html
+        in TextX\LessonsX\CellBiologyX\MicrofilamentsX\PopUpsMicrofilamentsT.html
+        in TextX\LessonsX\CellBiologyX\MicrotubulesX\PopUpsMicrotubulesX.html
+
+  [2x] LessonName.js?1608662271105
+        in TextT\LessonsT\EmbryologyT\UrogenitalT\Excerpts\CaudalUrogenitalMorphogenesisMaleT.html
+        in TextT\LessonsT\EmbryologyT\UrogenitalT\Excerpts\CaudalUrogenitalMorphogenesisT.html
+
+  [1x] ../../../../CommonFiles/LessonSpecificStylesheets/LessonName.css
+        in TextX\LessonsX\CellBiologyX\IntermediateFilamentsX\LessonNameT.html
+
+  [1x] LessonNameZ.mp4
+        in TextX\LessonsX\CellBiologyX\IntermediateFilamentsX\LessonNameT.html
+
+  [1x] LessonNameZ_src_array.js
+        in TextX\LessonsX\CellBiologyX\IntermediateFilamentsX\LessonNameT.html
+
+  [1x] LessonNameZ.js
+        in TextX\LessonsX\CellBiologyX\IntermediateFilamentsX\LessonNameT.html
+
+=== EXTERNAL-PROJECT REFS (BioME Sara, outside this repo) (7 unique targets, 82 references) ===
+
+  [75x] ../../../../../BioME%20Sara/CommonFiles/masterUIcontrol.js
+        in TextT\LessonsT\CellBiologyT\BiomembranesT\viBiomembranes.html
+        in TextT\LessonsT\CellBiologyT\CellCycleControlT\viCellCycleControl - Copy.html
+        in TextT\LessonsT\CellBiologyT\CellCycleControlT\viCellCycleControl.html
+        in TextT\LessonsT\CellBiologyT\DivisionT\viDivision.html
+        in TextT\LessonsT\CellBiologyT\ExtracellularMatrixT\viExtracellularMatrix.html
+        in TextT\LessonsT\CellBiologyT\JunctionsT\viJunctions.html
+        ...and 69 more
+
+  [2x] ../../BioME%20Sara/CommonFiles/CentralMenu.css
+        in TextT\StudentCentralMenuT.html
+        in TextX\CentralMenu2CollumnsX.html
+
+  [1x] ../../../../../BioME%20Sara/CommonFiles/Excerpts.css
+        in TextT\LessonsT\GeneticsT\SexualGeneticsT\ExcerptsSexualGeneticsX.html
+
+  [1x] ../../../../../BioME%20Sara/CommonFiles/masterLessonMenuReturnButton.js
+        in TextT\LessonsT\GeneticsT\SexualGeneticsT\ExcerptsSexualGeneticsX.html
+
+  [1x] ../../../../../BioME%20Sara/CommonFiles/Feedback.css
+        in TextX\LessonsX\CellBiologyX\DivisionX\FeedbackFeedbackX.html
+
+  [1x] ../../BioME%20Sara/CommonFiles/CentralMenuResources.css
+        in TextX\ResourcesCentralMenuX.html
+
+  [1x] ../../BioME%20Sara/CommonFiles/masterCitationsCentralMenu.js
+        in TextX\ResourcesCentralMenuX.html
+
+=== PARSER ARTIFACTS (ignore) (4 unique targets, 5 references) ===
+
+  [2x] NameSide  
+-->
+
+<!DOCTYPE html>
+<html lang=
+        in TextT\LessonsT\MolecularBiologyT\NucleicAcidStructureT\NucleicAcidStructureT.html
+        in TextX\LessonsX\MolecularBiologyX\NucleicAcidStructureX\NucleicAcidStructureX.html
+
+  [1x] QuestionImages/NameSide/NameSideT.mp4
+        in TextT\LessonsT\MolecularBiologyT\NucleicAcidStructureT\NucleicAcidStructureT.html
+
+  [1x] QuestionImages/NameSide/NameSideX.mp4
+        in TextX\LessonsX\MolecularBiologyX\NucleicAcidStructureX\NucleicAcidStructureX.html
+
+  [1x] QuestionImages/NameSide/NameSideX_src_array.js
+        in TextX\LessonsX\MolecularBiologyX\NucleicAcidStructureX\NucleicAcidStructureX.html
