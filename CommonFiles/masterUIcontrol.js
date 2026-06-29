@@ -54,20 +54,29 @@ var markerDebugOverlayBuilt = false;
 var markerDebugEls = null;
 var markerDebugFlashTimer = null;
 
+/**
+ * TEMP testing default: show the overlay WITHOUT needing the URL param.
+ * Set to false to return to opt-in behavior (requires ?debugMarkers=1 / window.DEBUG_MARKERS).
+ * Override at runtime with ?debugMarkers=0 or window.DEBUG_MARKERS = false.
+ */
+var TEMP_MARKER_DEBUG_OVERLAY_DEFAULT_ON = true;
+
 function markerDebugOverlayEnabled() {
     if (typeof window !== "undefined" && window.DEBUG_MARKERS === true) return true;
+    if (typeof window !== "undefined" && window.DEBUG_MARKERS === false) return false;
     try {
         if (typeof location !== "undefined" && location.search) {
-            return /[?&]debugMarkers=1\b/.test(location.search);
+            if (/[?&]debugMarkers=0\b/.test(location.search)) return false;
+            if (/[?&]debugMarkers=1\b/.test(location.search)) return true;
         }
     } catch (e) { /* ignore */ }
-    return false;
+    return TEMP_MARKER_DEBUG_OVERLAY_DEFAULT_ON === true;
 }
 
 function injectMarkerDebugStyles() {
     if (typeof document === "undefined" || document.getElementById("markerDebugStyles")) return;
     var css = "" +
-        "#markerDebugPanel{position:fixed;left:8px;bottom:8px;z-index:99999;width:360px;max-width:46vw;" +
+        "#markerDebugPanel{position:fixed;right:8px;top:8px;z-index:99999;width:360px;max-width:46vw;" +
         "font:12px/1.4 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#e8e8e8;" +
         "background:rgba(18,18,22,.92);border:1px solid #444;border-radius:8px;padding:8px 10px;" +
         "box-shadow:0 4px 18px rgba(0,0,0,.5);}" +
@@ -87,7 +96,7 @@ function injectMarkerDebugStyles() {
         "#markerDebugStrip .mdPlayhead{position:absolute;top:-2px;bottom:-2px;width:2px;background:#fff;" +
         "box-shadow:0 0 4px #fff;}" +
         "#markerDebugLegend{font-size:10px;color:#9a9a9a;margin-top:2px;}" +
-        "#markerDebugFlash{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:100000;" +
+        "#markerDebugFlash{position:fixed;top:14px;left:38%;transform:translateX(-50%);z-index:100000;" +
         "padding:10px 18px;border-radius:8px;font:700 16px/1 -apple-system,Segoe UI,Roboto,Arial,sans-serif;" +
         "color:#111;opacity:0;pointer-events:none;transition:opacity .12s ease;" +
         "box-shadow:0 4px 16px rgba(0,0,0,.5);}" +
