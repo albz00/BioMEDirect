@@ -532,14 +532,9 @@ function isActionableInVideoClick(clickEvent) {
     if (!CONTINUOUS_VIDEO_PLAYBACK) return true;
     if (!isInVideoSurfaceClick(clickEvent)) return true;
     if (!videoId) return false;
-    if (guidedPlaybackState === "paused_at_freeze") return true;
-    if (guidedPlaybackState === "looping_at_red") return true;
-    if (videoId.paused) return true;
-    if (guidedPlaybackState === "playing_to_next_freeze" &&
-        (segmentTargetFreezeIdx < 0 || segmentTargetFreezeIdx >= freezeMarkers.length)) {
-        return true;
-    }
-    return false;
+    // Click always has power: resume from a freeze, break a red loop, or (while playing a
+    // segment) skip forward to the next freeze stop. No state should swallow the click.
+    return true;
 }
 
 /**
@@ -592,6 +587,22 @@ function syncInteractiveRuntimeToCurrentTime(reason) {
             recovered = true;
             action = "recover_idle_from_paused";
         }
+    } else if (guidedPlaybackState === "looping_at_red") {
+        // Red loop owns currentTime (it seeks back to the previous freeze each pass).
+        // Never retarget or change state here or we clobber the loop mid-flight.
+        action = "preserve_red_loop";
+    } else if (guidedPlaybackState === "playing_to_next_freeze" &&
+        segmentTargetFreezeIdx >= 0 && segmentTargetFreezeIdx < freezeMarkers.length) {
+        // CRITICAL: do NOT recompute the target every tick while actively playing a segment.
+        // Reassigning segmentTargetFreezeIdx = prevFreeze+1 the instant the playhead crosses a
+        // freeze's crossAt reclassifies that freeze as "already behind us" before
+        // tryCommitSegmentTargetFreezeStop / the red-loop trigger can commit the stop — which
+        // made every yellow/green/red play through. Keep the active target stable; only refresh
+        // the "current" pointer for coherent reporting.
+        if (prevFreeze >= 0 && prevFreeze < segmentTargetFreezeIdx) {
+            currentFreezeFrameIdx = prevFreeze;
+        }
+        action = "preserve_active_segment_target";
     } else {
         if (nextTarget >= 0 && nextTarget < freezeMarkers.length) {
             currentFreezeFrameIdx = prevFreeze;
@@ -1591,20 +1602,24 @@ function resolvePostFreezeStopTime(marker, markerIndex, logReason) {
         resolved = ensureSeekPastColorCardRanges(resolved);
     }
     var leapfrogAdjusted = Math.abs(resolved - base) > 1e-6;
-    logPlayerMarkerDebug({
-        event: "resolved_post_freeze_target",
-        reason: logReason || null,
-        markerType: marker.markerType,
-        markerSemantics: marker.semantics,
-        markerIndex: markerIndex,
-        isFreeze: true,
-        isLoop: false,
-        chosenStopPoint: Math.round(Number(marker.crossAt) * 1000) / 1000,
-        chosenResumePoint: Math.round(Number(resolved) * 1000) / 1000,
-        resolvedPostMarkerContentPoint: Math.round(Number(resolved) * 1000) / 1000,
-        leapfrogHelperUsed: leapfrogAdjusted,
-        clickAction: guidedPlaybackState === "paused_at_freeze" ? "resume_past_freeze_card" : "n/a",
-    });
+    // "locate_freeze_at_time" is a pure read-only locator that runs for EVERY freeze marker on
+    // EVERY timeupdate (27+ calls/tick) — skip its log so real fire events stay readable.
+    if (logReason !== "locate_freeze_at_time") {
+        logPlayerMarkerDebug({
+            event: "resolved_post_freeze_target",
+            reason: logReason || null,
+            markerType: marker.markerType,
+            markerSemantics: marker.semantics,
+            markerIndex: markerIndex,
+            isFreeze: true,
+            isLoop: false,
+            chosenStopPoint: Math.round(Number(marker.crossAt) * 1000) / 1000,
+            chosenResumePoint: Math.round(Number(resolved) * 1000) / 1000,
+            resolvedPostMarkerContentPoint: Math.round(Number(resolved) * 1000) / 1000,
+            leapfrogHelperUsed: leapfrogAdjusted,
+            clickAction: guidedPlaybackState === "paused_at_freeze" ? "resume_past_freeze_card" : "n/a",
+        });
+    }
     tensegrityPlayerDebugLog({
         event: "resolve_post_freeze",
         reason: logReason || null,
@@ -2330,6 +2345,43 @@ function update(playVid){ // FindMe2
     }
 }
 
+/**
+ * CLICK while a segment is playing: jump straight to the next freeze stop (yellow/green),
+ * leapfrogging any cards (and any red in between) and pausing on the post-card content.
+ * This gives clicks "power over all" — they are never swallowed mid-segment.
+ */
+function skipToNextFreezeStopOnClick(reason, clickedElement) {
+    var nowT = (typeof videoId !== "undefined" && videoId && isFinite(Number(videoId.currentTime)))
+        ? Number(videoId.currentTime) : 0;
+    var idx = (segmentTargetFreezeIdx >= 0 && segmentTargetFreezeIdx < freezeMarkers.length)
+        ? segmentTargetFreezeIdx
+        : findFirstFreezeMarkerIndexAfterTime(nowT);
+    if (idx < 0 || idx >= freezeMarkers.length) {
+        // No freeze ahead — let it keep playing to the end.
+        logPlayerMarkerDebug({
+            event: "click_skip_to_next_stop",
+            clickBranchTaken: "no_freeze_ahead_play_through",
+            clickedElement: clickedElement || null,
+            clickAction: "skip_forward_no_remaining_freeze",
+        });
+        return false;
+    }
+    var mk = freezeMarkers[idx];
+    logPlayerMarkerDebug({
+        event: "click_skip_to_next_stop",
+        clickBranchTaken: "skip_to_next_freeze_stop",
+        clickedElement: clickedElement || null,
+        markerType: mk.markerType,
+        markerSemantics: "freeze",
+        markerIndex: idx,
+        segmentTargetFreezeIndex: idx,
+        chosenStopPoint: isFinite(Number(mk.crossAt)) ? Math.round(Number(mk.crossAt) * 1000) / 1000 : null,
+        clickAction: "skip_forward_to_next_freeze_stop",
+    });
+    applyFreezeMarkerStopAtCrossing(videoId, mk, idx, nowT, nowT, reason || "click_skip_to_next_stop");
+    return true;
+}
+
 //Adds one to currentSlide, i.e. defines currentSlide as the next stop point
 function nextSlide(clickEvt){ // FindMe1
     var clickEvent = clickEvt || ((typeof window !== "undefined" && window.event) ? window.event : null);
@@ -2446,28 +2498,13 @@ function nextSlide(clickEvt){ // FindMe1
         }
         if (videoId && !videoId.paused && isPlayingSegmentForward() &&
             segmentTargetFreezeIdx >= 0 && segmentTargetFreezeIdx < freezeMarkers.length) {
-            var ctrlSnap = getInteractiveControlSnapshot();
-            logPlayerMarkerDebug({
-                event: "click_branch",
-                clickBranchTaken: "ignored_already_playing_segment",
-                clickedElement: baseClickDebug.clickedElement,
-                clickAction: "ignored_already_playing_segment",
-                clickIgnoredReason: ctrlSnap.clickIgnoreReason || "segment_already_playing",
-                currentFreezeFrameIndex: currentFreezeFrameIdx,
-                segmentTargetFreezeIndex: segmentTargetFreezeIdx,
-            });
+            skipToNextFreezeStopOnClick("click_skip_to_next_stop", baseClickDebug.clickedElement);
             return;
         }
     }
     if (CONTINUOUS_VIDEO_PLAYBACK && videoId && !videoId.paused && isPlayingSegmentForward() &&
         segmentTargetFreezeIdx >= 0 && segmentTargetFreezeIdx < freezeMarkers.length) {
-        logPlayerMarkerDebug({
-            event: "click_branch",
-            clickBranchTaken: "ignored_already_playing_segment",
-            clickedElement: baseClickDebug.clickedElement,
-            clickAction: "ignored_already_playing_segment",
-            clickIgnoredReason: "segment_already_playing",
-        });
+        skipToNextFreezeStopOnClick("click_skip_to_next_stop", baseClickDebug.clickedElement);
         return;
     }
     if (CONTINUOUS_VIDEO_PLAYBACK && videoId && !videoId.paused && isPlayingSegmentForward() &&
