@@ -1839,11 +1839,6 @@ function renderSrcArrayTable(srcArray, lessonId, chapterTitles, panelExtras) {
     const rows = currentSrcArrayForEditor.map((seg, index) => {
         const start = seg.src_start != null ? Number(seg.src_start) : '';
         const end = seg.src_end != null ? Number(seg.src_end) : '';
-        const menuLink = seg.menuLink != null ? String(seg.menuLink) : '';
-        const chNum = seg.chapterIndex != null ? Number(seg.chapterIndex) : '';
-        const fromEditor = (Number.isFinite(chNum) && chNum > 0 && currentChapterTitlesForEditor[chNum - 1])
-            ? currentChapterTitlesForEditor[chNum - 1]
-            : '';
         const yellowStart = seg.yellowStart != null ? Number(seg.yellowStart) : '';
         const yellowEnd = seg.yellowEnd != null ? Number(seg.yellowEnd) : '';
         const source = seg.source != null ? String(seg.source) : '';
@@ -1866,9 +1861,6 @@ function renderSrcArrayTable(srcArray, lessonId, chapterTitles, panelExtras) {
             <td class="srcarray-col-type">${typeCell}</td>
             <td><input type="number" step="0.01" class="srcarray-input-start" value="${start}" data-index="${index}"></td>
             <td><input type="number" step="0.01" class="srcarray-input-end" value="${end}" data-index="${index}"></td>
-            <td><input type="number" step="1" min="0" class="srcarray-input-chapterIndex" value="${chNum === '' ? '' : chNum}" data-index="${index}" placeholder="—"></td>
-            <td class="srcarray-chapter-name" title="From lesson chapter editor (ordered list)">${esc(fromEditor || '—')}</td>
-            <td><input type="text" class="srcarray-input-menuLink" value="${esc(menuLink)}" data-index="${index}" placeholder="menu link"></td>
             <td class="dev-only"><input type="checkbox" class="srcarray-input-flagged" data-index="${index}" ${flagged ? 'checked' : ''}></td>
             <td class="dev-only"><input type="checkbox" class="srcarray-input-manualOverride" data-index="${index}" ${manualOverride ? 'checked' : ''} title="Preserve on regenerate"></td>
             <td class="dev-only">
