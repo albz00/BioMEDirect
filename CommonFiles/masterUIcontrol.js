@@ -308,6 +308,137 @@ function pushMarkerDebugEvent(out) {
     }
 }
 
+/* ==========================================================================
+ * COLOR-CARD MASK (rolling freeze-frame cover) — hides the brief color-card
+ * flash during marker-driven seeks. A single requestAnimationFrame monitor shows
+ * the last clean frame over the video whenever the playhead is inside a card
+ * span, then hides it once the marker logic has seeked past the card. Self-styled
+ * and lazily built (no per-lesson HTML/CSS edits). Disable at runtime with
+ * window.DISABLE_CARD_MASK = true.
+ * ========================================================================== */
+var cardMask = { canvas: null, ctx: null, visible: false, lastDrawMs: 0, started: false };
+var CARD_MASK_LEAD_SEC = 0.06;          // show cover slightly before a card would paint
+var CARD_MASK_DRAW_INTERVAL_MS = 80;    // throttle clean-frame snapshots (~12fps)
+
+function cardMaskEnabled() {
+    if (typeof window !== "undefined" && window.DISABLE_CARD_MASK === true) return false;
+    return CONTINUOUS_VIDEO_PLAYBACK === true;
+}
+
+function injectCardMaskStyles() {
+    if (typeof document === "undefined" || document.getElementById("cardMaskStyles")) return;
+    var css = "#cardMaskCover{position:fixed;left:0;top:0;width:0;height:0;z-index:6;" +
+        "pointer-events:none;opacity:0;background:#000;transition:opacity .04s linear;}" +
+        "#cardMaskCover.show{opacity:1;}";
+    var style = document.createElement("style");
+    style.id = "cardMaskStyles";
+    style.textContent = css;
+    (document.head || document.documentElement).appendChild(style);
+}
+
+function ensureCardMaskOverlay() {
+    if (typeof document === "undefined") return null;
+    if (cardMask.canvas) return cardMask;
+    injectCardMaskStyles();
+    var host = document.getElementById("animation") || document.body;
+    if (!host) return null;
+    var canvas = document.createElement("canvas");
+    canvas.id = "cardMaskCover";
+    host.appendChild(canvas);
+    cardMask.canvas = canvas;
+    cardMask.ctx = canvas.getContext("2d");
+    return cardMask;
+}
+
+/** Align the cover exactly over the video element (viewport coords -> position:fixed). */
+function positionCardMaskOverVideo() {
+    if (!cardMask.canvas || typeof videoId === "undefined" || !videoId) return;
+    try {
+        var r = videoId.getBoundingClientRect();
+        if (r && r.width > 0 && r.height > 0) {
+            cardMask.canvas.style.left = r.left + "px";
+            cardMask.canvas.style.top = r.top + "px";
+            cardMask.canvas.style.width = r.width + "px";
+            cardMask.canvas.style.height = r.height + "px";
+        }
+    } catch (e) { /* ignore */ }
+}
+
+/** True if the playhead is inside (or just about to enter) any color-card span. */
+function videoTimeInsideCardSpan(t) {
+    var n = Number(t);
+    if (!isFinite(n)) return false;
+    var ranges = getColorCardRangesFromWindow();
+    for (var i = 0; i < ranges.length; i++) {
+        var s = Number(ranges[i].start);
+        var e = Number(ranges[i].end);
+        if (!isFinite(s) || !isFinite(e)) continue;
+        if (n >= s - CARD_MASK_LEAD_SEC && n < e + COLOR_CARD_RANGE_SKIP_EPS_SEC) return true;
+    }
+    return false;
+}
+
+/** Roll the "last clean frame" snapshot while playing and clear of any card. */
+function refreshCardMaskCleanFrame(nowMs) {
+    if (!cardMask.canvas || !cardMask.ctx) return;
+    if (typeof videoId === "undefined" || !videoId) return;
+    if (videoId.paused) return;
+    if (Number(videoId.readyState) < 2) return;
+    var vw = Number(videoId.videoWidth);
+    var vh = Number(videoId.videoHeight);
+    if (!(vw > 0) || !(vh > 0)) return;
+    if (nowMs - cardMask.lastDrawMs < CARD_MASK_DRAW_INTERVAL_MS) return;
+    if (cardMask.canvas.width !== vw || cardMask.canvas.height !== vh) {
+        cardMask.canvas.width = vw;
+        cardMask.canvas.height = vh;
+    }
+    try {
+        // Cross-origin video taints the canvas, but we only DISPLAY it (no pixel readback), so OK.
+        cardMask.ctx.drawImage(videoId, 0, 0, vw, vh);
+        cardMask.lastDrawMs = nowMs;
+    } catch (e) { /* ignore transient draw errors */ }
+}
+
+function showCardMask() {
+    if (!cardMask.canvas || cardMask.visible) return;
+    positionCardMaskOverVideo();
+    cardMask.canvas.classList.add("show");
+    cardMask.visible = true;
+}
+
+function hideCardMask() {
+    if (!cardMask.canvas || !cardMask.visible) return;
+    cardMask.canvas.classList.remove("show");
+    cardMask.visible = false;
+}
+
+function cardMaskTick() {
+    try {
+        if (cardMaskEnabled() && cardMask.canvas && typeof videoId !== "undefined" && videoId) {
+            if (videoTimeInsideCardSpan(Number(videoId.currentTime))) {
+                showCardMask(); // hold the last clean frame (do NOT draw the card frame)
+            } else {
+                hideCardMask();
+                refreshCardMaskCleanFrame(Date.now());
+            }
+        } else {
+            hideCardMask();
+        }
+    } catch (e) { /* the mask must never break playback */ }
+    if (typeof window !== "undefined" && window.requestAnimationFrame) {
+        window.requestAnimationFrame(cardMaskTick);
+    }
+}
+
+function startCardMask() {
+    if (cardMask.started) return;
+    if (!ensureCardMaskOverlay()) return;
+    cardMask.started = true;
+    if (typeof window !== "undefined" && window.requestAnimationFrame) {
+        window.requestAnimationFrame(cardMaskTick);
+    }
+}
+
 /** Unified freeze markers (yellow + green), sorted by crossAt. */
 var freezeMarkers = [];
 /** Loop markers (red), sorted by crossAt. */
@@ -2047,6 +2178,11 @@ function initializePlayer(videoUrl, timelineArray) {
         } catch (overlayErr) { /* overlay must never break init */ }
     }
 
+    // Color-card mask: hide the brief color-card flash during marker-driven seeks.
+    if (cardMaskEnabled()) {
+        try { startCardMask(); } catch (maskErr) { /* mask must never break init */ }
+    }
+
     setGuidedPlaybackState("idle", "initialize");
 
     // Runtime-owned click wiring so in-video clicks always reach nextSlide()
@@ -2151,7 +2287,10 @@ function initializePlayer(videoUrl, timelineArray) {
                 if (guidedPlaybackState === "looping_at_red" && activeRedLoopEventIdx >= 0 &&
                     activeRedLoopReturnTime != null && isFinite(Number(activeRedLoopReturnTime))) {
                     var loopMkActive = loopMarkers[activeRedLoopEventIdx];
-                    if (loopMkActive && prev < loopMkActive.end && t >= loopMkActive.end) {
+                    // Jump back at the red's START (consistent with handleRedLoopMarkerCrossing on
+                    // entry) so the red card is never played; the mask cover hides the single-frame jump.
+                    var redLoopBoundary = loopMkActive ? Number(loopMkActive.crossAt) : NaN;
+                    if (loopMkActive && isFinite(redLoopBoundary) && prev < redLoopBoundary && t >= redLoopBoundary) {
                         this.currentTime = Number(activeRedLoopReturnTime);
                         lastPlaybackTimeForMarkerCheck = Number(activeRedLoopReturnTime);
                         logPlayerMarkerDebug({
