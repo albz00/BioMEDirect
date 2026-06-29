@@ -3624,3 +3624,49 @@ body:not(.dev-mode) .srcarray-editor-toolbar {
     padding: 1rem 1.25rem;
 }
 
+/* ---- Variant toggle (Text / No-Text) ---- */
+.variant-toggle {
+    display: flex;
+    width: 100%;
+    border: 1px solid var(--biome-line);
+    border-radius: var(--biome-radius);
+    overflow: hidden;
+}
+.variant-btn {
+    flex: 1;
+    padding: 0.4rem 0.5rem;
+    background: #2a3b50;
+    color: #cbd5e1;
+    border: none;
+    border-right: 1px solid var(--biome-line);
+    cursor: pointer;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+.variant-btn:last-child {
+    border-right: none;
+}
+.variant-btn:hover {
+    background: #33485f;
+    color: #ffffff;
+}
+.variant-btn.active {
+    background: var(--biome-bg-active);
+    color: var(--biome-cyan-soft);
+}
+.tree-lesson-variant {
+    margin-left: auto;
+    padding: 0.05rem 0.4rem;
+    border-radius: var(--biome-radius);
+    background: var(--biome-bg-active);
+    color: var(--biome-cyan-soft);
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+

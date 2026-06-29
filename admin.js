@@ -24,6 +24,8 @@ let profileBtn, profileModal;
 let searchInput, filterButtons;
 let currentFilter = 'all';
 let searchQuery = '';
+/** Active video variant: 't' (with text, lessonId *_t) or 'x' (no text, lessonId *_x). */
+let currentVariant = 't';
 let selectedLessonId = null;
 let collapsedSections = new Set();
 /** Current srcArray and lesson id for the Timeline editor (Save All writes to lessons.doc(currentSrcArrayLessonId)) */
@@ -435,7 +437,10 @@ function setupEventListeners() {
                 // If a single file was uploaded and its name matches a lessonId, assign it so the lesson uses this video
                 if (files.length === 1) {
                     const baseName = files[0].name.replace(/\.mp4$/i, '');
-                    const lesson = lessonsData.find(l => l.lessonId === baseName);
+                    // baseName is the variant-specific lessonId (e.g. cleavage_stage_x). Match either variant.
+                    const lesson = lessonsData.find(l =>
+                        l.lessonId === baseName ||
+                        (l.variants && (l.variants.t.lessonId === baseName || l.variants.x.lessonId === baseName)));
                     if (lesson) {
                         const videoPath = `videos/${files[0].name}`;
                         await db.collection('videoPaths').doc(baseName).set({ videoPath }, { merge: true });
@@ -474,6 +479,9 @@ function setupEventListeners() {
             });
         });
     }
+
+    // Variant toggle (Text / No-Text) — re-keys every lesson action to *_t or *_x.
+    setupVariantToggle();
 
     // Sidebar collapse toggle
     const sidebarToggle = document.getElementById('sidebarToggle');
@@ -963,6 +971,51 @@ function lessonIdFromPath(lessonPath) {
     return parts.join('_').toLowerCase().replace(/\s+/g, '_') + '_t';
 }
 
+// ===== Variant helpers (Text / No-Text) =====
+// The canonical lesson list comes from the TextT menu (lessonId *_t, path .../TextT/...T.html).
+// The No-Text variant mirrors it: lessonId *_x and the parallel TextX/...X.html page.
+
+/** Map a canonical *_t lessonId to the requested variant ('t' | 'x'). */
+function toVariantLessonId(baseTId, variant) {
+    if (!baseTId) return baseTId;
+    if (variant === 'x') {
+        return /_t$/.test(baseTId) ? baseTId.replace(/_t$/, '_x') : baseTId + '_x';
+    }
+    return baseTId;
+}
+
+/** Map a canonical TextT lesson page path to the requested variant ('t' | 'x').
+ *  Flips the trailing T of each path segment (TextT/, LessonsT/, SectionT/, NameT/, NameT.html). */
+function toVariantPath(basePathT, variant) {
+    if (!basePathT) return basePathT;
+    if (variant === 'x') {
+        return basePathT.replace(/T(\/|\.html)/g, 'X$1');
+    }
+    return basePathT;
+}
+
+/** Return the active variant's slice for a lesson, falling back to top-level fields. */
+function getActiveVariant(lesson) {
+    if (lesson && lesson.variants && lesson.variants[currentVariant]) {
+        return lesson.variants[currentVariant];
+    }
+    return lesson;
+}
+
+/** Copy the active variant slice into each lesson's top-level fields (lessonId/path/hasVideo/currentPath)
+ *  so the rest of the admin (which keys off these) targets the active variant. */
+function applyVariantToLessons() {
+    lessonsData.forEach(lesson => {
+        const v = lesson && lesson.variants ? lesson.variants[currentVariant] : null;
+        if (!v) return;
+        lesson.lessonId = v.lessonId;
+        lesson.path = v.path;
+        lesson.hasVideo = v.hasVideo;
+        lesson.currentPath = v.currentPath;
+        lesson.error = v.error;
+    });
+}
+
 // Extract lessonId from HTML file
 async function extractLessonIdFromHTML(lessonPath) {
     try {
@@ -1040,34 +1093,47 @@ async function scanLessons() {
         for (const lesson of extractedLessons) {
             checkPromises.push(
                 (async () => {
-                    // Check videoPaths collection for custom videoPath
-                    const videoPathDoc = await db.collection('videoPaths').doc(lesson.lessonId).get();
-                    const videoPathData = videoPathDoc.exists ? videoPathDoc.data() : {};
-                    const customVideoPath = videoPathData.videoPath || null;
-                    
-                    // Optional lesson-level metadata overrides (display name)
+                    // Resolve one variant slice (videoPath override + Storage availability) for a given id/path.
+                    const buildVariant = async (variant) => {
+                        const lessonId = toVariantLessonId(lesson.lessonId, variant);
+                        const path = toVariantPath(lesson.path, variant);
+                        const videoPathDoc = await db.collection('videoPaths').doc(lessonId).get();
+                        const customVideoPath = (videoPathDoc.exists && videoPathDoc.data().videoPath) || null;
+                        const videoCheck = await checkVideoAvailability(lessonId, customVideoPath);
+                        return {
+                            lessonId,
+                            path,
+                            hasVideo: videoCheck.exists,
+                            currentPath: customVideoPath || `videos/${lessonId}.mp4`,
+                            error: videoCheck.error
+                        };
+                    };
+
+                    const [variantT, variantX] = await Promise.all([buildVariant('t'), buildVariant('x')]);
+
+                    // Display name + section overrides are shared across variants (same lesson, same menu).
                     const metadataDoc = await db.collection('lessonMetadata').doc(lesson.lessonId).get();
                     const metadata = metadataDoc.exists ? metadataDoc.data() : {};
                     const displayNameOverride = metadata.displayName || null;
 
-                    // Optional section-level display name override (shared by all lessons in a section)
                     const sectionDoc = await db.collection('sectionNames').doc(lesson.originalSection).get();
                     const sectionData = sectionDoc.exists ? sectionDoc.data() : {};
                     const sectionDisplayNameOverride = sectionData.displayName || null;
-                    
-                    // Check if video exists
-                    const videoCheck = await checkVideoAvailability(lesson.lessonId, customVideoPath);
-                    
+
+                    const active = currentVariant === 'x' ? variantX : variantT;
                     return {
-                        path: lesson.path,
+                        baseId: lesson.lessonId,
                         name: displayNameOverride || lesson.name,
-                        lessonId: lesson.lessonId,
                         section: sectionDisplayNameOverride || lesson.section,
                         originalName: lesson.originalName,
                         originalSection: lesson.originalSection,
-                        hasVideo: videoCheck.exists,
-                        currentPath: customVideoPath || `videos/${lesson.lessonId}.mp4`,
-                        error: videoCheck.error
+                        variants: { t: variantT, x: variantX },
+                        // Top-level fields mirror the active variant (rest of admin keys off these).
+                        lessonId: active.lessonId,
+                        path: active.path,
+                        hasVideo: active.hasVideo,
+                        currentPath: active.currentPath,
+                        error: active.error
                     };
                 })()
             );
@@ -1210,9 +1276,13 @@ function renderSidebarTree() {
                 const safeLessonName = lesson.name.replace(/</g, '&lt;').replace(/>/g, '&gt;');
                 const status = '●';
                 const statusClass = lesson.hasVideo ? 'has-video' : 'missing';
-                const selectedClass = selectedLessonId === lesson.lessonId ? ' selected' : '';
+                const isSelected = selectedLessonId === lesson.lessonId;
+                const selectedClass = isSelected ? ' selected' : '';
                 const escId = lesson.lessonId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-                return `<div class="tree-lesson ${statusClass}${selectedClass}" data-lesson-id="${lesson.lessonId}" onclick="selectLesson('${escId}')"><span class="tree-lesson-status">${status}</span><span class="tree-lesson-name">${safeLessonName}</span></div>`;
+                const variantTag = isSelected
+                    ? `<span class="tree-lesson-variant">${currentVariant === 'x' ? 'No-Text' : 'Text'}</span>`
+                    : '';
+                return `<div class="tree-lesson ${statusClass}${selectedClass}" data-lesson-id="${lesson.lessonId}" onclick="selectLesson('${escId}')"><span class="tree-lesson-status">${status}</span><span class="tree-lesson-name">${safeLessonName}</span>${variantTag}</div>`;
             }).join('');
         const sectionKeyAttr = section.originalSection.replace(/"/g, '&quot;');
         return `
@@ -2377,6 +2447,57 @@ function setupCursorPromptButtons() {
     }
 }
 
+function setupVariantToggle() {
+    const toggle = document.getElementById('variantToggle');
+    if (!toggle) return;
+    const buttons = toggle.querySelectorAll('.variant-btn');
+
+    // Restore persisted variant.
+    try {
+        const saved = localStorage.getItem('adminVariant');
+        if (saved === 't' || saved === 'x') currentVariant = saved;
+    } catch (e) { /* ignore */ }
+
+    const reflect = () => {
+        buttons.forEach(b => {
+            const on = b.getAttribute('data-variant') === currentVariant;
+            b.classList.toggle('active', on);
+            b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+    };
+    reflect();
+
+    buttons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const next = btn.getAttribute('data-variant');
+            if (next !== 't' && next !== 'x') return;
+            if (next === currentVariant) return;
+
+            // Track the currently selected lesson by its stable baseId so we can re-key selection.
+            const selected = selectedLessonId
+                ? lessonsData.find(l => l.variants && (l.variants.t.lessonId === selectedLessonId || l.variants.x.lessonId === selectedLessonId))
+                : null;
+
+            currentVariant = next;
+            try { localStorage.setItem('adminVariant', currentVariant); } catch (e) { /* ignore */ }
+            reflect();
+
+            // Re-point every lesson's top-level fields at the new variant.
+            applyVariantToLessons();
+
+            // Re-key the selection to the same lesson's active-variant id.
+            if (selected && selected.variants && selected.variants[currentVariant]) {
+                selectedLessonId = selected.variants[currentVariant].lessonId;
+                resetAiTitleMappingPanel();
+            }
+
+            renderSidebarTree();
+            displaySelectedLesson();
+            refreshSrcArrayEditor();
+        });
+    });
+}
+
 function setupDevModeToggle() {
     const toggle = document.getElementById('devModeToggle');
     const apply = (on) => {
@@ -2870,7 +2991,24 @@ async function showChaptersForLesson(lessonId) {
 
         const metaDoc = await db.collection('lessonMetadata').doc(lessonId).get();
         const meta = metaDoc.exists ? metaDoc.data() : {};
-        const chapterDisplayNames = meta.chapterDisplayNames || {};
+        let chapterDisplayNames = meta.chapterDisplayNames || {};
+
+        // Seed custom chapter names from the Text twin when this No-Text lesson has none yet.
+        // Menu labels are identical across variants; only timings differ, so reusing display names is safe.
+        if (currentVariant === 'x' && Object.keys(chapterDisplayNames).length === 0
+            && lesson.variants && lesson.variants.t && lesson.variants.t.lessonId !== lessonId) {
+            try {
+                const twinDoc = await db.collection('lessonMetadata').doc(lesson.variants.t.lessonId).get();
+                const twinNames = (twinDoc.exists && twinDoc.data().chapterDisplayNames) || {};
+                if (Object.keys(twinNames).length > 0
+                    && confirm('This No-Text lesson has no chapter names yet. Copy the chapter names from its Text twin? (Timings stay independent.)')) {
+                    chapterDisplayNames = { ...twinNames };
+                    await db.collection('lessonMetadata').doc(lessonId).set({ chapterDisplayNames }, { merge: true });
+                }
+            } catch (seedErr) {
+                console.warn('Could not seed chapter names from Text twin:', seedErr);
+            }
+        }
 
         const chapters = menuLinks.map(m => ({
             menuId: m.menuId,

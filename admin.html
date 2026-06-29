@@ -175,6 +175,10 @@
                         <button type="button" id="sidebarToggle" class="sidebar-toggle" title="Collapse sidebar" aria-label="Collapse sidebar"><svg class="heroicon sidebar-chevron" width="18" height="18" aria-hidden="true"><use id="sidebarToggleIcon" href="#icon-chevron-left"/></svg></button>
                     </div>
                     <div class="search-filter-controls sidebar-controls">
+                        <div class="variant-toggle" id="variantToggle" role="group" aria-label="Video variant">
+                            <button type="button" class="variant-btn active" data-variant="t" title="Manage the with-text video variant (TextT, lessonId *_t)">Text</button>
+                            <button type="button" class="variant-btn" data-variant="x" title="Manage the no-text video variant (TextX, lessonId *_x)">No-Text</button>
+                        </div>
                         <input type="text" id="searchInput" class="search-input" placeholder="Search lessons...">
                         <div class="filter-buttons">
                             <button class="filter-btn active" data-filter="all">All</button>
