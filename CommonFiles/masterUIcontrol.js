@@ -43,6 +43,259 @@ function menuLinksPlayFromZeroEnabled() {
     return false;
 }
 
+/* ==========================================================================
+ * MARKER DEBUG OVERLAY (notifier + timeline strip) — DEBUG TOOLING ONLY.
+ * Toggle with ?debugMarkers=1 in the URL or window.DEBUG_MARKERS = true.
+ * Default OFF so production playback is unaffected. All DOM is built lazily
+ * and self-styled (injected <style>), so no per-lesson HTML/CSS edits are
+ * needed and the overlay works platform-wide via this shared file.
+ * ========================================================================== */
+var markerDebugOverlayBuilt = false;
+var markerDebugEls = null;
+var markerDebugFlashTimer = null;
+
+function markerDebugOverlayEnabled() {
+    if (typeof window !== "undefined" && window.DEBUG_MARKERS === true) return true;
+    try {
+        if (typeof location !== "undefined" && location.search) {
+            return /[?&]debugMarkers=1\b/.test(location.search);
+        }
+    } catch (e) { /* ignore */ }
+    return false;
+}
+
+function injectMarkerDebugStyles() {
+    if (typeof document === "undefined" || document.getElementById("markerDebugStyles")) return;
+    var css = "" +
+        "#markerDebugPanel{position:fixed;left:8px;bottom:8px;z-index:99999;width:360px;max-width:46vw;" +
+        "font:12px/1.4 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#e8e8e8;" +
+        "background:rgba(18,18,22,.92);border:1px solid #444;border-radius:8px;padding:8px 10px;" +
+        "box-shadow:0 4px 18px rgba(0,0,0,.5);}" +
+        "#markerDebugPanel .mdHeader{display:flex;justify-content:space-between;align-items:center;" +
+        "font-weight:600;margin-bottom:4px;}" +
+        "#markerDebugPanel .mdCounts{font-size:11px;color:#bdbdbd;}" +
+        "#markerDebugPanel .mdState{font-size:11px;margin:2px 0;color:#cfe8ff;word-break:break-word;}" +
+        "#markerDebugPanel .mdLast{font-size:11px;margin:2px 0;color:#ffe3a3;min-height:15px;word-break:break-word;}" +
+        "#markerDebugStrip{position:relative;height:26px;margin:6px 0 2px;background:#26262c;" +
+        "border-radius:4px;overflow:hidden;}" +
+        "#markerDebugStrip .mdSpan{position:absolute;top:0;bottom:0;opacity:.85;}" +
+        "#markerDebugStrip .mdSpan.yellow{background:#ffd400;}" +
+        "#markerDebugStrip .mdSpan.green{background:#00d800;}" +
+        "#markerDebugStrip .mdSpan.red{background:#ff1800;}" +
+        "#markerDebugStrip .mdSpan.active{outline:2px solid #fff;outline-offset:-2px;opacity:1;}" +
+        "#markerDebugStrip .mdTick{position:absolute;top:0;bottom:0;width:1px;background:rgba(255,255,255,.6);}" +
+        "#markerDebugStrip .mdPlayhead{position:absolute;top:-2px;bottom:-2px;width:2px;background:#fff;" +
+        "box-shadow:0 0 4px #fff;}" +
+        "#markerDebugLegend{font-size:10px;color:#9a9a9a;margin-top:2px;}" +
+        "#markerDebugFlash{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:100000;" +
+        "padding:10px 18px;border-radius:8px;font:700 16px/1 -apple-system,Segoe UI,Roboto,Arial,sans-serif;" +
+        "color:#111;opacity:0;pointer-events:none;transition:opacity .12s ease;" +
+        "box-shadow:0 4px 16px rgba(0,0,0,.5);}" +
+        "#markerDebugFlash.show{opacity:1;}" +
+        "#markerDebugFlash.yellow{background:#ffd400;}" +
+        "#markerDebugFlash.green{background:#00d800;}" +
+        "#markerDebugFlash.red{background:#ff1800;color:#fff;}" +
+        "#markerDebugFlash.info{background:#cfe8ff;}";
+    var style = document.createElement("style");
+    style.id = "markerDebugStyles";
+    style.textContent = css;
+    (document.head || document.documentElement).appendChild(style);
+}
+
+function ensureMarkerDebugOverlay() {
+    if (!markerDebugOverlayEnabled()) return null;
+    if (typeof document === "undefined" || !document.body) return null;
+    if (markerDebugOverlayBuilt && markerDebugEls) return markerDebugEls;
+    injectMarkerDebugStyles();
+
+    var panel = document.createElement("div");
+    panel.id = "markerDebugPanel";
+    panel.innerHTML =
+        '<div class="mdHeader"><span>Marker Debug</span><span class="mdCounts" id="markerDebugCounts"></span></div>' +
+        '<div class="mdState" id="markerDebugState">state: idle</div>' +
+        '<div class="mdLast" id="markerDebugLast">last: \u2014</div>' +
+        '<div id="markerDebugStrip"><div class="mdPlayhead" id="markerDebugPlayhead" style="left:0;"></div></div>' +
+        '<div id="markerDebugLegend">yellow/green = freeze \u00b7 red = loop \u00b7 tick = crossAt \u00b7 bar = playhead \u00b7 Shift+D toggles</div>';
+    document.body.appendChild(panel);
+
+    var flash = document.createElement("div");
+    flash.id = "markerDebugFlash";
+    document.body.appendChild(flash);
+
+    markerDebugEls = {
+        panel: panel,
+        counts: panel.querySelector("#markerDebugCounts"),
+        state: panel.querySelector("#markerDebugState"),
+        last: panel.querySelector("#markerDebugLast"),
+        strip: panel.querySelector("#markerDebugStrip"),
+        playhead: panel.querySelector("#markerDebugPlayhead"),
+        flash: flash,
+    };
+    markerDebugOverlayBuilt = true;
+
+    if (typeof window !== "undefined" && !window.__markerDebugHotkeyBound) {
+        document.addEventListener("keydown", function (e) {
+            if (e && e.shiftKey && (e.key === "D" || e.key === "d")) {
+                if (markerDebugEls && markerDebugEls.panel) {
+                    var hidden = markerDebugEls.panel.style.display === "none";
+                    markerDebugEls.panel.style.display = hidden ? "block" : "none";
+                }
+            }
+        });
+        window.__markerDebugHotkeyBound = true;
+    }
+    return markerDebugEls;
+}
+
+function markerDebugVideoDuration() {
+    try {
+        if (typeof videoId !== "undefined" && videoId &&
+            isFinite(Number(videoId.duration)) && Number(videoId.duration) > 0) {
+            return Number(videoId.duration);
+        }
+    } catch (e) { /* ignore */ }
+    var maxEnd = 0;
+    for (var i = 0; i < freezeMarkers.length; i++) {
+        if (isFinite(Number(freezeMarkers[i].end))) maxEnd = Math.max(maxEnd, Number(freezeMarkers[i].end));
+    }
+    for (var j = 0; j < loopMarkers.length; j++) {
+        if (isFinite(Number(loopMarkers[j].end))) maxEnd = Math.max(maxEnd, Number(loopMarkers[j].end));
+    }
+    return maxEnd > 0 ? maxEnd : 0;
+}
+
+function renderMarkerDebugStrip() {
+    var els = ensureMarkerDebugOverlay();
+    if (!els || !els.strip) return;
+    var duration = markerDebugVideoDuration();
+
+    var yellow = 0, green = 0;
+    for (var c = 0; c < freezeMarkers.length; c++) {
+        if (freezeMarkers[c].markerType === "green") green++;
+        else yellow++;
+    }
+    if (els.counts) {
+        els.counts.textContent = "Y:" + yellow + " G:" + green + " R:" + loopMarkers.length +
+            (duration > 0 ? " \u00b7 " + duration.toFixed(1) + "s" : "");
+    }
+
+    var stale = els.strip.querySelectorAll(".mdSpan, .mdTick");
+    for (var s = 0; s < stale.length; s++) stale[s].parentNode.removeChild(stale[s]);
+
+    if (duration <= 0) return;
+
+    function place(marker, klass) {
+        var start = Number(marker.start);
+        var end = Number(marker.end);
+        if (!isFinite(start) || !isFinite(end) || end < start) return;
+        var leftPct = Math.max(0, Math.min(100, (start / duration) * 100));
+        var widthPct = Math.max(0.6, Math.min(100 - leftPct, ((end - start) / duration) * 100));
+        var span = document.createElement("div");
+        span.className = "mdSpan " + klass;
+        span.style.left = leftPct + "%";
+        span.style.width = widthPct + "%";
+        span.title = klass + " " + start.toFixed(2) + "-" + end.toFixed(2) +
+            " (crossAt " + (isFinite(Number(marker.crossAt)) ? Number(marker.crossAt).toFixed(2) : "?") + ")";
+        els.strip.appendChild(span);
+        if (isFinite(Number(marker.crossAt))) {
+            var tick = document.createElement("div");
+            tick.className = "mdTick";
+            tick.style.left = Math.max(0, Math.min(100, (Number(marker.crossAt) / duration) * 100)) + "%";
+            els.strip.appendChild(tick);
+        }
+    }
+    for (var f = 0; f < freezeMarkers.length; f++) {
+        place(freezeMarkers[f], freezeMarkers[f].markerType === "green" ? "green" : "yellow");
+    }
+    for (var r = 0; r < loopMarkers.length; r++) {
+        place(loopMarkers[r], "red");
+    }
+}
+
+function updateMarkerDebugPlayhead() {
+    if (!markerDebugOverlayEnabled()) return;
+    var els = markerDebugEls;
+    if (!els || !els.strip || !els.playhead) return;
+    var duration = markerDebugVideoDuration();
+    var t = 0;
+    try {
+        if (typeof videoId !== "undefined" && videoId && isFinite(Number(videoId.currentTime))) {
+            t = Number(videoId.currentTime);
+        }
+    } catch (e) { /* ignore */ }
+    if (duration > 0) {
+        els.playhead.style.left = Math.max(0, Math.min(100, (t / duration) * 100)) + "%";
+    }
+    var cur = duration > 0 ? (t / duration) * 100 : -1;
+    var spans = els.strip.querySelectorAll(".mdSpan");
+    for (var i = 0; i < spans.length; i++) {
+        var sp = spans[i];
+        var lp = parseFloat(sp.style.left) || 0;
+        var wp = parseFloat(sp.style.width) || 0;
+        if (cur >= lp - 0.01 && cur <= lp + wp + 0.01) sp.classList.add("active");
+        else sp.classList.remove("active");
+    }
+    if (els.state) {
+        els.state.textContent = "state: " + guidedPlaybackState +
+            " \u00b7 t=" + t.toFixed(2) +
+            " \u00b7 curFreeze=" + currentFreezeFrameIdx +
+            " \u00b7 seg=" + segmentTargetFreezeIdx;
+    }
+}
+
+var MARKER_DEBUG_FLASH_EVENTS = {
+    freeze_span_stop: "freeze stop",
+    marker_pause_fired: "freeze stop",
+    red_loop_entered: "loop",
+    red_loop_repeat: "loop repeat",
+    invisible_leapfrog_during_play: "leapfrog",
+    color_card_safety_freeze_backstop: "freeze backstop",
+    guided_event_trigger: "reached",
+};
+
+function markerDebugFlash(klass, text) {
+    var els = markerDebugEls;
+    if (!els || !els.flash) return;
+    els.flash.className = klass || "info";
+    els.flash.textContent = text || "";
+    void els.flash.offsetWidth; // force reflow so the transition replays
+    els.flash.classList.add("show");
+    if (markerDebugFlashTimer) clearTimeout(markerDebugFlashTimer);
+    markerDebugFlashTimer = setTimeout(function () {
+        if (markerDebugEls && markerDebugEls.flash) markerDebugEls.flash.classList.remove("show");
+    }, 900);
+}
+
+function pushMarkerDebugEvent(out) {
+    if (!markerDebugOverlayEnabled()) return;
+    var els = ensureMarkerDebugOverlay();
+    if (!els || !out || typeof out !== "object") return;
+    var ev = out.event || "";
+    var type = out.markerType || null;
+    var colorClass = type === "green" ? "green"
+        : (type === "red" ? "red" : (type === "yellow" ? "yellow" : "info"));
+
+    if (els.state) {
+        els.state.textContent = "state: " + (out.mode || guidedPlaybackState) +
+            (out.currentTime != null ? " \u00b7 t=" + out.currentTime : "") +
+            " \u00b7 seg=" + (out.segmentTargetFreezeIndex != null ? out.segmentTargetFreezeIndex : segmentTargetFreezeIdx);
+    }
+    if (els.last) {
+        var lt = out.currentTime != null ? out.currentTime
+            : (out.chosenStopPoint != null ? out.chosenStopPoint : "");
+        els.last.textContent = "last: " + (ev || "?") + (type ? " [" + type + "]" : "") +
+            (lt !== "" ? " @" + lt + "s" : "");
+    }
+    if (Object.prototype.hasOwnProperty.call(MARKER_DEBUG_FLASH_EVENTS, ev)) {
+        var label = (type ? type.toUpperCase() + " " : "") + MARKER_DEBUG_FLASH_EVENTS[ev];
+        var at = out.currentTime != null ? out.currentTime
+            : (out.chosenStopPoint != null ? out.chosenStopPoint
+                : (out.chosenResumePoint != null ? out.chosenResumePoint : null));
+        if (at != null) label += " @" + at + "s";
+        markerDebugFlash(colorClass, label);
+    }
+}
+
 /** Unified freeze markers (yellow + green), sorted by crossAt. */
 var freezeMarkers = [];
 /** Loop markers (red), sorted by crossAt. */
@@ -457,6 +710,7 @@ function logPlayerMarkerDebug(payload) {
         for (var p in payload) { if (Object.prototype.hasOwnProperty.call(payload, p)) out[p] = payload[p]; }
     }
     console.log("[player-debug]", JSON.stringify(out));
+    try { pushMarkerDebugEvent(out); } catch (debugErr) { /* overlay must never break playback */ }
 }
 
 function isTensegrityLessonPlayerDebug() {
@@ -1611,6 +1865,20 @@ function initializePlayer(videoUrl, timelineArray) {
         });
     } catch (diagErr) { /* diagnostics must never break init */ }
 
+    // Marker debug overlay (notifier + timeline strip), only when ?debugMarkers=1 / window.DEBUG_MARKERS.
+    if (markerDebugOverlayEnabled()) {
+        try {
+            ensureMarkerDebugOverlay();
+            renderMarkerDebugStrip();
+            if (typeof videoId !== "undefined" && videoId && !videoId.__markerDebugMetaBound) {
+                videoId.addEventListener("loadedmetadata", function () {
+                    try { renderMarkerDebugStrip(); } catch (e) { /* ignore */ }
+                });
+                videoId.__markerDebugMetaBound = true;
+            }
+        } catch (overlayErr) { /* overlay must never break init */ }
+    }
+
     setGuidedPlaybackState("idle", "initialize");
 
     // Runtime-owned click wiring so in-video clicks always reach nextSlide()
@@ -1680,6 +1948,10 @@ function initializePlayer(videoUrl, timelineArray) {
     // Listener to pause video when reach specified time and implements looping // FindMe4
     videoId.addEventListener("timeupdate", function(){
         var t = this.currentTime;
+
+        if (markerDebugOverlayEnabled()) {
+            try { updateMarkerDebugPlayhead(); } catch (phErr) { /* overlay must never break playback */ }
+        }
 
         if (CONTINUOUS_VIDEO_PLAYBACK) {
             syncInteractiveRuntimeToCurrentTime(null);
