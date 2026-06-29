@@ -258,6 +258,7 @@ var MARKER_DEBUG_FLASH_EVENTS = {
     red_loop_entered: "loop",
     red_loop_repeat: "loop repeat",
     invisible_leapfrog_during_play: "leapfrog",
+    green_passthrough_leapfrog: "leapfrog (keep playing)",
     color_card_safety_freeze_backstop: "freeze backstop",
     guided_event_trigger: "reached",
 };
@@ -567,10 +568,15 @@ function syncInteractiveRuntimeToCurrentTime(reason) {
 
     var freezeAtTime = findFreezeFrameIndexAtTime(t);
     var prevFreeze = findPreviousFreezeMarkerIndexBeforeTime(t + 0.001);
-    var nextTarget = prevFreeze < 0 ? findFirstFreezeMarkerIndexAfterTime(t) : (prevFreeze + 1);
+    // Segment target is the next genuine STOP (yellow); greens are pass-throughs, never targets.
+    var nextTarget = findFirstStopMarkerIndexAfterTime(t);
 
     if (paused) {
-        var pauseIdx = freezeAtTime >= 0 ? freezeAtTime : prevFreeze;
+        // Attribute the paused state to the nearest YELLOW stop (greens never pause), so a manual
+        // or edge pause near a green doesn't mislabel runtime state.
+        var pauseIdx = (freezeAtTime >= 0 && isStopFreezeMarker(freezeMarkers[freezeAtTime]))
+            ? freezeAtTime
+            : findPreviousStopMarkerIndexBeforeTime(t + 0.001);
         if (pauseIdx >= 0) {
             pausedAtFreezeMarkerIdx = pauseIdx;
             currentFreezeFrameIdx = pauseIdx;
@@ -990,7 +996,11 @@ function isTimeInsideFreezeMarkerCardSpan(t) {
     return false;
 }
 
-/** Leapfrog red control cards only — yellow/green freeze spans use freeze-crossing + resolvePostFreezeStopTime. */
+/**
+ * Leapfrog NON-STOP control cards (red loops + green pass-throughs). Yellow cards are genuine
+ * stops and are handled via freeze-crossing + resolvePostFreezeStopTime (pause), so they are
+ * intentionally NOT skipped here.
+ */
 function ensureSeekPastRedCardRangesOnly(t) {
     var eps = COLOR_CARD_RANGE_SKIP_EPS_SEC;
     var cur = Number(t);
@@ -1002,7 +1012,7 @@ function ensureSeekPastRedCardRangesOnly(t) {
         var moved = false;
         for (var i = 0; i < ranges.length; i++) {
             var r = ranges[i];
-            if (r.markerType !== "red") continue;
+            if (r.markerType === "yellow") continue; // yellow = stop, never leapfrogged
             if (cur >= r.start - 1e-4 && cur < r.end + eps) {
                 cur = r.end + eps;
                 moved = true;
@@ -1015,23 +1025,38 @@ function ensureSeekPastRedCardRangesOnly(t) {
 }
 
 /**
- * During guided play, only red control cards are skipped invisibly. Yellow/green freeze spans
- * end the segment via tryCommitSegmentTargetFreezeStop (post-marker resolve + pause).
+ * During guided play, NON-STOP control cards (red loops + green pass-throughs) are skipped
+ * invisibly so playback keeps rolling. Yellow freeze spans are genuine stops and are handled by
+ * tryCommitSegmentTargetFreezeStop / the guided-event trigger (post-marker resolve + pause).
+ * NOTE: red ALSO triggers a loop via the guided-event path; this only handles the card skip when
+ * the playhead lands inside a non-stop card between event ticks.
  */
 function applyRedCardLeapfrogDuringGuidedPlay(videoEl, t) {
     if (!videoEl || !isFinite(Number(t))) return t;
     if (!isPlayingSegmentForward()) return t;
-    var past = ensureSeekPastRedCardRangesOnly(Number(t));
-    if (Math.abs(past - Number(t)) > 1e-5) {
+    var cur = Number(t);
+    // Identify the non-stop card the playhead is sitting in (for accurate logging/overlay flash).
+    var ranges = getColorCardRangesFromWindow();
+    var hitType = null;
+    for (var i = 0; i < ranges.length; i++) {
+        var r = ranges[i];
+        if (r.markerType === "yellow") continue;
+        if (cur >= r.start - 1e-4 && cur < r.end + COLOR_CARD_RANGE_SKIP_EPS_SEC) {
+            hitType = r.markerType;
+            break;
+        }
+    }
+    var past = ensureSeekPastRedCardRangesOnly(cur);
+    if (Math.abs(past - cur) > 1e-5) {
         videoEl.currentTime = past;
         advanceMarkerCursorToTime(past);
         logPlayerMarkerDebug({
-            event: "invisible_leapfrog_during_play",
+            event: hitType === "green" ? "green_passthrough_leapfrog" : "invisible_leapfrog_during_play",
             leapfrogApplied: true,
             leapfrogHelperUsed: true,
             chosenResumeTarget: Math.round(past * 1000) / 1000,
-            previousTime: Math.round(Number(t) * 1000) / 1000,
-            markerType: "red",
+            previousTime: Math.round(cur * 1000) / 1000,
+            markerType: hitType || "red",
         });
         return past;
     }
@@ -1040,20 +1065,21 @@ function applyRedCardLeapfrogDuringGuidedPlay(videoEl, t) {
 
 /**
  * Per-tick color-card safety net during guided play (backstop for coarse timeupdate jumps):
- *  - red control cards: skip past invisibly (delegates to applyRedCardLeapfrogDuringGuidedPlay).
- *  - yellow/green freeze cards: if the playhead landed INSIDE a freeze span (not caught by the
+ *  - red + green control cards: skip past invisibly (delegates to applyRedCardLeapfrogDuringGuidedPlay).
+ *  - YELLOW freeze cards only: if the playhead landed INSIDE a yellow span (not caught by the
  *    crossing path in tryCommitSegmentTargetFreezeStop), commit the freeze stop now so the card
  *    never renders. Pause + seek past via applyFreezeMarkerStopAtCrossing.
- * Returns the (possibly red-advanced) time; when a freeze stop fires, currentTime is moved to the
+ *  - green spans are pass-throughs: never pause here (the leapfrog above keeps playback rolling).
+ * Returns the (possibly leapfrogged) time; when a freeze stop fires, currentTime is moved to the
  * post-card stop target, so the caller's currentTime-change guard short-circuits the tick.
  */
 function applyColorCardSafetyDuringGuidedPlay(videoEl, t) {
     if (!videoEl || !isFinite(Number(t))) return t;
     if (!isPlayingSegmentForward()) return t;
 
-    var afterRed = applyRedCardLeapfrogDuringGuidedPlay(videoEl, t);
-    if (Math.abs(Number(afterRed) - Number(t)) > 1e-5) {
-        return afterRed;
+    var afterLeapfrog = applyRedCardLeapfrogDuringGuidedPlay(videoEl, t);
+    if (Math.abs(Number(afterLeapfrog) - Number(t)) > 1e-5) {
+        return afterLeapfrog;
     }
 
     if (guidedPlaybackState !== "playing_to_next_freeze") return t;
@@ -1061,6 +1087,7 @@ function applyColorCardSafetyDuringGuidedPlay(videoEl, t) {
     for (var i = 0; i < freezeMarkers.length; i++) {
         var mk = freezeMarkers[i];
         if (!mk) continue;
+        if (!isStopFreezeMarker(mk)) continue; // green pass-through never pauses here
         var s = Number(mk.start);
         var e = Number(mk.end);
         if (!isFinite(s) || !isFinite(e)) continue;
@@ -1172,6 +1199,69 @@ function findFirstFreezeMarkerIndexAfterTime(t) {
         if (Number(freezeMarkers[i].crossAt) > Number(t) + 1e-4) return i;
     }
     return -1;
+}
+
+/**
+ * Only YELLOW markers are genuine stops. GREEN markers are pass-throughs: leapfrog the card and
+ * keep playing (they remain in freezeMarkers as red loop anchors and future menu anchors).
+ */
+function isStopFreezeMarker(mk) {
+    return !!(mk && mk.markerType === "yellow");
+}
+
+/** Next genuine STOP (yellow) boundary strictly after playhead time — the real segment target. */
+function findFirstStopMarkerIndexAfterTime(t) {
+    if (!isFinite(Number(t))) return -1;
+    for (var i = 0; i < freezeMarkers.length; i++) {
+        if (Number(freezeMarkers[i].crossAt) > Number(t) + 1e-4 && isStopFreezeMarker(freezeMarkers[i])) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/** Nearest STOP (yellow) marker index at or before t — used to attribute paused state. */
+function findPreviousStopMarkerIndexBeforeTime(t) {
+    var best = -1;
+    for (var i = 0; i < freezeMarkers.length; i++) {
+        if (freezeMarkers[i].crossAt < Number(t) - 1e-4) {
+            if (isStopFreezeMarker(freezeMarkers[i])) best = i;
+        } else {
+            break;
+        }
+    }
+    return best;
+}
+
+/**
+ * GREEN pass-through: leapfrog the green card and KEEP PLAYING (no pause, no state change).
+ * Advances the guided cursor toward the active yellow stop target so the next event is picked up.
+ */
+function handleGreenPassthroughEvent(videoEl, ev, prev, t) {
+    var mk = ev && ev.marker ? ev.marker : null;
+    if (!mk) return;
+    var past = ensureSeekPastColorCardRanges(Number(mk.end) + COLOR_CARD_RANGE_SKIP_EPS_SEC);
+    logPlayerMarkerDebug({
+        event: "green_passthrough_leapfrog",
+        leapfrogApplied: true,
+        leapfrogHelperUsed: true,
+        markerType: "green",
+        markerSemantics: "freeze",
+        markerIndex: ev.freezeMarkerIndex,
+        previousTime: isFinite(Number(prev)) ? Math.round(Number(prev) * 1000) / 1000 : null,
+        chosenStopPoint: isFinite(Number(mk.crossAt)) ? Math.round(Number(mk.crossAt) * 1000) / 1000 : null,
+        chosenResumeTarget: isFinite(Number(past)) ? Math.round(Number(past) * 1000) / 1000 : null,
+        clickAction: "green_keep_playing",
+    });
+    if (isFinite(Number(past)) && Number(past) > Number(videoEl.currentTime)) {
+        videoEl.currentTime = Number(past);
+    }
+    advanceMarkerCursorToTime(Number(videoEl.currentTime));
+    if (segmentTargetFreezeIdx >= 0 && segmentTargetFreezeIdx < freezeMarkers.length) {
+        guidedTargetEventIdx = findNextSegmentPlaybackEventIdx(Number(videoEl.currentTime), segmentTargetFreezeIdx);
+    }
+    lastPlaybackTimeForMarkerCheck = Number(videoEl.currentTime);
+    syncLegacyYellowMarkerAliases();
 }
 
 function buildUnifiedPlaybackEvents() {
@@ -1416,8 +1506,10 @@ function resolveActiveSegmentTargetFreezeIdx(prev, t) {
     }
     if (guidedPlaybackState !== "playing_to_next_freeze") return -1;
     var fromTime = isFinite(Number(prev)) ? Number(prev) : (isFinite(Number(t)) ? Number(t) : 0);
-    var idx = findFirstFreezeMarkerIndexAfterTime(fromTime);
-    if (idx < 0 && nextFreezeMarkerIdx >= 0 && nextFreezeMarkerIdx < freezeMarkers.length) {
+    // Target the next genuine STOP (yellow); greens are pass-throughs and never segment targets.
+    var idx = findFirstStopMarkerIndexAfterTime(fromTime);
+    if (idx < 0 && nextFreezeMarkerIdx >= 0 && nextFreezeMarkerIdx < freezeMarkers.length &&
+        isStopFreezeMarker(freezeMarkers[nextFreezeMarkerIdx])) {
         idx = nextFreezeMarkerIdx;
     }
     return idx;
@@ -1446,6 +1538,15 @@ function tryCommitSegmentTargetFreezeStop(videoEl, prev, t) {
     }
     var mk = freezeMarkers[idx];
     if (!mk) return false;
+    // Defensive: only YELLOW is a genuine stop. If the target somehow resolved to a green
+    // pass-through, re-target the next yellow and let the leapfrog paths skip the green.
+    if (!isStopFreezeMarker(mk)) {
+        var ny = findFirstStopMarkerIndexAfterTime(Number(t));
+        segmentTargetFreezeIdx = ny;
+        nextFreezeFrameIdx = ny;
+        if (ny >= 0) guidedTargetEventIdx = findNextSegmentPlaybackEventIdx(Number(t), ny);
+        return false;
+    }
     var p = Number(prev);
     var c = Number(t);
     var spanStart = Number(mk.start);
@@ -1499,12 +1600,14 @@ function beginPlayToNextFreezeFrame(reason) {
     if (fromIdx < 0) {
         fromIdx = findPreviousFreezeMarkerIndexBeforeTime(t + 0.001);
     }
-    var nextIdx = fromIdx < 0 ? findFirstFreezeMarkerIndexAfterTime(t) : (fromIdx + 1);
+    // Segment target is the next genuine STOP (yellow). Greens between here and there are
+    // pass-throughs that leapfrog and keep playing; reds between trigger loops.
+    var nextIdx = findFirstStopMarkerIndexAfterTime(t);
     currentFreezeFrameIdx = fromIdx;
     pausedAtFreezeMarkerIdx = -1;
     syncLegacyYellowMarkerAliases();
 
-    if (nextIdx >= freezeMarkers.length) {
+    if (nextIdx < 0 || nextIdx >= freezeMarkers.length) {
         segmentTargetFreezeIdx = -1;
         nextFreezeFrameIdx = -1;
         guidedTargetEventIdx = -1;
@@ -2057,8 +2160,13 @@ function initializePlayer(videoUrl, timelineArray) {
                             segmentTargetFreezeIndex: segmentTargetFreezeIdx,
                         });
                         if (ev.kind === "freeze") {
-                            pauseFired = true;
-                            applyFreezeMarkerStopAtCrossing(this, ev.marker, ev.freezeMarkerIndex, prev, t, "autoplay_freeze_crossing");
+                            if (isStopFreezeMarker(ev.marker)) {
+                                pauseFired = true;
+                                applyFreezeMarkerStopAtCrossing(this, ev.marker, ev.freezeMarkerIndex, prev, t, "autoplay_freeze_crossing");
+                                return;
+                            }
+                            // green = pass-through: leapfrog the card and keep playing.
+                            handleGreenPassthroughEvent(this, ev, prev, t);
                             return;
                         }
                         if (ev.kind === "loop") {
@@ -2078,8 +2186,13 @@ function initializePlayer(videoUrl, timelineArray) {
                             segmentTargetFreezeIndex: segmentTargetFreezeIdx,
                         });
                         if (ev.kind === "freeze") {
-                            pauseFired = true;
-                            applyFreezeMarkerStopAtCrossing(this, ev.marker, ev.freezeMarkerIndex, prev, t, "autoplay_freeze_stale_recover");
+                            if (isStopFreezeMarker(ev.marker)) {
+                                pauseFired = true;
+                                applyFreezeMarkerStopAtCrossing(this, ev.marker, ev.freezeMarkerIndex, prev, t, "autoplay_freeze_stale_recover");
+                                return;
+                            }
+                            // green = pass-through: leapfrog the card and keep playing.
+                            handleGreenPassthroughEvent(this, ev, prev, t);
                             return;
                         }
                         if (ev.kind === "loop") {
@@ -2355,9 +2468,9 @@ function skipToNextFreezeStopOnClick(reason, clickedElement) {
         ? Number(videoId.currentTime) : 0;
     var idx = (segmentTargetFreezeIdx >= 0 && segmentTargetFreezeIdx < freezeMarkers.length)
         ? segmentTargetFreezeIdx
-        : findFirstFreezeMarkerIndexAfterTime(nowT);
+        : findFirstStopMarkerIndexAfterTime(nowT);
     if (idx < 0 || idx >= freezeMarkers.length) {
-        // No freeze ahead — let it keep playing to the end.
+        // No yellow stop ahead — let it keep playing to the end.
         logPlayerMarkerDebug({
             event: "click_skip_to_next_stop",
             clickBranchTaken: "no_freeze_ahead_play_through",
