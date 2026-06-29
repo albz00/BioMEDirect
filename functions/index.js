@@ -527,6 +527,40 @@ async function loadOrderedChapterTitles(lessonId) {
     .filter(Boolean);
 }
 
+/**
+ * Like loadOrderedChapterTitles, but keeps each title paired with its source menuId
+ * (e.g. "menu2") so an AI 1-based bestChapterIndex can be resolved back to a menu link.
+ * @param {string} lessonId
+ * @return {Promise<Array<{ menuId: string, title: string }>>} ordered chapters
+ */
+async function loadOrderedChaptersWithMenuIds(lessonId) {
+  const metaDoc = await db.collection("lessonMetadata").doc(lessonId).get();
+  if (!metaDoc.exists) return [];
+  const meta = metaDoc.data() || {};
+  const displayMap = meta.chapterDisplayNames || {};
+  const menuLabels = meta.chapterMenuLabels || {};
+  const titleFor = (id) => {
+    if (displayMap[id] != null && String(displayMap[id]).trim() !== "") return String(displayMap[id]).trim();
+    if (menuLabels[id] != null && String(menuLabels[id]).trim() !== "") return String(menuLabels[id]).trim();
+    return String(id).trim();
+  };
+
+  let orderedKeys;
+  if (Array.isArray(meta.chapterOrder) && meta.chapterOrder.length > 0) {
+    orderedKeys = meta.chapterOrder.map((m) => String(m).trim()).filter(Boolean);
+  } else {
+    orderedKeys = Object.keys(displayMap).sort((a, b) => {
+      const na = parseInt(String(a).replace(/\D+/g, ""), 10);
+      const nb = parseInt(String(b).replace(/\D+/g, ""), 10);
+      if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
+      return String(a).localeCompare(String(b));
+    });
+  }
+  return orderedKeys
+    .map((menuId) => ({ menuId, title: titleFor(menuId) }))
+    .filter((c) => c.menuId && c.title);
+}
+
 function getVideoStreamInfo(video) {
   return new Promise((resolve) => {
     const info = {
@@ -2423,6 +2457,309 @@ async function runAiChapterMappingForEventIndexes(lessonId, eventIndexesZeroBase
       manualReviewCount,
       model: cfg.model,
       resultsByEventIndex: sanitizeAiChapterMappingResultsForClient(resultsByEventIndex),
+      errors,
+      results,
+      ok: !allFailed,
+      processed: mappedCount,
+      reason: allFailed ? "all_events_failed" : undefined,
+    };
+  } finally {
+    if (localPath && fs.existsSync(localPath)) {
+      try {
+        fs.unlinkSync(localPath);
+      } catch (e) { /* ignore */ }
+    }
+  }
+}
+
+/**
+ * Up to 3 frames around a green title card (greenStart / greenEnd / contentStart).
+ */
+function pickRepresentativeTimesForGreenEvent(ev, durationSec) {
+  const gs = ev.greenStart != null ? ev.greenStart : ev.startTime;
+  const ge = ev.greenEnd != null ? ev.greenEnd : ev.endTime;
+  const cs = ev.contentStart != null ? ev.contentStart : ge;
+  const mid = gs + Math.max(0, (ge - gs) / 2);
+  const picks = [];
+  const seen = new Set();
+  const maxT = Math.max(0, durationSec - 0.02);
+  const add = (t, label) => {
+    const x = Math.max(0, Math.min(maxT, t));
+    const k = Math.round(x * 1000);
+    if (!seen.has(k)) {
+      seen.add(k);
+      picks.push({ label, t: x });
+    }
+  };
+  add(gs, "greenStart");
+  if (picks.length < 3) add(mid, "midGreen");
+  if (picks.length < 3) add(ge, "greenEnd");
+  if (picks.length < 3) add(cs, "contentStart");
+  return picks.slice(0, 3);
+}
+
+/** Post-card seek time for a green event (start of instructional content after the card). */
+function greenEventSeekTime(ev) {
+  if (!ev) return null;
+  if (ev.contentStart != null && Number.isFinite(Number(ev.contentStart))) return Math.round(Number(ev.contentStart) * 1000) / 1000;
+  if (ev.greenEnd != null && Number.isFinite(Number(ev.greenEnd))) return Math.round(Number(ev.greenEnd) * 1000) / 1000;
+  if (ev.endTime != null && Number.isFinite(Number(ev.endTime))) return Math.round(Number(ev.endTime) * 1000) / 1000;
+  return null;
+}
+
+/** Merge aiChapterMapping into lesson greenDetection without dropping other greenDetection fields. */
+async function mergeLessonGreenAiChapterMapping(lessonId, patch) {
+  const ref = db.collection("lessons").doc(lessonId);
+  const snap = await ref.get();
+  const prevGd = snap.exists ? { ...((snap.data() || {}).greenDetection || {}) } : {};
+  prevGd.aiChapterMapping = { ...(prevGd.aiChapterMapping || {}), ...patch };
+  await ref.set({ greenDetection: prevGd }, { merge: true });
+}
+
+/**
+ * Build the menu->green seek mapping from per-green AI results. For each menuId we keep the
+ * single highest-confidence green match. Greens with no confident chapter remain pass-through only.
+ * @return {object} byMenuId map { menu2: { greenEventIndex, seekTime, matchedTitle, menuLabel, confidence, needsManualReview, confirmed } }
+ */
+function buildGreenMenuMappingFromResults({ resultsByEventIndex, greenEvents, chapters }) {
+  const byMenuId = {};
+  if (!resultsByEventIndex || typeof resultsByEventIndex !== "object") return byMenuId;
+  for (const key of Object.keys(resultsByEventIndex)) {
+    const i = parseInt(key, 10);
+    if (!Number.isFinite(i)) continue;
+    const r = resultsByEventIndex[key];
+    if (!r || typeof r.bestChapterIndex !== "number") continue;
+    const ch = chapters[r.bestChapterIndex - 1];
+    if (!ch || !ch.menuId) continue;
+    const ev = greenEvents[i];
+    if (!ev) continue;
+    const seekTime = greenEventSeekTime(ev);
+    if (seekTime == null) continue;
+    const confidence = Number.isFinite(Number(r.confidence)) ? Number(r.confidence) : 0;
+    const entry = {
+      greenEventIndex: i,
+      seekTime,
+      matchedTitle: r.matchedTitle != null ? r.matchedTitle : ch.title,
+      menuLabel: ch.title,
+      confidence: Math.round(confidence * 1000) / 1000,
+      needsManualReview: r.needsManualReview === true,
+      confirmed: false,
+    };
+    const prev = byMenuId[ch.menuId];
+    if (!prev || entry.confidence > prev.confidence) byMenuId[ch.menuId] = entry;
+  }
+  return byMenuId;
+}
+
+/** Return a copy of greenStopMarkers annotated with menuId/menuLink/confirmed from byMenuId. */
+function annotateGreenStopMarkersWithMenuMapping(greenStopMarkers, byMenuId) {
+  const markers = Array.isArray(greenStopMarkers) ? greenStopMarkers.map((m) => ({ ...m })) : [];
+  for (const m of markers) {
+    delete m.menuId;
+    delete m.menuLink;
+    delete m.menuConfirmed;
+  }
+  const byEventIndex = {};
+  for (const menuId of Object.keys(byMenuId || {})) {
+    const e = byMenuId[menuId];
+    if (!e || !Number.isFinite(Number(e.greenEventIndex))) continue;
+    byEventIndex[Number(e.greenEventIndex)] = { menuId, ...e };
+  }
+  for (const m of markers) {
+    const idx = Number(m.markerIndex) - 1; // markerIndex is 1-based, aligned to greenEvents order
+    const map = byEventIndex[idx];
+    if (map) {
+      m.menuId = map.menuId;
+      m.menuLink = map.menuLabel != null ? map.menuLabel : map.matchedTitle;
+      m.menuConfirmed = map.confirmed === true;
+    }
+  }
+  return markers;
+}
+
+/**
+ * AI-map GREEN title cards to chapters (vision + structured JSON), then build a menu->green seek
+ * mapping. Mirrors runAiChapterMappingForEventIndexes (yellow) but never touches srcArray.
+ * @param {string} lessonId
+ * @param {number[]} greenEventIndexesZeroBased
+ * @param {{ customInstructions?: string }} [opts]
+ * @returns {Promise<object>}
+ */
+async function runAiChapterMappingForGreenEventIndexes(lessonId, greenEventIndexesZeroBased, opts) {
+  const cfg = getOpenAiConfig();
+  if (!cfg.enabled) {
+    return {
+      success: false,
+      ok: false,
+      lessonId,
+      reason: "ai_disabled",
+      message: "Set OPENAI_TITLE_MAPPING_ENABLED=true (Firebase Functions env).",
+    };
+  }
+  if (!isAiTitleMappingConfigured()) {
+    throw new HttpsError("failed-precondition", "OPENAI_API_KEY is not configured on the server.");
+  }
+
+  const customInstructions = opts && opts.customInstructions ? String(opts.customInstructions) : "";
+
+  const lessonSnap = await db.collection("lessons").doc(lessonId).get();
+  if (!lessonSnap.exists) {
+    throw new HttpsError("not-found", `Lesson not found: ${lessonId}`);
+  }
+  const lesson = lessonSnap.data();
+  const greenEvents = (lesson.greenDetection && Array.isArray(lesson.greenDetection.events) && lesson.greenDetection.events) ||
+    (Array.isArray(lesson.greenStopMarkers) ? lesson.greenStopMarkers : []) || [];
+  if (!greenEvents.length) {
+    return {
+      success: false,
+      ok: false,
+      lessonId,
+      reason: "no_green_events",
+      message: "No greenDetection.events / greenStopMarkers on lesson.",
+    };
+  }
+
+  const chapters = await loadOrderedChaptersWithMenuIds(lessonId);
+  if (!chapters.length) {
+    return {
+      success: false,
+      ok: false,
+      lessonId,
+      reason: "no_chapters",
+      message: "lessonMetadata chapterOrder / titles missing.",
+    };
+  }
+  const chapterTitles = chapters.map((c) => c.title);
+
+  const indexes = (greenEventIndexesZeroBased || [])
+    .map((x) => parseInt(String(x), 10))
+    .filter((i) => Number.isFinite(i) && i >= 0 && i < greenEvents.length);
+  if (!indexes.length) {
+    return {
+      success: false,
+      ok: false,
+      lessonId,
+      reason: "no_event_indexes",
+      message: "No valid green event indexes in range.",
+    };
+  }
+
+  let localPath = null;
+  const results = [];
+  const errors = [];
+
+  try {
+    const dl = await downloadLessonVideoToTemp(lessonId);
+    localPath = dl.localPath;
+    const durationSec = await getDuration(localPath);
+
+    for (const i of indexes) {
+      const ev = greenEvents[i];
+      try {
+        const times = pickRepresentativeTimesForGreenEvent(ev, durationSec);
+        const images = [];
+        for (const p of times) {
+          const b64 = extractPngBase64AtVideoTime(localPath, p.t);
+          if (b64) images.push({ label: p.label, base64Png: b64 });
+        }
+        if (!images.length) {
+          errors.push({ eventIndex: i, error: "frame_extraction_failed" });
+          continue;
+        }
+
+        const guessed = deterministicGuessChapterIndex1Based(i, chapterTitles.length);
+        const t0 = Date.now();
+        console.log("[greenChapterMapping] request", { lessonId, eventIndex: i, model: cfg.model, frameCount: images.length });
+
+        const ai = await callOpenAiChapterMatch({
+          chapterTitles,
+          images,
+          cardKind: "green",
+          customInstructions,
+          eventContext: {
+            eventIndex: i,
+            eventIndex1Based: i + 1,
+            greenStart: ev.greenStart != null ? ev.greenStart : ev.startTime,
+            greenEnd: ev.greenEnd != null ? ev.greenEnd : ev.endTime,
+            contentStart: ev.contentStart != null ? ev.contentStart : null,
+            deterministicGuessChapterIndex: guessed,
+            guessedTitle: chapterTitles[guessed - 1] || null,
+          },
+        });
+
+        const ms = Date.now() - t0;
+        console.log("[greenChapterMapping] response", {
+          lessonId,
+          eventIndex: i,
+          bestChapterIndex: ai.bestChapterIndex,
+          confidence: ai.confidence,
+          needsManualReview: ai.needsManualReview,
+          ms,
+        });
+
+        results.push({ eventIndex: i, model: cfg.model, ...ai });
+      } catch (err) {
+        console.error("[greenChapterMapping] event failed", { lessonId, eventIndex: i, err: err.message });
+        errors.push({ eventIndex: i, error: err.message || String(err) });
+      }
+    }
+
+    const gdSnap = (lessonSnap.data() || {}).greenDetection || {};
+    const aimSnap = gdSnap.aiChapterMapping || {};
+    const prevByIdx = { ...((aimSnap.resultsByEventIndex) || {}) };
+    const resultsByEventIndex = { ...prevByIdx };
+    for (const r of results) {
+      resultsByEventIndex[String(r.eventIndex)] = {
+        bestChapterIndex: r.bestChapterIndex,
+        matchedTitle: r.matchedTitle,
+        normalizedTitle: r.normalizedTitle,
+        confidence: r.confidence,
+        startAdjustmentSec: r.startAdjustmentSec,
+        endAdjustmentSec: r.endAdjustmentSec,
+        reason: r.reason,
+        needsManualReview: r.needsManualReview,
+        model: r.model,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+    }
+
+    await mergeLessonGreenAiChapterMapping(lessonId, {
+      version: 1,
+      lastRunAt: admin.firestore.FieldValue.serverTimestamp(),
+      model: cfg.model,
+      videoPath: dl.videoPath,
+      customInstructions: customInstructions || null,
+      resultsByEventIndex,
+      lastRunErrors: errors,
+    });
+
+    // Build menu->green seek mapping (highest-confidence green per menuId) and annotate markers.
+    const byMenuId = buildGreenMenuMappingFromResults({ resultsByEventIndex, greenEvents, chapters });
+    const annotatedMarkers = annotateGreenStopMarkersWithMenuMapping(lesson.greenStopMarkers, byMenuId);
+    await db.collection("lessons").doc(lessonId).set({
+      greenMenuMapping: {
+        version: 1,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        byMenuId,
+      },
+      greenStopMarkers: annotatedMarkers,
+    }, { merge: true });
+
+    const processedEventCount = indexes.length;
+    const mappedCount = results.length;
+    const manualReviewCount = results.filter((r) => r.needsManualReview === true).length;
+    const allFailed = mappedCount === 0 && errors.length > 0;
+
+    return {
+      success: !allFailed,
+      lessonId,
+      processedEventCount,
+      mappedCount,
+      manualReviewCount,
+      model: cfg.model,
+      chapters,
+      resultsByEventIndex: sanitizeAiChapterMappingResultsForClient(resultsByEventIndex),
+      greenMenuMapping: { byMenuId },
       errors,
       results,
       ok: !allFailed,
@@ -5701,6 +6038,105 @@ exports.mapYellowEventsToChaptersWithAI = onCall(
       idxs = events.map((_, i) => i);
     }
     return runAiChapterMappingForEventIndexes(lessonId, idxs);
+  }
+);
+
+/**
+ * Batch AI GREEN-to-menu mapping: matches detected green title cards to the lesson's existing
+ * chapter titles (vision), then persists a menu->green seek mapping. Optional eventIndexes
+ * (0-based green events; defaults to all) and customInstructions to steer the matcher.
+ * Never modifies srcArray.
+ */
+exports.mapGreenEventsToChaptersWithAI = onCall(
+  {
+    memory: "2GiB",
+    timeoutSeconds: 540,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Sign in required.");
+    }
+    const { lessonId, eventIndexes, customInstructions } = request.data || {};
+    if (!lessonId) {
+      throw new HttpsError("invalid-argument", "lessonId is required");
+    }
+
+    const lessonSnap = await db.collection("lessons").doc(lessonId).get();
+    if (!lessonSnap.exists) {
+      throw new HttpsError("not-found", `Lesson not found: ${lessonId}`);
+    }
+    const lsData = lessonSnap.data();
+    const greenEvents = (lsData.greenDetection && Array.isArray(lsData.greenDetection.events) && lsData.greenDetection.events) ||
+      (Array.isArray(lsData.greenStopMarkers) ? lsData.greenStopMarkers : []) || [];
+    let idxs;
+    if (Array.isArray(eventIndexes) && eventIndexes.length > 0) {
+      idxs = eventIndexes;
+    } else {
+      idxs = greenEvents.map((_, i) => i);
+    }
+    return runAiChapterMappingForGreenEventIndexes(lessonId, idxs, { customInstructions });
+  }
+);
+
+/**
+ * Persist the admin-reviewed green->menu mapping (after manual overrides / confirmations).
+ * Writes lessons/{lessonId}.greenMenuMapping.byMenuId and re-annotates greenStopMarkers.
+ * Does NOT touch srcArray or any detection data.
+ */
+exports.saveGreenMenuMapping = onCall(
+  {
+    memory: "256MiB",
+    timeoutSeconds: 60,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Sign in required.");
+    }
+    const { lessonId, byMenuId } = request.data || {};
+    if (!lessonId) {
+      throw new HttpsError("invalid-argument", "lessonId is required");
+    }
+    if (!byMenuId || typeof byMenuId !== "object") {
+      throw new HttpsError("invalid-argument", "byMenuId object is required");
+    }
+
+    const ref = db.collection("lessons").doc(lessonId);
+    const snap = await ref.get();
+    if (!snap.exists) {
+      throw new HttpsError("not-found", `Lesson not found: ${lessonId}`);
+    }
+    const lesson = snap.data();
+
+    // Sanitize: keep only well-formed entries; coerce numeric fields; drop sentinel values.
+    const clean = {};
+    for (const menuId of Object.keys(byMenuId)) {
+      const e = byMenuId[menuId] || {};
+      const greenEventIndex = parseInt(String(e.greenEventIndex), 10);
+      const seekTime = Number(e.seekTime);
+      if (!Number.isFinite(greenEventIndex) || greenEventIndex < 0) continue;
+      if (!Number.isFinite(seekTime)) continue;
+      clean[String(menuId)] = {
+        greenEventIndex,
+        seekTime: Math.round(seekTime * 1000) / 1000,
+        matchedTitle: e.matchedTitle != null ? String(e.matchedTitle) : null,
+        menuLabel: e.menuLabel != null ? String(e.menuLabel) : null,
+        confidence: Number.isFinite(Number(e.confidence)) ? Math.round(Number(e.confidence) * 1000) / 1000 : null,
+        needsManualReview: e.needsManualReview === true,
+        confirmed: e.confirmed === true,
+      };
+    }
+
+    const annotatedMarkers = annotateGreenStopMarkersWithMenuMapping(lesson.greenStopMarkers, clean);
+    await ref.set({
+      greenMenuMapping: {
+        version: 1,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        byMenuId: clean,
+      },
+      greenStopMarkers: annotatedMarkers,
+    }, { merge: true });
+
+    return { success: true, ok: true, lessonId, savedCount: Object.keys(clean).length, byMenuId: clean };
   }
 );
 

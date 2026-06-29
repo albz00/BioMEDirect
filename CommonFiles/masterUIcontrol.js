@@ -445,6 +445,10 @@ var freezeMarkers = [];
 var loopMarkers = [];
 /** Chronological playback guide: freeze stops and red loop triggers. */
 var playbackEvents = [];
+/** Confirmed green->menu mapping: { menuId: seekTimeSeconds }. Built from window.greenMenuMapping. */
+var menuGreenSeekByMenuId = {};
+/** The menu button id (e.g. "menu2") of the most recent menu-link click, for green seek routing. */
+var lastClickedMenuId = null;
 var nextFreezeMarkerIdx = 0;
 var nextPlaybackEventIdx = 0;
 var pausedAtFreezeMarkerIdx = -1;
@@ -500,6 +504,7 @@ function applyLessonMarkerGlobalsFromFirestoreData(data) {
     if (data.redDetection) window.redDetection = data.redDetection;
     if (Array.isArray(data.redScreenRanges)) window.redScreenRanges = data.redScreenRanges;
     if (Array.isArray(data.redStopMarkers)) window.redStopMarkers = data.redStopMarkers;
+    if (data.greenMenuMapping && typeof data.greenMenuMapping === "object") window.greenMenuMapping = data.greenMenuMapping;
     var hasYellow = (Array.isArray(window.yellowStopMarkers) && window.yellowStopMarkers.length > 0) ||
         (Array.isArray(window.yellowScreenRanges) && window.yellowScreenRanges.length > 0);
     var hasGreen = (Array.isArray(window.greenStopMarkers) && window.greenStopMarkers.length > 0) ||
@@ -1511,6 +1516,19 @@ function loadPlaybackMarkersFromWindow() {
         freezeMarkers[pf].insideRedLoop = isYellowInsideAnyRedLoop(freezeMarkers[pf]);
     }
 
+    // Build the confirmed green->menu seek lookup (only confirmed entries route a menu click).
+    menuGreenSeekByMenuId = {};
+    var gmm = w.greenMenuMapping && w.greenMenuMapping.byMenuId ? w.greenMenuMapping.byMenuId : null;
+    if (gmm && typeof gmm === "object") {
+        for (var mk in gmm) {
+            if (!Object.prototype.hasOwnProperty.call(gmm, mk)) continue;
+            var entry = gmm[mk];
+            if (!entry || entry.confirmed !== true) continue;
+            var seekT = Number(entry.seekTime);
+            if (isFinite(seekT)) menuGreenSeekByMenuId[mk] = seekT;
+        }
+    }
+
     playbackEvents = buildUnifiedPlaybackEvents();
     nextFreezeMarkerIdx = 0;
     nextPlaybackEventIdx = 0;
@@ -2275,6 +2293,16 @@ function initializePlayer(videoUrl, timelineArray) {
             });
             backBtn.__interactiveBackBound = true;
         }
+        // Record which menu button was clicked (capture phase, before per-lesson handlers set
+        // currentSlide) so updateVideoId can route a confirmed green->menu link to its timestamp.
+        var menuPage = document.getElementById("lessonMenuPage");
+        if (menuPage && !menuPage.__menuMapBound) {
+            menuPage.addEventListener("click", function (evt) {
+                var btn = evt && evt.target && evt.target.closest ? evt.target.closest("button[id^='menu']") : null;
+                lastClickedMenuId = btn && btn.id ? btn.id : null;
+            }, true);
+            menuPage.__menuMapBound = true;
+        }
     }
 
     videoId.addEventListener("play", function() {
@@ -2556,6 +2584,28 @@ function updateVideoId(play=true){ // FindMe3
                 warnedInvalidSlide[currentSlide] = true;
             }
             return;
+        }
+        // Confirmed green->menu mapping: jump this menu link to its matched green anchor and resume
+        // the normal marker logic. Takes priority over the temporary force-to-zero fallback. Links
+        // without a confirmed mapping fall through to the existing behavior (t=0) unchanged.
+        if (CONTINUOUS_VIDEO_PLAYBACK && lastClickedMenuId &&
+            Object.prototype.hasOwnProperty.call(menuGreenSeekByMenuId, lastClickedMenuId)) {
+            var greenSeek = Number(menuGreenSeekByMenuId[lastClickedMenuId]);
+            if (isFinite(greenSeek)) {
+                var routedMenuId = lastClickedMenuId;
+                lastClickedMenuId = null; // consume so unrelated entries don't reuse it
+                syncVideoSeekWithMarkerState(videoId, greenSeek, "menu_green_jump");
+                beginPlayToNextFreezeFrame("menu_green_jump");
+                logPlayerMarkerDebug({
+                    event: "menu_green_jump",
+                    reason: "confirmed_green_menu_mapping",
+                    menuId: routedMenuId,
+                    chosenResumePoint: Math.round(greenSeek * 1000) / 1000,
+                    clickAction: "menu_link_to_green_anchor",
+                });
+                try { videoId.play(); } catch (eGreen) { console.log(eGreen); }
+                return;
+            }
         }
         var forcedZeroStart = shouldApplyForceZeroForSlide(seg, currentSlide);
         if (forcedZeroStart) {

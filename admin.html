@@ -241,8 +241,13 @@
                                     <button type="button" id="copyFullPromptBtn" class="btn btn-primary btn-sm cursor-prompt-btn" title="Copy a full duration + yellow/green/red + timeline + error report to paste back into Cursor">Copy full report</button>
                                 </div>
                                 <div class="srcarray-editor-ai-row dev-only">
-                                    <button type="button" id="aiTitleMappingBtn" class="btn btn-secondary btn-sm" disabled title="Not active yet — green-to-menu AI mapping is Phase 2. Logic is retained but the action is disabled.">Run AI Title Mapping (Phase 2 — disabled)</button>
-                                    <p id="aiTitleMappingStatus" class="srcarray-editor-ai-status ai-mapping-idle" aria-live="polite">Disabled — coming in Phase 2</p>
+                                    <button type="button" id="aiTitleMappingBtn" class="btn btn-secondary btn-sm" title="Run GPT vision on the detected green title cards and match each to one of this lesson's chapter titles. Builds a menu→green seek mapping. Does not change the timeline.">Run AI green&rarr;menu mapping</button>
+                                    <button type="button" id="saveGreenMenuMappingBtn" class="btn btn-primary btn-sm" title="Save the reviewed/confirmed green→menu mapping so menu links jump to those timestamps at playback.">Save menu mapping</button>
+                                    <p id="aiTitleMappingStatus" class="srcarray-editor-ai-status ai-mapping-idle" aria-live="polite">Idle</p>
+                                    <label class="srcarray-editor-label srcarray-ai-instructions-label">
+                                        Matching instructions (optional)
+                                        <textarea id="aiMappingInstructions" class="srcarray-ai-instructions" rows="2" placeholder="e.g. The title text is the large word near the top of the green card; ignore subtitles."></textarea>
+                                    </label>
                                 </div>
                                 <div id="aiTitleMappingResults" class="srcarray-editor-ai-results dev-only" hidden></div>
                             </div>
@@ -308,20 +313,20 @@
                             </div>
                             <div id="greenMappingScaffoldWrap" class="green-mapping-scaffold dev-only" hidden>
                                 <details open>
-                                    <summary class="green-mapping-summary">Green Freeze Frames / Mapping (Phase 2 — disabled)</summary>
-                                    <p class="green-mapping-hint">Disabled — coming in Phase 2. Placeholder for mapping detected in-video green title frames to real menu titles. No edit actions are wired yet; the green-to-menu AI mapping is not active.</p>
+                                    <summary class="green-mapping-summary">Green &rarr; menu mapping (review &amp; confirm)</summary>
+                                    <p class="green-mapping-hint">Each detected green title card and the chapter the AI matched it to. Override the chapter with the dropdown, tick <strong>confirm</strong> for the ones you trust, then <strong>Save menu mapping</strong>. Confirmed rows make that menu link jump to the green's timestamp at playback; everything else still starts the lesson at the beginning. This never changes the timeline.</p>
                                     <div class="green-mapping-table-wrap">
                                         <table class="green-mapping-table">
                                             <thead>
                                                 <tr>
-                                                    <th>event</th>
+                                                    <th>green #</th>
                                                     <th>greenStart</th>
-                                                    <th>freezeTime</th>
-                                                    <th>detected in-video title</th>
-                                                    <th>menu title target</th>
-                                                    <th>mapping state</th>
-                                                    <th>actions</th>
-                                                    <th>notes</th>
+                                                    <th>seek<br><span class="th-sub">post-card</span></th>
+                                                    <th>AI matched title</th>
+                                                    <th>menu chapter</th>
+                                                    <th>conf.</th>
+                                                    <th>confirm</th>
+                                                    <th>reason</th>
                                                 </tr>
                                             </thead>
                                             <tbody id="greenMappingScaffoldTbody"></tbody>

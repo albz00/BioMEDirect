@@ -103,9 +103,11 @@ function extractResponsesOutputText(data) {
  * @param {string[]} params.chapterTitles - ordered chapter titles (index 0 = chapter 1)
  * @param {Array<{ label: string, base64Png: string }>} params.images - PNG base64 (no data URL prefix)
  * @param {object} params.eventContext - yellow/content timing and deterministic guess
+ * @param {string} [params.cardKind] - "yellow" (default) or "green"; only changes wording in the prompt
+ * @param {string} [params.customInstructions] - optional admin-supplied matching guidance
  * @return {Promise<object>} parsed JSON matching schema
  */
-async function callOpenAiChapterMatch({chapterTitles, images, eventContext}) {
+async function callOpenAiChapterMatch({chapterTitles, images, eventContext, cardKind, customInstructions}) {
   const {apiKey, model} = getOpenAiConfig();
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is not set");
@@ -115,7 +117,12 @@ async function callOpenAiChapterMatch({chapterTitles, images, eventContext}) {
       .map((t, i) => `${i + 1}. ${t}`)
       .join("\n");
 
-  const prompt = `You are helping map full-frame yellow TITLE CARD screens in an educational video to the correct chapter.
+  const cardColor = cardKind === "green" ? "green" : "yellow";
+  const customBlock = (customInstructions && String(customInstructions).trim())
+    ? `\n\nAdditional matching guidance from the administrator (follow it when it does not conflict with the rules below):\n${String(customInstructions).trim()}`
+    : "";
+
+  const prompt = `You are helping map full-frame ${cardColor} TITLE CARD screens in an educational video to the correct chapter.
 
 The ordered chapter list (use 1-based bestChapterIndex):
 ${listText}
@@ -124,11 +131,11 @@ Timing / detection context (seconds, approximate):
 ${JSON.stringify(eventContext, null, 2)}
 
 Instructions:
-- Look at the attached images (frames from around the yellow card / transition). Identify visible title text if any.
+- Look at the attached images (frames from around the ${cardColor} card / transition). Identify visible title text if any.
 - Pick exactly ONE bestChapterIndex that matches the title card text and ordering in the video.
 - If text is unreadable or ambiguous, set needsManualReview to true and confidence below 0.6.
-- startAdjustmentSec / endAdjustmentSec: optional small corrections (-0.5 to 0.5) to yellow boundaries if clearly justified; otherwise 0.
-- Do NOT invent chapters outside the list. bestChapterIndex must be between 1 and ${chapterTitles.length}.`;
+- startAdjustmentSec / endAdjustmentSec: optional small corrections (-0.5 to 0.5) to card boundaries if clearly justified; otherwise 0.
+- Do NOT invent chapters outside the list. bestChapterIndex must be between 1 and ${chapterTitles.length}.${customBlock}`;
 
   const content = [{type: "input_text", text: prompt}];
   for (const im of images || []) {

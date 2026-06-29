@@ -33,6 +33,8 @@ let currentSrcArrayLessonId = null;
 let currentChapterTitlesForEditor = [];
 /** Full detection payload last loaded into the editor, used by the Cursor prompt generators. */
 let currentDetectionDataForEditor = null;
+/** Ordered chapters paired with menuId ({menuId,title}), used by the green->menu mapping editor. */
+let currentGreenMappingChapters = [];
 /** Last Generate-source failure (from a pipeline_error response, a transport/internal catch, or persisted in Firestore). */
 let lastGenerateError = null;
 /** True when the deployed functions returned a timeline build older than the current all-marker model. */
@@ -1324,6 +1326,32 @@ async function getOrderedChapterTitlesForLesson(lessonId) {
         .filter(Boolean);
 }
 
+/** Like getOrderedChapterTitlesForLesson but keeps each title paired with its menuId. */
+async function getOrderedChaptersWithMenuIdsForLesson(lessonId) {
+    const metaDoc = await db.collection('lessonMetadata').doc(lessonId).get();
+    if (!metaDoc.exists) return [];
+    const meta = metaDoc.data() || {};
+    const displayMap = meta.chapterDisplayNames || {};
+    const menuLabels = meta.chapterMenuLabels || {};
+    const titleFor = (id) => {
+        if (displayMap[id] != null && String(displayMap[id]).trim() !== '') return String(displayMap[id]).trim();
+        if (menuLabels[id] != null && String(menuLabels[id]).trim() !== '') return String(menuLabels[id]).trim();
+        return String(id).trim();
+    };
+    let orderedKeys;
+    if (Array.isArray(meta.chapterOrder) && meta.chapterOrder.length > 0) {
+        orderedKeys = meta.chapterOrder.map((m) => String(m).trim()).filter(Boolean);
+    } else {
+        orderedKeys = Object.keys(displayMap).sort((a, b) => {
+            const na = parseInt(String(a).replace(/\D+/g, ''), 10);
+            const nb = parseInt(String(b).replace(/\D+/g, ''), 10);
+            if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
+            return String(a).localeCompare(String(b));
+        });
+    }
+    return orderedKeys.map((menuId) => ({ menuId, title: titleFor(menuId) })).filter((c) => c.menuId && c.title);
+}
+
 /** Opening row + rows with finite src_start/src_end and src_start < src_end (matches Cloud Functions). */
 function rowIncludedInPlayableTimeline(seg) {
     if (!seg) return false;
@@ -1349,6 +1377,7 @@ async function loadSrcArrayForEditor(lessonId) {
     const timelineReview = data.timelineReview || null;
     const yellowDetection = data.yellowDetection || null;
     const greenDetection = data.greenDetection || null;
+    const greenMenuMapping = data.greenMenuMapping || null;
     const redDetection = data.redDetection || null;
     const markerModelContext = data.markerModelContext || null;
     const yellowScreenEvents = data.yellowScreenEvents || null;
@@ -1366,6 +1395,7 @@ async function loadSrcArrayForEditor(lessonId) {
         timelineReview,
         yellowDetection,
         greenDetection,
+        greenMenuMapping,
         redDetection,
         markerModelContext,
         yellowScreenEvents,
@@ -1445,19 +1475,15 @@ function renderGreenDetectionPanels(greenDetection, showWhenEmpty = false) {
     const summaryPre = document.getElementById('greenDetectionSummaryPre');
     const eventsTbody = document.getElementById('greenDetectionEventsTbody');
     const rejectedPre = document.getElementById('greenDetectionRejectedPre');
-    const scaffoldWrap = document.getElementById('greenMappingScaffoldWrap');
-    const scaffoldTbody = document.getElementById('greenMappingScaffoldTbody');
-    if (!debugWrap || !summaryPre || !eventsTbody || !rejectedPre || !scaffoldWrap || !scaffoldTbody) return;
+    if (!debugWrap || !summaryPre || !eventsTbody || !rejectedPre) return;
 
     if (!showWhenEmpty && !greenDetection) {
         debugWrap.hidden = true;
-        scaffoldWrap.hidden = true;
         return;
     }
 
     const s = summarizeGreenDetection(greenDetection);
     debugWrap.hidden = false;
-    scaffoldWrap.hidden = false;
 
     summaryPre.textContent = JSON.stringify({
         candidateSpanCount: s.candidateSpanCount,
@@ -1489,25 +1515,88 @@ function renderGreenDetectionPanels(greenDetection, showWhenEmpty = false) {
     rejectedPre.textContent = s.rejectedSpans.length > 0
         ? JSON.stringify(s.rejectedSpans, null, 2)
         : '(no rejected green spans)';
+}
 
-    if (s.events.length > 0) {
-        scaffoldTbody.innerHTML = s.events.map((ev) => {
-            const greenStart = ev.greenStart != null ? ev.greenStart : ev.startTime;
-            const freezeTime = ev.freezeTime != null ? ev.freezeTime : greenStart;
-            return `<tr>
-                <td>${escapeHtmlMini(ev.eventIndex != null ? ev.eventIndex : '—')}</td>
-                <td>${escapeHtmlMini(formatFloatMaybe(greenStart))}</td>
-                <td>${escapeHtmlMini(formatFloatMaybe(freezeTime))}</td>
-                <td class="green-mapping-placeholder">Pending OCR/title-frame detection</td>
-                <td class="green-mapping-placeholder">Pending menu-title match</td>
-                <td class="green-mapping-placeholder">Scaffold only</td>
-                <td class="green-mapping-placeholder">Coming soon</td>
-                <td class="green-mapping-placeholder">Green can freeze + anchor mapping</td>
-            </tr>`;
-        }).join('');
-    } else {
-        scaffoldTbody.innerHTML = '<tr><td colspan="8" class="green-mapping-placeholder">No green events yet. Future title/menu mapping rows will appear here.</td></tr>';
+/**
+ * Editable green->menu mapping table. One row per detected green title card, showing the AI's
+ * matched chapter (if run) and an editable chapter dropdown + confirm checkbox. Reads/writes only
+ * the green->menu mapping; never touches the timeline.
+ * @param {object|null} greenDetection - lesson greenDetection (events + optional aiChapterMapping)
+ * @param {Array<{menuId:string,title:string}>} chapters - ordered chapters with menuIds
+ * @param {object|null} greenMenuMapping - persisted { byMenuId } mapping
+ */
+function renderGreenMenuMappingTable(greenDetection, chapters, greenMenuMapping) {
+    const wrap = document.getElementById('greenMappingScaffoldWrap');
+    const tbody = document.getElementById('greenMappingScaffoldTbody');
+    if (!wrap || !tbody) return;
+
+    currentGreenMappingChapters = Array.isArray(chapters) ? chapters : [];
+    const s = summarizeGreenDetection(greenDetection);
+    const events = s.events || [];
+    if (!greenDetection && events.length === 0) {
+        wrap.hidden = true;
+        tbody.innerHTML = '';
+        return;
     }
+    wrap.hidden = false;
+
+    const aiResults = (greenDetection && greenDetection.aiChapterMapping && greenDetection.aiChapterMapping.resultsByEventIndex) || {};
+    const byMenuId = (greenMenuMapping && greenMenuMapping.byMenuId) || {};
+    // Reverse lookup: greenEventIndex -> { menuId, confirmed }
+    const mappedByGreen = {};
+    Object.keys(byMenuId).forEach((menuId) => {
+        const e = byMenuId[menuId];
+        if (e && Number.isFinite(Number(e.greenEventIndex))) {
+            mappedByGreen[Number(e.greenEventIndex)] = { menuId, confirmed: e.confirmed === true };
+        }
+    });
+
+    if (events.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="green-mapping-placeholder">No green events detected. Generate source first, then run AI mapping.</td></tr>';
+        return;
+    }
+
+    const optionsHtml = (selectedMenuId) => {
+        let html = `<option value="">— none —</option>`;
+        currentGreenMappingChapters.forEach((c, idx) => {
+            const sel = c.menuId === selectedMenuId ? ' selected' : '';
+            html += `<option value="${escapeHtmlMini(c.menuId)}"${sel}>${idx + 1}. ${escapeHtmlMini(c.title)}</option>`;
+        });
+        return html;
+    };
+
+    tbody.innerHTML = events.map((ev, i) => {
+        const greenStart = ev.greenStart != null ? ev.greenStart : ev.startTime;
+        const greenEnd = ev.greenEnd != null ? ev.greenEnd : ev.endTime;
+        const seek = ev.contentStart != null ? ev.contentStart : greenEnd;
+        const ai = aiResults[String(i)] || null;
+        const aiTitle = ai && ai.matchedTitle != null ? ai.matchedTitle : '';
+        const aiConf = ai && Number.isFinite(Number(ai.confidence)) ? Number(ai.confidence) : null;
+        const aiReview = ai && ai.needsManualReview === true;
+        const reason = ai && ai.reason != null ? ai.reason : '';
+        // Selected chapter: existing confirmed/saved mapping wins; else AI's best pick.
+        let selectedMenuId = '';
+        let confirmed = false;
+        if (mappedByGreen[i]) {
+            selectedMenuId = mappedByGreen[i].menuId;
+            confirmed = mappedByGreen[i].confirmed;
+        } else if (ai && Number.isFinite(Number(ai.bestChapterIndex))) {
+            const ch = currentGreenMappingChapters[Number(ai.bestChapterIndex) - 1];
+            if (ch) selectedMenuId = ch.menuId;
+        }
+        const confLabel = aiConf != null ? aiConf.toFixed(2) : '—';
+        const confClass = aiReview ? ' green-mapping-review' : '';
+        return `<tr data-green-index="${i}" data-seek="${escapeHtmlMini(formatFloatMaybe(seek))}">
+            <td>${escapeHtmlMini(ev.eventIndex != null ? ev.eventIndex : (i + 1))}</td>
+            <td>${escapeHtmlMini(formatFloatMaybe(greenStart))}</td>
+            <td>${escapeHtmlMini(formatFloatMaybe(seek))}</td>
+            <td class="green-mapping-aititle">${aiTitle ? escapeHtmlMini(aiTitle) : '<span class="green-mapping-placeholder">not run</span>'}</td>
+            <td><select class="green-mapping-select" data-green-index="${i}">${optionsHtml(selectedMenuId)}</select></td>
+            <td class="${confClass.trim()}">${confLabel}${aiReview ? ' ⚠' : ''}</td>
+            <td><input type="checkbox" class="green-mapping-confirm" data-green-index="${i}" ${confirmed ? 'checked' : ''}></td>
+            <td class="green-mapping-reason">${reason ? escapeHtmlMini(reason) : '—'}</td>
+        </tr>`;
+    }).join('');
 }
 
 function buildGreenSummaryLineFromResponse(greenDetectionSummary) {
@@ -2080,6 +2169,7 @@ async function refreshSrcArrayEditor() {
         renderSrcArrayTable([], null, [], {});
         renderYellowEventsDebugPanel(null, null);
         renderGreenDetectionPanels(null, false);
+        renderGreenMenuMappingTable(null, [], null);
         renderRedDetectionPanel(null, false);
         renderMarkerModelContextPanel(null);
         if (statusEl) statusEl.textContent = '';
@@ -2095,6 +2185,7 @@ async function refreshSrcArrayEditor() {
             timelineReview,
             yellowDetection,
             greenDetection,
+            greenMenuMapping,
             redDetection,
             markerModelContext,
             yellowScreenEvents,
@@ -2103,6 +2194,7 @@ async function refreshSrcArrayEditor() {
             persistedGenerateError,
         } = await loadSrcArrayForEditor(selectedLessonId);
         const chapterTitles = await getOrderedChapterTitlesForLesson(selectedLessonId);
+        const chaptersWithMenuIds = await getOrderedChaptersWithMenuIdsForLesson(selectedLessonId);
         // Prefer an in-session error (just produced by Generate) but fall back to the persisted one so a
         // prior failure stays visible/reportable after a page refresh.
         const effectiveGenerateError = lastGenerateError || persistedGenerateError || null;
@@ -2128,6 +2220,7 @@ async function refreshSrcArrayEditor() {
         });
         renderYellowEventsDebugPanel(yellowDetection, yellowScreenEvents);
         renderGreenDetectionPanels(greenDetection, true);
+        renderGreenMenuMappingTable(greenDetection, chaptersWithMenuIds, greenMenuMapping);
         renderRedDetectionPanel(redDetection, true);
         renderMarkerModelContextPanel(markerModelContext);
         if (statusEl) {
@@ -2169,6 +2262,7 @@ async function refreshSrcArrayEditor() {
         renderSrcArrayTable([], null, [], {});
         renderYellowEventsDebugPanel(null, null);
         renderGreenDetectionPanels(null, false);
+        renderGreenMenuMappingTable(null, [], null);
         renderRedDetectionPanel(null, false);
         renderMarkerModelContextPanel(null);
         if (statusEl) statusEl.textContent = 'Error loading';
@@ -2457,10 +2551,7 @@ function setupSrcArrayEditorListeners() {
 
     const aiTitleMappingBtn = document.getElementById('aiTitleMappingBtn');
     if (aiTitleMappingBtn) {
-        // Phase 2 feature: keep the wiring/logic but disable the action for now.
-        aiTitleMappingBtn.disabled = true;
         aiTitleMappingBtn.addEventListener('click', async () => {
-            if (aiTitleMappingBtn.disabled) return;
             const resEl = document.getElementById('aiTitleMappingResults');
             if (!selectedLessonId) {
                 setAiTitleMappingStatus('failed', 'Select a lesson first');
@@ -2476,52 +2567,120 @@ function setupSrcArrayEditorListeners() {
             }
 
             setButtonLoading(aiTitleMappingBtn, true);
-            setAiTitleMappingStatus('running', 'Running…');
+            setAiTitleMappingStatus('running', 'Matching green title cards to chapters…');
             if (resEl) {
                 resEl.hidden = true;
                 resEl.innerHTML = '';
             }
 
             try {
-                const mapFn = functions.httpsCallable('mapYellowEventsToChaptersWithAI', {
+                const instrEl = document.getElementById('aiMappingInstructions');
+                const customInstructions = instrEl ? instrEl.value.trim() : '';
+                const mapFn = functions.httpsCallable('mapGreenEventsToChaptersWithAI', {
                     timeout: 540000,
                 });
-                const result = await mapFn({ lessonId: selectedLessonId });
+                const result = await mapFn({ lessonId: selectedLessonId, customInstructions });
                 const data = result.data || {};
 
                 if (data.success === false) {
-                    const msg = data.message || data.reason || 'AI title mapping failed';
+                    const msg = data.message || data.reason || 'Green→menu mapping failed';
                     setAiTitleMappingStatus('failed', msg);
-                    if (resEl) {
-                        resEl.innerHTML = `<p>${escapeHtmlAdmin(msg)}</p>`;
-                        resEl.hidden = false;
-                    }
-                    setStatus(`AI title mapping: ${msg}`, 'error');
+                    setStatus(`Green→menu mapping: ${msg}`, 'error');
                     return;
                 }
 
-                const line = `OK · processed ${data.processedEventCount}, mapped ${data.mappedCount}, manual review ${data.manualReviewCount}`;
+                const line = `OK · processed ${data.processedEventCount}, matched ${data.mappedCount}, review ${data.manualReviewCount}`;
                 setAiTitleMappingStatus('success', line);
-                renderAiTitleMappingResults(data);
-                setStatus('AI title mapping completed', 'success');
+                setStatus('Green→menu mapping completed — review & confirm below, then Save', 'success');
+                // Reload persisted greenMenuMapping + AI results into the editable table.
                 await refreshSrcArrayEditor();
             } catch (err) {
-                console.error('mapYellowEventsToChaptersWithAI failed:', err);
+                console.error('mapGreenEventsToChaptersWithAI failed:', err);
                 let msg = err.message || String(err);
                 if (err.code === 'functions/failed-precondition') {
                     msg = 'Server: OPENAI_API_KEY missing or AI not configured.';
                 }
                 setAiTitleMappingStatus('failed', msg);
-                if (resEl) {
-                    resEl.innerHTML = `<p>${escapeHtmlAdmin(msg)}</p>`;
-                    resEl.hidden = false;
-                }
-                setStatus('AI title mapping failed: ' + msg, 'error');
+                setStatus('Green→menu mapping failed: ' + msg, 'error');
             } finally {
                 setButtonLoading(aiTitleMappingBtn, false);
             }
         });
     }
+
+    const saveGreenMenuMappingBtn = document.getElementById('saveGreenMenuMappingBtn');
+    if (saveGreenMenuMappingBtn) {
+        saveGreenMenuMappingBtn.addEventListener('click', async () => {
+            if (!selectedLessonId) {
+                setStatus('Select a lesson first', 'error');
+                return;
+            }
+            try {
+                requireAuth();
+            } catch (err) {
+                setStatus('Authentication required', 'error');
+                return;
+            }
+
+            const byMenuId = collectGreenMenuMappingFromTable();
+            setButtonLoading(saveGreenMenuMappingBtn, true);
+            try {
+                const saveFn = functions.httpsCallable('saveGreenMenuMapping', { timeout: 60000 });
+                const result = await saveFn({ lessonId: selectedLessonId, byMenuId });
+                const data = result.data || {};
+                if (data.success === false) {
+                    setStatus('Save menu mapping failed', 'error');
+                    return;
+                }
+                setStatus(`Menu mapping saved (${data.savedCount} link(s))`, 'success');
+                setAiTitleMappingStatus('success', `Saved ${data.savedCount} menu link mapping(s)`);
+                await refreshSrcArrayEditor();
+            } catch (err) {
+                console.error('saveGreenMenuMapping failed:', err);
+                setStatus('Save menu mapping failed: ' + (err.message || String(err)), 'error');
+            } finally {
+                setButtonLoading(saveGreenMenuMappingBtn, false);
+            }
+        });
+    }
+}
+
+/**
+ * Read the editable green→menu table into a byMenuId object for saveGreenMenuMapping.
+ * One menuId maps to at most one green (a confirmed row wins over an unconfirmed duplicate).
+ */
+function collectGreenMenuMappingFromTable() {
+    const tbody = document.getElementById('greenMappingScaffoldTbody');
+    const byMenuId = {};
+    if (!tbody) return byMenuId;
+    const chapterTitleByMenuId = {};
+    (currentGreenMappingChapters || []).forEach((c) => { chapterTitleByMenuId[c.menuId] = c.title; });
+    const rows = tbody.querySelectorAll('tr[data-green-index]');
+    rows.forEach((tr) => {
+        const greenEventIndex = parseInt(tr.getAttribute('data-green-index'), 10);
+        const seekTime = Number(tr.getAttribute('data-seek'));
+        const select = tr.querySelector('select.green-mapping-select');
+        const confirmEl = tr.querySelector('input.green-mapping-confirm');
+        if (!select || !Number.isFinite(greenEventIndex) || !Number.isFinite(seekTime)) return;
+        const menuId = select.value;
+        if (!menuId) return; // "— none —"
+        const confirmed = confirmEl ? confirmEl.checked === true : false;
+        const confCell = tr.children[5];
+        const confText = confCell ? parseFloat(confCell.textContent) : NaN;
+        const entry = {
+            greenEventIndex,
+            seekTime,
+            matchedTitle: tr.querySelector('.green-mapping-aititle') ? tr.querySelector('.green-mapping-aititle').textContent.trim() : null,
+            menuLabel: chapterTitleByMenuId[menuId] || null,
+            confidence: Number.isFinite(confText) ? confText : null,
+            needsManualReview: false,
+            confirmed,
+        };
+        const prev = byMenuId[menuId];
+        // A confirmed selection wins over an unconfirmed duplicate for the same chapter.
+        if (!prev || (entry.confirmed && !prev.confirmed)) byMenuId[menuId] = entry;
+    });
+    return byMenuId;
 }
 
 // Expose for tree section header click (collapse/expand)

@@ -1207,6 +1207,54 @@ html {
     font-style: italic;
 }
 
+.green-mapping-select {
+    width: 100%;
+    min-width: 140px;
+    padding: 3px 6px;
+    background: rgba(0, 0, 0, 0.35);
+    color: #e2e8f0;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 5px;
+    font-size: 0.8rem;
+}
+
+.green-mapping-aititle {
+    color: #cbd5e1;
+}
+
+.green-mapping-reason {
+    color: #94a3b8;
+    font-size: 0.78rem;
+    max-width: 220px;
+}
+
+.green-mapping-review {
+    color: #fbbf24;
+    font-weight: 600;
+}
+
+.srcarray-ai-instructions-label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 100%;
+    margin-top: 6px;
+    font-size: 0.8rem;
+    color: #94a3b8;
+}
+
+.srcarray-ai-instructions {
+    width: 100%;
+    min-height: 42px;
+    padding: 6px 8px;
+    background: rgba(0, 0, 0, 0.35);
+    color: #e2e8f0;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 6px;
+    font-size: 0.82rem;
+    resize: vertical;
+}
+
 .red-detection-scaffold,
 .marker-model-context {
     margin-top: 0.75rem;
