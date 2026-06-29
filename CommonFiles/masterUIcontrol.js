@@ -1516,14 +1516,17 @@ function loadPlaybackMarkersFromWindow() {
         freezeMarkers[pf].insideRedLoop = isYellowInsideAnyRedLoop(freezeMarkers[pf]);
     }
 
-    // Build the confirmed green->menu seek lookup (only confirmed entries route a menu click).
+    // Build the green->menu seek lookup. A saved chapter selection IS the link: any entry with a
+    // finite seekTime routes its menu click. byMenuId only holds rows where a chapter was selected,
+    // so unmapped/"none" links fall through to the existing t=0 behavior. (confirmed/needsManualReview
+    // remain optional review metadata and do not gate playback.)
     menuGreenSeekByMenuId = {};
     var gmm = w.greenMenuMapping && w.greenMenuMapping.byMenuId ? w.greenMenuMapping.byMenuId : null;
     if (gmm && typeof gmm === "object") {
         for (var mk in gmm) {
             if (!Object.prototype.hasOwnProperty.call(gmm, mk)) continue;
             var entry = gmm[mk];
-            if (!entry || entry.confirmed !== true) continue;
+            if (!entry) continue;
             var seekT = Number(entry.seekTime);
             if (isFinite(seekT)) menuGreenSeekByMenuId[mk] = seekT;
         }

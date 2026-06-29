@@ -1586,6 +1586,9 @@ function renderGreenMenuMappingTable(greenDetection, chapters, greenMenuMapping)
         }
         const confLabel = aiConf != null ? aiConf.toFixed(2) : '—';
         const confClass = aiReview ? ' green-mapping-review' : '';
+        // Saving a selected chapter makes the link live; the checkbox is optional "reviewed" metadata.
+        // Default it checked whenever a chapter is selected so it reflects the saved/active state.
+        const reviewed = confirmed || !!selectedMenuId;
         return `<tr data-green-index="${i}" data-seek="${escapeHtmlMini(formatFloatMaybe(seek))}">
             <td>${escapeHtmlMini(ev.eventIndex != null ? ev.eventIndex : (i + 1))}</td>
             <td>${escapeHtmlMini(formatFloatMaybe(greenStart))}</td>
@@ -1593,7 +1596,7 @@ function renderGreenMenuMappingTable(greenDetection, chapters, greenMenuMapping)
             <td class="green-mapping-aititle">${aiTitle ? escapeHtmlMini(aiTitle) : '<span class="green-mapping-placeholder">not run</span>'}</td>
             <td><select class="green-mapping-select" data-green-index="${i}">${optionsHtml(selectedMenuId)}</select></td>
             <td class="${confClass.trim()}">${confLabel}${aiReview ? ' ⚠' : ''}</td>
-            <td><input type="checkbox" class="green-mapping-confirm" data-green-index="${i}" ${confirmed ? 'checked' : ''}></td>
+            <td><input type="checkbox" class="green-mapping-confirm" data-green-index="${i}" ${reviewed ? 'checked' : ''}></td>
             <td class="green-mapping-reason">${reason ? escapeHtmlMini(reason) : '—'}</td>
         </tr>`;
     }).join('');
@@ -2632,8 +2635,8 @@ function setupSrcArrayEditorListeners() {
                     setStatus('Save menu mapping failed', 'error');
                     return;
                 }
-                setStatus(`Menu mapping saved (${data.savedCount} link(s))`, 'success');
-                setAiTitleMappingStatus('success', `Saved ${data.savedCount} menu link mapping(s)`);
+                setStatus(`Saved ${data.savedCount} chapter link(s) — live at playback`, 'success');
+                setAiTitleMappingStatus('success', `Saved ${data.savedCount} chapter link(s). Menu clicks now jump to these timestamps (reload the lesson).`);
                 await refreshSrcArrayEditor();
             } catch (err) {
                 console.error('saveGreenMenuMapping failed:', err);

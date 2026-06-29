@@ -242,7 +242,7 @@
                                 </div>
                                 <div class="srcarray-editor-ai-row dev-only">
                                     <button type="button" id="aiTitleMappingBtn" class="btn btn-secondary btn-sm" title="Run GPT vision on the detected green title cards and match each to one of this lesson's chapter titles. Builds a menu→green seek mapping. Does not change the timeline.">Run AI green&rarr;menu mapping</button>
-                                    <button type="button" id="saveGreenMenuMappingBtn" class="btn btn-primary btn-sm" title="Save the reviewed/confirmed green→menu mapping so menu links jump to those timestamps at playback.">Save menu mapping</button>
+                                    <button type="button" id="saveGreenMenuMappingBtn" class="btn btn-primary btn-sm" title="Save the green→menu mapping. Every chapter with a selection becomes a live link that jumps to that timestamp at playback.">Save menu mapping</button>
                                     <p id="aiTitleMappingStatus" class="srcarray-editor-ai-status ai-mapping-idle" aria-live="polite">Idle</p>
                                     <label class="srcarray-editor-label srcarray-ai-instructions-label">
                                         Matching instructions (optional)
@@ -314,7 +314,7 @@
                             <div id="greenMappingScaffoldWrap" class="green-mapping-scaffold dev-only" hidden>
                                 <details open>
                                     <summary class="green-mapping-summary">Green &rarr; menu mapping (review &amp; confirm)</summary>
-                                    <p class="green-mapping-hint">Each detected green title card and the chapter the AI matched it to. Override the chapter with the dropdown, tick <strong>confirm</strong> for the ones you trust, then <strong>Save menu mapping</strong>. Confirmed rows make that menu link jump to the green's timestamp at playback; everything else still starts the lesson at the beginning. This never changes the timeline.</p>
+                                    <p class="green-mapping-hint">Each detected green title card and the chapter the AI matched it to. Pick or override the chapter with the dropdown, then <strong>Save menu mapping</strong>. Any row with a chapter selected becomes a live link: that menu click jumps straight to the green's timestamp at playback. Set a row to <em>&mdash; none &mdash;</em> to leave that chapter starting at the beginning. The <strong>reviewed</strong> checkbox is optional and does not affect playback. This never changes the timeline.</p>
                                     <div class="green-mapping-table-wrap">
                                         <table class="green-mapping-table">
                                             <thead>
@@ -325,7 +325,7 @@
                                                     <th>AI matched title</th>
                                                     <th>menu chapter</th>
                                                     <th>conf.</th>
-                                                    <th>confirm</th>
+                                                    <th>reviewed</th>
                                                     <th>reason</th>
                                                 </tr>
                                             </thead>
