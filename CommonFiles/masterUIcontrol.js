@@ -261,6 +261,8 @@ var MARKER_DEBUG_FLASH_EVENTS = {
     green_passthrough_leapfrog: "leapfrog (keep playing)",
     color_card_safety_freeze_backstop: "freeze backstop",
     guided_event_trigger: "reached",
+    click_step_to_red_loop: "click -> loop",
+    click_step_to_yellow_stop: "click -> stop",
 };
 
 function markerDebugFlash(klass, text) {
@@ -1066,12 +1068,12 @@ function applyRedCardLeapfrogDuringGuidedPlay(videoEl, t) {
 /**
  * Per-tick color-card safety net during guided play (backstop for coarse timeupdate jumps):
  *  - red + green control cards: skip past invisibly (delegates to applyRedCardLeapfrogDuringGuidedPlay).
- *  - YELLOW freeze cards only: if the playhead landed INSIDE a yellow span (not caught by the
- *    crossing path in tryCommitSegmentTargetFreezeStop), commit the freeze stop now so the card
- *    never renders. Pause + seek past via applyFreezeMarkerStopAtCrossing.
- *  - green spans are pass-throughs: never pause here (the leapfrog above keeps playback rolling).
- * Returns the (possibly leapfrogged) time; when a freeze stop fires, currentTime is moved to the
- * post-card stop target, so the caller's currentTime-change guard short-circuits the tick.
+ *  - If the playhead landed INSIDE a freeze span (not caught by the crossing path):
+ *      - genuine STOP (yellow outside a red loop): commit the freeze stop now so the card never
+ *        renders. Pause + seek past via applyFreezeMarkerStopAtCrossing.
+ *      - pass-through (green OR yellow inside a red loop): leapfrog past the span and keep playing.
+ * Returns the (possibly leapfrogged) time; when a freeze stop fires or a pass-through leapfrogs,
+ * currentTime is moved, so the caller's currentTime-change guard short-circuits the tick.
  */
 function applyColorCardSafetyDuringGuidedPlay(videoEl, t) {
     if (!videoEl || !isFinite(Number(t))) return t;
@@ -1087,22 +1089,26 @@ function applyColorCardSafetyDuringGuidedPlay(videoEl, t) {
     for (var i = 0; i < freezeMarkers.length; i++) {
         var mk = freezeMarkers[i];
         if (!mk) continue;
-        if (!isStopFreezeMarker(mk)) continue; // green pass-through never pauses here
         var s = Number(mk.start);
         var e = Number(mk.end);
         if (!isFinite(s) || !isFinite(e)) continue;
         if (c >= s - 1e-4 && c <= e + COLOR_CARD_RANGE_SKIP_EPS_SEC) {
-            logPlayerMarkerDebug({
-                event: "color_card_safety_freeze_backstop",
-                freezeStopFired: true,
-                leapfrogApplied: true,
-                markerType: mk.markerType,
-                markerIndex: i,
-                insideSpanStop: true,
-                previousTime: Math.round(c * 1000) / 1000,
-            });
-            applyFreezeMarkerStopAtCrossing(videoEl, mk, i, t, t, "color_card_safety_inside_freeze_span");
-            return t;
+            if (isStopFreezeMarker(mk)) {
+                logPlayerMarkerDebug({
+                    event: "color_card_safety_freeze_backstop",
+                    freezeStopFired: true,
+                    leapfrogApplied: true,
+                    markerType: mk.markerType,
+                    markerIndex: i,
+                    insideSpanStop: true,
+                    previousTime: Math.round(c * 1000) / 1000,
+                });
+                applyFreezeMarkerStopAtCrossing(videoEl, mk, i, t, t, "color_card_safety_inside_freeze_span");
+                return t;
+            }
+            // pass-through (green or yellow-in-red): leapfrog and keep playing.
+            handleGreenPassthroughEvent(videoEl, { marker: mk, freezeMarkerIndex: i }, c, c);
+            return Number(videoEl.currentTime);
         }
     }
     return t;
@@ -1202,11 +1208,41 @@ function findFirstFreezeMarkerIndexAfterTime(t) {
 }
 
 /**
- * Only YELLOW markers are genuine stops. GREEN markers are pass-throughs: leapfrog the card and
- * keep playing (they remain in freezeMarkers as red loop anchors and future menu anchors).
+ * The time span a red marker loops over: from its loop-return anchor (previous freeze) to the red.
+ * Yellows sitting inside this span are pass-throughs so the loop replays smoothly.
+ */
+function getRedLoopSpanForMarker(loopMk) {
+    if (!loopMk) return null;
+    var endTime = Number(loopMk.crossAt);
+    var prevIdx = loopMk.previousFreezeMarkerIndex;
+    var startTime = (prevIdx >= 0 && prevIdx < freezeMarkers.length)
+        ? Number(freezeMarkers[prevIdx].crossAt)
+        : 0;
+    if (!isFinite(endTime)) return null;
+    if (!isFinite(startTime)) startTime = 0;
+    return { startTime: startTime, endTime: endTime };
+}
+
+/** A yellow whose crossAt falls within any red's loop span [anchor, red) -> pass-through. */
+function isYellowInsideAnyRedLoop(mk) {
+    if (!mk || mk.markerType !== "yellow") return false;
+    var y = Number(mk.crossAt);
+    if (!isFinite(y)) return false;
+    for (var i = 0; i < loopMarkers.length; i++) {
+        var span = getRedLoopSpanForMarker(loopMarkers[i]);
+        if (!span) continue;
+        if (y >= span.startTime - 1e-4 && y < span.endTime - 1e-4) return true;
+    }
+    return false;
+}
+
+/**
+ * Only YELLOW markers OUTSIDE any red loop are genuine stops. GREEN markers, and yellows that fall
+ * inside a red loop span, are pass-throughs: leapfrog the card and keep playing (greens/anchored
+ * yellows remain in freezeMarkers as red loop anchors and future menu anchors).
  */
 function isStopFreezeMarker(mk) {
-    return !!(mk && mk.markerType === "yellow");
+    return !!(mk && mk.markerType === "yellow" && !mk.insideRedLoop);
 }
 
 /** Next genuine STOP (yellow) boundary strictly after playhead time — the real segment target. */
@@ -1245,7 +1281,7 @@ function handleGreenPassthroughEvent(videoEl, ev, prev, t) {
         event: "green_passthrough_leapfrog",
         leapfrogApplied: true,
         leapfrogHelperUsed: true,
-        markerType: "green",
+        markerType: mk.markerType || "green",
         markerSemantics: "freeze",
         markerIndex: ev.freezeMarkerIndex,
         previousTime: isFinite(Number(prev)) ? Math.round(Number(prev) * 1000) / 1000 : null,
@@ -1338,6 +1374,11 @@ function loadPlaybackMarkersFromWindow() {
     }
     loopMarkers.sort(function(a, b) { return a.crossAt - b.crossAt; });
     for (var lr = 0; lr < loopMarkers.length; lr++) loopMarkers[lr].markerIndex = lr;
+
+    // A yellow inside a red's loop span is a pass-through (acts like green), not a genuine stop.
+    for (var pf = 0; pf < freezeMarkers.length; pf++) {
+        freezeMarkers[pf].insideRedLoop = isYellowInsideAnyRedLoop(freezeMarkers[pf]);
+    }
 
     playbackEvents = buildUnifiedPlaybackEvents();
     nextFreezeMarkerIdx = 0;
@@ -2459,6 +2500,70 @@ function update(playVid){ // FindMe2
 }
 
 /**
+ * CLICK while a segment is playing: step to the very NEXT marker event in time and act on it:
+ *  - next event is a red -> drop into that red's loop (jump back to its anchor and loop).
+ *  - next event is a genuine yellow stop -> pause there.
+ *  - pass-through freezes (green / yellow-inside-a-red-loop) are skipped while scanning.
+ * This keeps clicks incremental (one thing at a time) instead of blowing past reds to the far
+ * segment-target yellow.
+ */
+function advanceToNextMarkerEventOnClick(reason, clickedElement) {
+    var nowT = (typeof videoId !== "undefined" && videoId && isFinite(Number(videoId.currentTime)))
+        ? Number(videoId.currentTime) : 0;
+    var chosen = -1;
+    for (var i = 0; i < playbackEvents.length; i++) {
+        var ev = playbackEvents[i];
+        if (!ev || !isFinite(Number(ev.crossAt))) continue;
+        if (Number(ev.crossAt) <= nowT + 1e-4) continue;
+        if (ev.kind === "loop") { chosen = i; break; }
+        if (ev.kind === "freeze" && isStopFreezeMarker(ev.marker)) { chosen = i; break; }
+        // pass-through freeze (green / yellow-in-red): skip, keep scanning forward.
+    }
+    if (chosen < 0) {
+        logPlayerMarkerDebug({
+            event: "click_step_to_next_event",
+            clickBranchTaken: "no_actionable_event_ahead_play_through",
+            clickedElement: clickedElement || null,
+            clickAction: "step_forward_no_remaining_event",
+        });
+        try { videoId.play(); } catch (e) { console.log(e); }
+        return true;
+    }
+    var chosenEv = playbackEvents[chosen];
+    if (chosenEv.kind === "loop") {
+        var redMk = chosenEv.marker;
+        guidedTargetEventIdx = chosenEv.eventIndex;
+        logPlayerMarkerDebug({
+            event: "click_step_to_red_loop",
+            clickBranchTaken: "step_to_next_red_loop",
+            clickedElement: clickedElement || null,
+            markerType: "red",
+            markerSemantics: "loop",
+            markerIndex: chosenEv.loopMarkerIndex,
+            chosenStopPoint: isFinite(Number(redMk.crossAt)) ? Math.round(Number(redMk.crossAt) * 1000) / 1000 : null,
+            clickAction: "step_forward_into_red_loop",
+        });
+        handleRedLoopMarkerCrossing(videoId, redMk, chosenEv.loopMarkerIndex, nowT, nowT);
+        try { videoId.play(); } catch (e2) { console.log(e2); }
+        return true;
+    }
+    var yMk = chosenEv.marker;
+    logPlayerMarkerDebug({
+        event: "click_step_to_yellow_stop",
+        clickBranchTaken: "step_to_next_yellow_stop",
+        clickedElement: clickedElement || null,
+        markerType: yMk.markerType,
+        markerSemantics: "freeze",
+        markerIndex: chosenEv.freezeMarkerIndex,
+        segmentTargetFreezeIndex: chosenEv.freezeMarkerIndex,
+        chosenStopPoint: isFinite(Number(yMk.crossAt)) ? Math.round(Number(yMk.crossAt) * 1000) / 1000 : null,
+        clickAction: "step_forward_to_next_yellow_stop",
+    });
+    applyFreezeMarkerStopAtCrossing(videoId, yMk, chosenEv.freezeMarkerIndex, nowT, nowT, reason || "click_step_to_next_event");
+    return true;
+}
+
+/**
  * CLICK while a segment is playing: jump straight to the next freeze stop (yellow/green),
  * leapfrogging any cards (and any red in between) and pausing on the post-card content.
  * This gives clicks "power over all" — they are never swallowed mid-segment.
@@ -2611,13 +2716,13 @@ function nextSlide(clickEvt){ // FindMe1
         }
         if (videoId && !videoId.paused && isPlayingSegmentForward() &&
             segmentTargetFreezeIdx >= 0 && segmentTargetFreezeIdx < freezeMarkers.length) {
-            skipToNextFreezeStopOnClick("click_skip_to_next_stop", baseClickDebug.clickedElement);
+            advanceToNextMarkerEventOnClick("click_step_to_next_event", baseClickDebug.clickedElement);
             return;
         }
     }
     if (CONTINUOUS_VIDEO_PLAYBACK && videoId && !videoId.paused && isPlayingSegmentForward() &&
         segmentTargetFreezeIdx >= 0 && segmentTargetFreezeIdx < freezeMarkers.length) {
-        skipToNextFreezeStopOnClick("click_skip_to_next_stop", baseClickDebug.clickedElement);
+        advanceToNextMarkerEventOnClick("click_step_to_next_event", baseClickDebug.clickedElement);
         return;
     }
     if (CONTINUOUS_VIDEO_PLAYBACK && videoId && !videoId.paused && isPlayingSegmentForward() &&
