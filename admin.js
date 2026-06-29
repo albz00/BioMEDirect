@@ -342,6 +342,7 @@ function setupEventListeners() {
     }
 
     setupSrcArrayEditorListeners();
+    setupDevModeToggle();
 
     // Profile button: open profile modal and fill with current user
     if (profileBtn && profileModal) {
@@ -649,7 +650,7 @@ async function displayAvailableVideos() {
                 <button type="button" class="btn btn-secondary btn-ghost btn-sm video-item-preview" data-video="${esc}">
                     <span class="btn-label">Preview</span>
                 </button>
-                <button type="button" class="btn btn-secondary btn-sm video-item-delete" data-video="${esc}">
+                <button type="button" class="btn btn-secondary btn-sm video-item-delete dev-only" data-video="${esc}">
                     <span class="btn-label">Delete</span>
                 </button>
             </div>
@@ -1223,19 +1224,19 @@ function getLessonCardHTML(lesson, playbackOpts) {
                     </div>
                     <button class="btn-metadata-save" onclick="saveLessonMetadata('${escId}', this)">Save Lesson Name</button>
                 </div>
-                <h4 class="lesson-attach-title"><span class="admin-step-badge">Step 1</span> Attach a video to this lesson</h4>
+                <h4 class="lesson-attach-title">Attach a video to this lesson</h4>
                 <div class="assignment-row">
                     <select id="video-select-${lesson.lessonId}">
                         <option value="">${lesson.hasVideo ? 'Change video...' : 'Select a video...'}</option>
                         ${videoOptions}
                     </select>
                     <button class="assign-btn" onclick="assignVideo('${escId}', this)" id="assign-btn-${lesson.lessonId}">${lesson.hasVideo ? 'Update' : 'Assign'}</button>
-                    <button type="button" class="btn btn-secondary btn-sm" onclick="resetLessonAssignment('${escId}', this)" title="Restore the default video path (videos/${safeLessonId}.mp4). Does not wipe the timeline or detection data."><span class="btn-label">Use default path</span></button>
-                    <button type="button" class="btn btn-danger btn-sm" onclick="resetLessonForReattach('${escId}', this)" title="Detach the current video AND wipe all timeline/detection data so you can attach or upload a fresh video. Chapter metadata is kept."><span class="btn-label">Reset for reattach</span></button>
+                    <button type="button" class="btn btn-secondary btn-sm dev-only" onclick="resetLessonAssignment('${escId}', this)" title="Restore the default video path (videos/${safeLessonId}.mp4). Does not wipe the timeline or detection data."><span class="btn-label">Use default path</span></button>
+                    <button type="button" class="btn btn-danger btn-sm dev-only" onclick="resetLessonForReattach('${escId}', this)" title="Detach the current video AND wipe all timeline/detection data so you can attach or upload a fresh video. Chapter metadata is kept."><span class="btn-label">Reset for reattach</span></button>
                     <!-- Regenerate-from-yellow disabled now that generation handles yellow in a single path -->
                 </div>
-                <p class="lesson-attach-hint">After assigning a video, open <strong>Steps 2-3</strong> below to generate and review the timeline.</p>
-                <div class="lesson-playback-settings">
+                <p class="lesson-attach-hint">After assigning a video, open the <strong>Timeline</strong> below to review and save.</p>
+                <div class="lesson-playback-settings dev-only">
                     <h4 class="lesson-playback-settings-title">Playback (temporary)</h4>
                     <label class="lesson-playback-settings-label">
                         <input type="checkbox" id="forceChapterStartZero-${lesson.lessonId}"${forceAtZeroChecked}>
@@ -1244,7 +1245,7 @@ function getLessonCardHTML(lesson, playbackOpts) {
                     <button type="button" class="btn btn-secondary btn-sm" onclick="saveLessonPlaybackSettings('${escId}', this)"><span class="btn-label">Save playback settings</span></button>
                     <p class="lesson-playback-settings-hint">Freeze markers (yellow/green) still control stop/resume. This only fixes lesson entry when title mapping is not ready.</p>
                 </div>
-                <div class="lesson-chapters-block">
+                <div class="lesson-chapters-block dev-only">
                     <button type="button" class="btn btn-secondary btn-chapters" onclick="showChaptersForLesson('${escId}')"><span class="btn-label">Show chapters</span></button>
                     <div id="chapters-container-${lesson.lessonId}" class="chapters-container" style="display:none;">
                         <div class="chapters-toolbar">
@@ -1710,7 +1711,7 @@ function renderSrcArrayTable(srcArray, lessonId, chapterTitles, panelExtras) {
             <td><input type="text" class="srcarray-input-menuLink" value="${esc(menuLink)}" data-index="${index}" placeholder="menu link"></td>
             <td><input type="checkbox" class="srcarray-input-flagged" data-index="${index}" ${flagged ? 'checked' : ''}></td>
             <td><input type="checkbox" class="srcarray-input-manualOverride" data-index="${index}" ${manualOverride ? 'checked' : ''} title="Preserve on regenerate"></td>
-            <td>
+            <td class="dev-only">
                 <details class="srcarray-details">
                     <summary>debug</summary>
                     <div class="srcarray-details-grid">
@@ -2215,6 +2216,27 @@ function setupCursorPromptButtons() {
                 return;
             }
             copyCursorPrompt(text, errBtn);
+        });
+    }
+}
+
+function setupDevModeToggle() {
+    const toggle = document.getElementById('devModeToggle');
+    const apply = (on) => {
+        document.body.classList.toggle('dev-mode', !!on);
+        if (toggle) {
+            toggle.classList.toggle('active', !!on);
+            toggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+        }
+    };
+    let devOn = false;
+    try { devOn = localStorage.getItem('adminDevMode') === '1'; } catch (e) { devOn = false; }
+    apply(devOn);
+    if (toggle) {
+        toggle.addEventListener('click', () => {
+            devOn = !document.body.classList.contains('dev-mode');
+            apply(devOn);
+            try { localStorage.setItem('adminDevMode', devOn ? '1' : '0'); } catch (e) { /* ignore */ }
         });
     }
 }

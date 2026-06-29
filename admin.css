@@ -3205,3 +3205,22 @@ body::before {
     background: rgba(255, 255, 255, 0.05) !important;
 }
 
+/* ===== Dev mode: hide all developer/diagnostic tooling unless body.dev-mode ===== */
+body:not(.dev-mode) .dev-only {
+    display: none !important;
+}
+
+#devModeToggle.active {
+    background: rgba(56, 189, 248, 0.18);
+    border-color: rgba(56, 189, 248, 0.65);
+    color: #7dd3fc;
+}
+
+/* Normal (Dev OFF) timeline view: clean single column with comfortable spacing. */
+body:not(.dev-mode) .srcarray-editor-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+

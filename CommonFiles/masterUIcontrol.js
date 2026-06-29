@@ -1821,6 +1821,68 @@ function beginPlayToNextFreezeFrame(reason) {
     syncLegacyYellowMarkerAliases();
 }
 
+/**
+ * BACK button: teleport to the previous yellow/green freeze anchor and resume the existing play
+ * logic (greens / yellow-in-red pass through, a red ahead loops, stops at the next genuine yellow).
+ * No forced pause. Repeated presses step backward one anchor at a time; before the first anchor it
+ * restarts the lesson at 0.
+ */
+function goBackToPreviousFreezeAndPlay(reason) {
+    if (!CONTINUOUS_VIDEO_PLAYBACK || typeof videoId === "undefined" || !videoId) {
+        backSlide();
+        return;
+    }
+    if (freezeMarkers.length === 0) {
+        backSlide();
+        return;
+    }
+    var t = Number(videoId.currentTime);
+    if (!isFinite(t)) t = 0;
+    // Anchor we are currently on (segment start / paused freeze / loop anchor).
+    var anchor = pausedAtFreezeMarkerIdx >= 0
+        ? pausedAtFreezeMarkerIdx
+        : (currentFreezeFrameIdx >= 0 ? currentFreezeFrameIdx : findPreviousFreezeMarkerIndexBeforeTime(t + 0.05));
+    var backIdx = anchor - 1; // the previous yellow/green frame
+
+    // Clear any active loop / pause so the teleport starts clean.
+    activeRedLoopEventIdx = -1;
+    activeRedLoopReturnTime = null;
+    activeRedLoopPreviousFreezeIdx = -1;
+    pausedAtFreezeMarkerIdx = -1;
+
+    if (backIdx < 0) {
+        currentFreezeFrameIdx = -1;
+        syncVideoSeekWithMarkerState(videoId, 0, reason || "back_to_start");
+        beginPlayToNextFreezeFrame(reason || "back_to_start");
+        logPlayerMarkerDebug({
+            event: "back_to_prev_freeze",
+            clickBranchTaken: "back_to_lesson_start",
+            chosenResumePoint: 0,
+            clickAction: "back_teleport_and_play",
+        });
+        try { videoId.play(); } catch (e) { console.log(e); }
+        return;
+    }
+
+    var mk = freezeMarkers[backIdx];
+    var resume = resolvePostFreezeStopTime(mk, backIdx, reason || "back_to_prev_freeze");
+    currentFreezeFrameIdx = backIdx;
+    if (isFinite(Number(resume))) {
+        syncVideoSeekWithMarkerState(videoId, Number(resume), reason || "back_to_prev_freeze");
+    }
+    beginPlayToNextFreezeFrame(reason || "back_to_prev_freeze");
+    logPlayerMarkerDebug({
+        event: "back_to_prev_freeze",
+        clickBranchTaken: "back_to_previous_anchor",
+        markerType: mk ? mk.markerType : null,
+        markerSemantics: "freeze",
+        markerIndex: backIdx,
+        chosenResumePoint: isFinite(Number(resume)) ? Math.round(Number(resume) * 1000) / 1000 : null,
+        clickAction: "back_teleport_and_play",
+    });
+    try { videoId.play(); } catch (e2) { console.log(e2); }
+}
+
 function beginPlayToNextEvent(reason) {
     beginPlayToNextFreezeFrame(reason);
 }
@@ -2202,6 +2264,17 @@ function initializePlayer(videoUrl, timelineArray) {
             nextSlide(evt);
         });
         animContainer.__interactiveClickBound = true;
+    }
+    // Marker-aware Back button: teleport to the previous yellow/green anchor and resume play logic.
+    if (CONTINUOUS_VIDEO_PLAYBACK) {
+        var backBtn = document.getElementById("btnBack");
+        if (backBtn && !backBtn.__interactiveBackBound) {
+            backBtn.addEventListener("click", function (evt) {
+                if (evt && typeof evt.stopPropagation === "function") evt.stopPropagation();
+                goBackToPreviousFreezeAndPlay("back_button_click");
+            });
+            backBtn.__interactiveBackBound = true;
+        }
     }
 
     videoId.addEventListener("play", function() {
