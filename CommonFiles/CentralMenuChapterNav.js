@@ -38,14 +38,24 @@
         var insetBottom = 2.5 * u;
         var gapTop = 1.4 * u;
 
-        // Bottom-most title across all sections (handles title rows that wrap).
-        var titlesBottomVp = box.top;
-        central.querySelectorAll('.menuLists > h1').forEach(function (h) {
+        // Anchor the card just below the FIRST (top-most) title row so it sits high
+        // in the box. If titles wrap onto extra rows, the card is allowed to cover
+        // them — keeping the open card up near the cursor instead of way down.
+        var titles = central.querySelectorAll('.menuLists > h1');
+        var minTop = Infinity;
+        var firstH = 0;
+        titles.forEach(function (h) {
             var r = h.getBoundingClientRect();
-            if (r.bottom > titlesBottomVp) titlesBottomVp = r.bottom;
+            if (r.top < minTop) { minTop = r.top; firstH = r.height; }
+        });
+        var band = (minTop === Infinity ? box.top : minTop) + Math.max(firstH * 0.6, 6);
+        var firstRowBottomVp = box.top;
+        titles.forEach(function (h) {
+            var r = h.getBoundingClientRect();
+            if (r.top < band && r.bottom > firstRowBottomVp) firstRowBottomVp = r.bottom;
         });
 
-        var topRel = (titlesBottomVp - box.top) + gapTop;
+        var topRel = (firstRowBottomVp - box.top) + gapTop;
         var leftRel = insetX;
         var width = Math.max(0, box.width - insetX * 2);
         var height = Math.max(0, box.height - insetBottom - topRel);
@@ -64,6 +74,14 @@
         });
     }
 
+    // Copy the section's title into its panel header so the hovered section's
+    // title sits centered at the top of the open card (above its lessons).
+    function syncPanelHeader(menu) {
+        var head = menu.querySelector('.chapterDropdown .cd-head');
+        var h1 = menu.querySelector('h1');
+        if (head && h1) head.textContent = (h1.textContent || '').trim();
+    }
+
     function openMenu(menu) {
         if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
         var central = getCentral();
@@ -73,6 +91,7 @@
         });
         menu.classList.add('is-open');
         central.classList.add('menu-active');
+        syncPanelHeader(menu);
         layoutPanels();
     }
 
@@ -108,12 +127,9 @@
                 });
             }
         } else {
-            // Desktop: hover to open; small delay on leave so the gap between the
-            // title and the panel doesn't close it. The panel is a DOM child of the
-            // section, so moving onto it re-enters and cancels the close.
-            menu.addEventListener('mouseenter', function () { openMenu(menu); });
-            menu.addEventListener('mouseleave', function () { scheduleClose(); });
             // Keyboard: open on focus, close shortly after focus leaves the section.
+            // (Pointer open/close is handled at the .centralMenu level in init() so
+            //  that gaps between a title and its card never bounce it closed.)
             menu.addEventListener('focusin', function () { openMenu(menu); });
             menu.addEventListener('focusout', function () { scheduleClose(); });
         }
@@ -138,6 +154,14 @@
                     else menu.appendChild(panel);
                 }
             }
+            // Ensure the panel has a header slot (filled with the section title on open).
+            var dropdown = menu.querySelector('.chapterDropdown');
+            if (dropdown && !dropdown.querySelector('.cd-head')) {
+                var head = document.createElement('div');
+                head.className = 'cd-head';
+                head.setAttribute('aria-hidden', 'true');
+                dropdown.insertBefore(head, dropdown.firstChild);
+            }
             wireMenu(menu);
         });
 
@@ -154,9 +178,29 @@
             if ('ResizeObserver' in window) {
                 try { new ResizeObserver(layoutPanels).observe(central); } catch (e) {}
             }
+
+            // Whole-menu pointer handling: the section stays open while the cursor is
+            // ANYWHERE inside .centralMenu — over a title, over the open card, or in
+            // the gap between them. Hovering a different title switches sections; the
+            // menu only closes once the pointer leaves the whole .centralMenu box.
+            // This removes every dead zone that used to bounce the card closed.
+            if (!touchMode()) {
+                central.addEventListener('mouseover', function (e) {
+                    if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+                    // Over the open card (or anything inside it): just keep it open.
+                    if (e.target.closest('.chapterDropdown')) return;
+                    // Over a section title/column: make that section the open one
+                    // (skip if it's already open to avoid needless re-layout churn).
+                    var ml = e.target.closest('.menuLists');
+                    if (ml && !ml.classList.contains('is-open')) openMenu(ml);
+                    // Otherwise (gap/background inside the menu): keep current open.
+                });
+                central.addEventListener('mouseleave', function () { scheduleClose(); });
+            }
+
             // Click/tap outside the menu closes any open section.
             document.addEventListener('click', function (e) {
-                if (!e.target.closest('.menuLists')) closeAll();
+                if (!e.target.closest('.centralMenu')) closeAll();
             });
         }
     }

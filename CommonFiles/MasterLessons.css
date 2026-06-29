@@ -226,7 +226,7 @@ button:focus {
 	flex-wrap: wrap;
 	justify-content: center;
 	align-items: center;
-	gap: 1vmin 1.4vmin;
+	gap: 0.45vmin 0.6vmin;
 	padding-top: 0.5vmin; /* Space between title and button bank */ 
 	padding-bottom: 2.5vmin; /* Space between button bank and menu links */ 
 	z-index: 1;

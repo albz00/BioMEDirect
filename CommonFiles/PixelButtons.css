@@ -105,6 +105,13 @@
     font-size: 1.9vmin;
 }
 
+/* Header bank reads as a tight, dense row (matching the original button bank):
+   trim the horizontal padding so each button hugs its label. Vertical padding
+   stays minimal because the fixed-height buttons centre their text. */
+.btnHeader.pixelBtn {
+    padding: 0.3vmin 1.3vmin;
+}
+
 /* Return / navigation buttons on Citations, Excerpts, PopUps, Resources */
 .nav-btn.pixelBtn {
     /* These pages set max-height/width 10vmin; let the button size to text. */
@@ -276,16 +283,29 @@
     content: "Text\A Hidden";
 }
 
-/* Lesson header instances run a touch smaller than the central-menu toggle */
+/* Lesson header toggle: compact so it matches the height/density of the other
+   header buttons instead of towering over them. */
+#btnTogTextLessonMenuX.pixelBtn,
+#btnTogTextLessonMenuT.pixelBtn {
+    padding: 0.25vmin 1.1vmin;
+    gap: 0.9vmin;
+}
+
+#btnTogTextLessonMenuX.pixelBtn > .label,
+#btnTogTextLessonMenuT.pixelBtn > .label {
+    gap: 0.9vmin;
+}
+
 #btnTogTextLessonMenuX.pixelBtn > .label::before,
 #btnTogTextLessonMenuT.pixelBtn > .label::before {
-    width: 3.9vmin;
-    height: 3.9vmin;
+    width: 3.1vmin;
+    height: 3.1vmin;
 }
 
 #btnTogTextLessonMenuX.pixelBtn > .label::after,
 #btnTogTextLessonMenuT.pixelBtn > .label::after {
-    font-size: 1.85vmin;
+    font-size: 1.55vmin;
+    line-height: 1.0;
 }
 
 /* Central-menu toggle sits in a tight band between the title and the menu, so

@@ -137,6 +137,31 @@ body::before {
 	padding: 0;
 }
 
+/* The hovered section's title, promoted to the top-center of the open card so it
+   reads as a clear header above its lessons (never overlapped by lesson text).
+   CentralMenuChapterNav.js fills its text on open; order:-1 keeps it on top and
+   flex-basis:100% forces the lessons to wrap onto the rows beneath it. */
+.chapterDropdown .cd-head {
+	flex: 0 0 100%;
+	order: -1;
+	width: 100%;
+	margin: 0 0 1.4vmin;
+	padding: 0;
+	text-align: center;
+	font-family: var(--biome-rounded);
+	font-weight: 800;
+	color: #9DFFFF;
+	font-size: clamp(1.25rem, 3.7vmin, 2.2rem);
+	line-height: 1.1;
+	letter-spacing: 0.01em;
+	text-shadow: 0 0.15vmin 0.6vmin rgba(0, 0, 0, 0.92);
+	pointer-events: none;
+}
+
+.chapterDropdown .cd-head:empty {
+	display: none;
+}
+
 /* Shown via JS (.is-open) or keyboard focus. */
 .menuLists.is-open .chapterDropdown,
 .menuLists:focus-within .chapterDropdown {
@@ -158,8 +183,17 @@ body::before {
 /* While a section is open, clearly dim the OTHER section titles (still visible and
    hoverable so you can slide across to switch), and hide their "hover" hint. */
 .centralMenu.menu-active .menuLists:not(.is-open) > h1 {
-	opacity: 0.38;
+	opacity: 0.28;
 	transition: opacity 0.22s ease;
+}
+
+/* The hovered section's title "moves" to the card header (.cd-head), so fade out
+   its copy in the title row. Use opacity (NOT visibility/display): the element
+   stays laid out AND stays a live hover target, so the cursor sitting on it can
+   never bounce the open card closed. */
+.centralMenu.menu-active .menuLists.is-open > h1 {
+	opacity: 0;
+	transition: opacity 0.18s ease;
 }
 
 .centralMenu.menu-active .menuLists:not(.is-open) > h1::after {
