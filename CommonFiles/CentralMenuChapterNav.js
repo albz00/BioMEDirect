@@ -12,7 +12,9 @@
     var wiredOnce = false;            // page-level listeners wired only once
     var wiredMenus = new WeakSet();   // per-section listeners wired only once
     var closeTimer = null;
-    var CLOSE_DELAY = 180;            // ms grace so moving title -> panel doesn't close
+    var openMenuEl = null;            // currently open section (for proximity close)
+    var CLOSE_DELAY = 260;            // ms grace before an off-menu pointer closes
+    var KEEP_MARGIN = 36;             // px slack around the menu/card that still counts as "inside"
 
     function touchMode() {
         return window.matchMedia && window.matchMedia('(hover: none)').matches;
@@ -91,18 +93,43 @@
         });
         menu.classList.add('is-open');
         central.classList.add('menu-active');
+        openMenuEl = menu;
         syncPanelHeader(menu);
         layoutPanels();
     }
 
     function closeAll() {
         if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+        openMenuEl = null;
         var central = getCentral();
         if (!central) return;
         central.querySelectorAll('.menuLists.is-open').forEach(function (m) {
             m.classList.remove('is-open');
         });
         central.classList.remove('menu-active');
+    }
+
+    function pointNear(rect, x, y, m) {
+        return rect && x >= rect.left - m && x <= rect.right + m &&
+               y >= rect.top - m && y <= rect.bottom + m;
+    }
+
+    // While a section is open, keep it open as long as the pointer is anywhere near
+    // the menu box OR the open lessons card (with slack). Only when it's clearly away
+    // from both do we start the close timer. This survives gaps between the title and
+    // its lessons, lessons that overflow the box edge, and quick diagonal moves.
+    function onDocMove(e) {
+        if (!openMenuEl) return;
+        var central = getCentral();
+        if (!central) return;
+        var nearMenu = pointNear(central.getBoundingClientRect(), e.clientX, e.clientY, KEEP_MARGIN);
+        var card = openMenuEl.querySelector('.chapterDropdown');
+        var nearCard = card && pointNear(card.getBoundingClientRect(), e.clientX, e.clientY, KEEP_MARGIN);
+        if (nearMenu || nearCard) {
+            if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+        } else {
+            scheduleClose();
+        }
     }
 
     function scheduleClose() {
@@ -179,11 +206,9 @@
                 try { new ResizeObserver(layoutPanels).observe(central); } catch (e) {}
             }
 
-            // Whole-menu pointer handling: the section stays open while the cursor is
-            // ANYWHERE inside .centralMenu — over a title, over the open card, or in
-            // the gap between them. Hovering a different title switches sections; the
-            // menu only closes once the pointer leaves the whole .centralMenu box.
-            // This removes every dead zone that used to bounce the card closed.
+            // Whole-menu pointer handling. Opening/switching happens when the pointer
+            // is over a section title; CLOSING is driven by onDocMove (proximity) so
+            // the open card survives gaps, edge overflow, and diagonal moves.
             if (!touchMode()) {
                 central.addEventListener('mouseover', function (e) {
                     if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
@@ -195,7 +220,7 @@
                     if (ml && !ml.classList.contains('is-open')) openMenu(ml);
                     // Otherwise (gap/background inside the menu): keep current open.
                 });
-                central.addEventListener('mouseleave', function () { scheduleClose(); });
+                document.addEventListener('mousemove', onDocMove);
             }
 
             // Click/tap outside the menu closes any open section.
