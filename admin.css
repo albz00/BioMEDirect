@@ -3373,3 +3373,254 @@ body:not(.dev-mode) .srcarray-editor-toolbar {
     border-left-color: #38bdf8;
 }
 
+/* ============================================================
+   MINIMAL / PROFESSIONAL REFINEMENT (final layer)
+   Keeps the dark slate + cyan theme but:
+   - removes every cyan glow (colored box-shadow + text-shadow)
+   - uses solid, non-transparent backgrounds
+   - unifies borders (clean linework) and rounded corners
+   - tightens button styling and spacing
+   This block is last so it wins the cascade over the BioME overrides.
+   ============================================================ */
+:root {
+    /* Solid surfaces (no alpha) */
+    --biome-bg-hover:       #2c3e54;
+    --biome-bg-active:      #15333b;   /* solid dark teal for active/selected */
+    /* Clean solid linework; cyan reserved for focus/active accents */
+    --biome-line:           #33485f;
+    --biome-line-strong:    #46607a;
+    --biome-cyan-dim:       #1aa6a4;
+    /* Consistent, modern-but-subtle corners */
+    --biome-radius:         6px;
+    --biome-radius-lg:      10px;
+    /* Kill glow tokens */
+    --biome-glow-sm:        none;
+    --biome-glow-md:        none;
+}
+
+/* ---- Remove colored text glows ---- */
+.login-container h1,
+.sidebar-title,
+.collapsible-card-title,
+.srcarray-editor-title,
+.lesson-name,
+#instructionsTitle,
+#profileTitle,
+#changelogTitle,
+.modal-close:hover {
+    text-shadow: none !important;
+}
+
+/* ---- Panels: neutral depth instead of cyan glow ---- */
+.login-container,
+.login-aside,
+.controls-section,
+.lessons-sidebar,
+.collapsible-card,
+.srcarray-editor-card,
+.lesson-item,
+.modal-content,
+.instructions-paper,
+.profile-modal-content,
+.changelog-modal-content {
+    background: var(--biome-bg-panel) !important;
+    border: 1px solid var(--biome-line) !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3) !important;
+}
+
+.dashboard-header {
+    background: #2a3a4f !important;
+    border-bottom: 1px solid var(--biome-line) !important;
+    box-shadow: none !important;
+}
+
+/* ---- Buttons: solid fills, no glow, consistent linework ---- */
+.btn {
+    box-shadow: none !important;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease !important;
+}
+
+.btn-primary,
+.btn-primary:hover,
+.btn-primary:active {
+    box-shadow: none !important;
+}
+
+.btn-primary {
+    background: var(--biome-cyan) !important;
+    color: #0c1620 !important;
+    border: 1px solid var(--biome-cyan) !important;
+    font-weight: 600 !important;
+}
+.btn-primary:hover {
+    background: #2ff0ed !important;
+    border-color: #2ff0ed !important;
+    color: #0c1620 !important;
+}
+.btn-primary:active {
+    background: #15bdba !important;
+    border-color: #15bdba !important;
+    transform: none !important;
+}
+
+.btn-secondary {
+    background: #2a3b50 !important;
+    color: #d7e3ee !important;
+    border: 1px solid var(--biome-line) !important;
+    box-shadow: none !important;
+}
+.btn-secondary:hover {
+    background: #33485f !important;
+    color: #ffffff !important;
+    border-color: var(--biome-cyan-dim) !important;
+    box-shadow: none !important;
+}
+
+.btn-danger {
+    background: #4a2330 !important;
+    color: #ffc9c9 !important;
+    border: 1px solid #8a3b4a !important;
+    box-shadow: none !important;
+}
+.btn-danger:hover {
+    background: #5e2a3a !important;
+    border-color: #b3506a !important;
+    color: #ffe0e0 !important;
+}
+
+.header-buttons .btn {
+    background: #2a3b50 !important;
+    color: #cbd5e1 !important;
+    border: 1px solid var(--biome-line) !important;
+}
+.header-buttons .btn:hover {
+    background: #33485f !important;
+    border-color: var(--biome-cyan-dim) !important;
+    color: #ffffff !important;
+}
+
+#devModeToggle.active {
+    background: var(--biome-bg-active) !important;
+    border-color: var(--biome-cyan) !important;
+    color: var(--biome-cyan-soft) !important;
+}
+
+/* Save buttons (metadata/section/chapter): solid, no glow */
+.btn-metadata-save,
+.btn-section-save,
+.chapter-row .btn-chapter-save {
+    background: #2a3b50 !important;
+    color: #d7e3ee !important;
+    border: 1px solid var(--biome-line-strong) !important;
+    box-shadow: none !important;
+}
+.btn-metadata-save:hover,
+.btn-section-save:hover,
+.chapter-row .btn-chapter-save:hover {
+    background: #33485f !important;
+    color: #ffffff !important;
+    border-color: var(--biome-cyan-dim) !important;
+    box-shadow: none !important;
+}
+
+/* ---- Tabs / filters: solid active state, no glow ---- */
+.admin-tab,
+.filter-btn {
+    background: #2a3b50 !important;
+    border: 1px solid var(--biome-line) !important;
+    box-shadow: none !important;
+}
+.admin-tab.active,
+.filter-btn.active {
+    background: var(--biome-bg-active) !important;
+    color: var(--biome-cyan-soft) !important;
+    border-color: var(--biome-cyan) !important;
+    box-shadow: none !important;
+}
+
+/* ---- Inputs: solid focus, no glow ring ---- */
+.form-group input:focus,
+.metadata-row input[type="text"]:focus,
+.search-input:focus,
+.section-index-input:focus,
+.chapters-dropdown:focus,
+.chapter-row .chapter-name-input:focus,
+.lesson-assignment select:focus,
+.srcarray-editor-label input[type="number"]:focus,
+.srcarray-editor-table input:focus {
+    border-color: var(--biome-cyan) !important;
+    box-shadow: none !important;
+    background: #2c3e54 !important;
+}
+
+/* ---- Sidebar tree: solid selection, no inset glow ---- */
+.tree-lesson.selected {
+    background: var(--biome-bg-active) !important;
+    border-left: 0 !important;
+    outline: 1px solid var(--biome-cyan-dim);
+    outline-offset: -1px;
+    box-shadow: none !important;
+    color: var(--biome-cyan-soft) !important;
+}
+.tree-lesson.selected:hover,
+.tree-lesson:hover,
+.tree-section-header:hover {
+    background: var(--biome-bg-hover) !important;
+}
+
+/* ---- Status pills: solid backgrounds ---- */
+.lesson-status.missing {
+    background: #3a2326 !important;
+    color: #fca5a5 !important;
+    border: 1px solid #8a4146 !important;
+}
+.lesson-status.has-video {
+    background: #16322a !important;
+    color: #6ee7b7 !important;
+    border: 1px solid #2f6b54 !important;
+}
+
+/* ---- Instructions / code: solid accent fills ---- */
+.inst-num,
+.inst-section--login .inst-num,
+.inst-section--workflow .inst-num,
+.inst-section--controls .inst-num,
+.inst-section--lessons .inst-num,
+.inst-section--videos .inst-num,
+.inst-section--safety .inst-num,
+.inst-section--status .inst-num {
+    background: var(--biome-bg-active) !important;
+    color: var(--biome-cyan-soft) !important;
+}
+.modal-body code,
+.instructions-body code {
+    background: #1e2c3c !important;
+    color: var(--biome-cyan-soft) !important;
+    border: 1px solid var(--biome-line) !important;
+}
+
+/* ---- Scrollbar track: solid ---- */
+#dashboardScreen,
+.sidebar-tree {
+    scrollbar-color: var(--biome-cyan) #1f2d3d !important;
+}
+#dashboardScreen::-webkit-scrollbar-track,
+.sidebar-tree::-webkit-scrollbar-track {
+    background: #1f2d3d;
+}
+
+/* ---- Chapter rows: solid border linework ---- */
+.chapter-row {
+    background: #20303f !important;
+    border: 1px solid var(--biome-line) !important;
+}
+.chapter-row:hover {
+    border-color: var(--biome-cyan-dim) !important;
+}
+
+/* ---- Spacing: comfortable, consistent controls row ---- */
+.controls-section {
+    gap: 0.75rem;
+    padding: 1rem 1.25rem;
+}
+
