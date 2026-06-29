@@ -35,9 +35,16 @@
         var central = getCentral();
         if (!central) return;
         var box = central.getBoundingClientRect();
+        // The lessons card must span the whole menu FRAME below the titles — not the
+        // .centralMenu flex box, which only wraps the title rows (the card is absolute
+        // and never stretches it). Use the frame for the vertical extent so the card's
+        // rectangle actually covers the lessons (otherwise the pointer "leaves" a thin
+        // strip and the menu closes as you move down/center).
+        var frameEl = document.querySelector('.entireCentralMenu');
+        var frameBox = frameEl ? frameEl.getBoundingClientRect() : box;
         var u = vminPx();
         var insetX = 2 * u;
-        var insetBottom = 2.5 * u;
+        var insetBottom = 9 * u;       // leave room for the footer links below the menu
         var gapTop = 1.4 * u;
 
         // Anchor the card just below the FIRST (top-most) title row so it sits high
@@ -57,10 +64,15 @@
             if (r.top < band && r.bottom > firstRowBottomVp) firstRowBottomVp = r.bottom;
         });
 
-        var topRel = (firstRowBottomVp - box.top) + gapTop;
+        // Card top (viewport) = just below the first title row.
+        var cardTopVp = firstRowBottomVp + gapTop;
+        // Card bottom (viewport) = near the bottom of the menu frame, above the footer.
+        var cardBottomVp = frameBox.bottom - insetBottom;
+
+        var topRel = cardTopVp - box.top;   // card is absolute within .centralMenu
         var leftRel = insetX;
         var width = Math.max(0, box.width - insetX * 2);
-        var height = Math.max(0, box.height - insetBottom - topRel);
+        var height = Math.max(60, cardBottomVp - cardTopVp);
 
         central.querySelectorAll('.menuLists .chapterDropdown').forEach(function (panel) {
             panel.style.position = 'absolute';
@@ -69,8 +81,8 @@
             panel.style.top = topRel + 'px';
             panel.style.width = width + 'px';
             panel.style.maxWidth = 'none';
-            // Width makes the row-wrap fit inside the box; height lets the centered
-            // rows sit vertically centered in the area below the titles.
+            // Height spans the menu frame below the titles so the centered lesson rows
+            // sit in the middle of that area — and the card's rect actually covers them.
             panel.style.height = height + 'px';
             panel.style.maxHeight = height + 'px';
         });
@@ -122,6 +134,16 @@
         if (!openMenuEl) return;
         var central = getCentral();
         if (!central) return;
+        var t = e.target;
+        // DOM check first: if the pointer is literally over the menu, the open card, or
+        // ANY lesson inside it (even ones that wrap/overflow outside the card's measured
+        // rectangle), keep it open. This is what stops it closing while you reach for a
+        // lesson.
+        if (t && t.closest && (t.closest('.centralMenu') || t.closest('.chapterDropdown'))) {
+            if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+            return;
+        }
+        // Geometry fallback for the slack just outside the menu/card.
         var nearMenu = pointNear(central.getBoundingClientRect(), e.clientX, e.clientY, KEEP_MARGIN);
         var card = openMenuEl.querySelector('.chapterDropdown');
         var nearCard = card && pointNear(card.getBoundingClientRect(), e.clientX, e.clientY, KEEP_MARGIN);
