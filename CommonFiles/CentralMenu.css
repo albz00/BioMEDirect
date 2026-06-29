@@ -107,7 +107,7 @@ body::before {
 .chapterDropdown {
 	display: flex;
 	flex-flow: row wrap;
-	align-content: center;
+	align-content: flex-start;
 	justify-content: center;
 	align-items: baseline;
 	gap: 0.6vmin 3vmin;
@@ -162,7 +162,12 @@ body::before {
 	display: none;
 }
 
-/* Shown via JS (.is-open) or keyboard focus. */
+/* Shown on hover of the section column (desktop), tap (.is-open, touch), or focus.
+   Hovering the column stays true while the pointer is over the panel — a DOM
+   descendant of the column — so moving from the title down into the lessons can
+   never lose the hover and close the panel. */
+.centralMenu > div:hover .chapterDropdown,
+.group-custom:hover .chapterDropdown,
 .menuLists.is-open .chapterDropdown,
 .menuLists:focus-within .chapterDropdown {
 	visibility: visible;
@@ -180,28 +185,34 @@ body::before {
 		visibility 0s;
 }
 
-/* While a section is open, clearly dim the OTHER section titles (still visible and
-   hoverable so you can slide across to switch), and hide their "hover" hint. */
+/* While a section is open, clearly dim the OTHER section titles, and hide the
+   "hover for lessons" hint. Driven by hover (desktop) or .is-open/.menu-active
+   (touch). */
+.centralMenu:hover .menuLists > h1,
 .centralMenu.menu-active .menuLists:not(.is-open) > h1 {
 	opacity: 0.28;
 	transition: opacity 0.22s ease;
 }
 
-/* The hovered section's title "moves" to the card header (.cd-head), so fade out
-   its copy in the title row. Use opacity (NOT visibility/display): the element
-   stays laid out AND stays a live hover target, so the cursor sitting on it can
-   never bounce the open card closed. */
+.centralMenu:hover .menuLists > h1::after,
+.centralMenu.menu-active .menuLists:not(.is-open) > h1::after {
+	opacity: 0;
+}
+
+/* The hovered/open section's title "moves" to the card header (.cd-head), so fade
+   out its copy in the title row. Use opacity (NOT visibility/display) so it stays
+   a live hover target. The hovered-column rule is more specific than the dim rule
+   above, so it wins. */
+.centralMenu > div:hover .menuLists > h1,
+.group-custom:hover .menuLists > h1,
 .centralMenu.menu-active .menuLists.is-open > h1 {
 	opacity: 0;
 	transition: opacity 0.18s ease;
 }
 
-.centralMenu.menu-active .menuLists:not(.is-open) > h1::after {
-	opacity: 0;
-}
-
 /* When a section is open, lift the whole menu (and its lessons panel) above the
    header art and footer links so nothing overlaps the open lessons. */
+.centralMenu:hover,
 .centralMenu.menu-active {
 	z-index: 50;
 }
