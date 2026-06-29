@@ -31,7 +31,7 @@ var PAUSE_AT_YELLOW_MARKERS = PAUSE_AT_FREEZE_MARKERS;
  * previewing a chapter's end frame. Toggle with the flag below or the `?menuFromZero=1`
  * query param. Default OFF so production behavior is unchanged.
  */
-var TEMP_MENU_LINKS_PLAY_FROM_ZERO = false;
+var TEMP_MENU_LINKS_PLAY_FROM_ZERO = true;
 
 function menuLinksPlayFromZeroEnabled() {
     if (TEMP_MENU_LINKS_PLAY_FROM_ZERO === true) return true;
