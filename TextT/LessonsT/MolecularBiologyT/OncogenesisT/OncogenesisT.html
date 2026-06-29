@@ -37,12 +37,12 @@
 
             <!-- Header Button Bank -->
             <div class="headBank">
-                <img class="btnHeader" id="btnToCentralMenu" src="../../../../CommonFiles/Buttons/BTN_ToCentralMenu.jpg" onclick="self.location.href='../../../CentralMenuT.html'"><span class="sr-only">Return to Main Menu</span>
-                <img class="btnHeader" id="btnTogTextLessonMenuX" src="../../../../CommonFiles/Buttons/BTN_TogLessonMenuX.jpg" onclick="self.location.href='../../../../TextX/LessonsX/MolecularBiologyX/OncogenesisX/OncogenesisX.html'"><span class="sr-only">Hide Explanatory Text</span>
-                <img class="btnHeader" id="btnToPopUps" src="../../../../CommonFiles/Buttons/BTN_PopUp.jpg" onclick='executeClick("PopUpsOncogenesisT.html")'><span class="sr-only">Pop Ups</span>
-                <img class="btnHeader" id="btnExcerpts" src="../../../../CommonFiles/Buttons/BTN_Excerpts.jpg" onclick='executeClick("ExcerptsOncogenesisT.html")'><span class="sr-only">Excerpts</span>
-                <img class="btnHeader" id="btnQuestions" src="../../../../CommonFiles/Buttons/BTN_Questions.jpg" onclick="self.location.href='QuestionsOncogenesisT.html'"><span class="sr-only">Practice Questions</span>
-                <img class="btnHeader" id="btnFeedback" src="../../../../CommonFiles/Buttons/BTN_Feedback.jpg" onclick="self.location.href='FeedbackOncogenesisT.html'"><span class="sr-only">Provide Feedback</span>
+                <button class="btnHeader pixelBtn" id="btnToCentralMenu" onclick="self.location.href='../../../CentralMenuT.html'"><span class="label">Return to Main Menu</span></button>
+                <button class="btnHeader pixelBtn" id="btnTogTextLessonMenuX" onclick="self.location.href='../../../../TextX/LessonsX/MolecularBiologyX/OncogenesisX/OncogenesisX.html'"><span class="label">Hide Explanatory Text</span></button>
+                <button class="btnHeader pixelBtn" id="btnToPopUps" onclick='executeClick("PopUpsOncogenesisT.html")'><span class="label">Pop Ups</span></button>
+                <button class="btnHeader pixelBtn" id="btnExcerpts" onclick='executeClick("ExcerptsOncogenesisT.html")'><span class="label">Excerpts</span></button>
+                <button class="btnHeader pixelBtn" id="btnQuestions" onclick="self.location.href='QuestionsOncogenesisT.html'"><span class="label">Practice Questions</span></button>
+                <button class="btnHeader pixelBtn" id="btnFeedback" onclick="self.location.href='FeedbackOncogenesisT.html'"><span class="label">Provide Feedback</span></button>
             </div>
 
             <!-- Lesson Menu -->
@@ -79,10 +79,10 @@
                 </video>
             </div>
             <div class="lessonButtons">
-                <img class="btnFooter" id="btnLessonMenu" src="../../../../CommonFiles/Buttons/BTN_LessonMenu.jpg" onclick="self.location.href='OncogenesisT.html'">
-                <img class="btnFooter" id="btnBack" src="../../../../CommonFiles/Buttons/BTN_Back.jpg">
-                <img class="btnFooter btnRate" id="btnSlower" src="../../../../CommonFiles/Buttons/BTN_Slow.jpg" onclick="slowDown('videoId')">
-                <img class="btnFooter btnRate" id="btnFaster" src="../../../../CommonFiles/Buttons/BTN_Fast.jpg" onclick="speedUp('videoId')">
+                <button class="btnFooter pixelBtn" id="btnLessonMenu" onclick="self.location.href='OncogenesisT.html'"><span class="label"></span></button>
+                <button class="btnFooter pixelBtn" id="btnBack"><span class="label"></span></button>
+                <button class="btnFooter btnRate pixelBtn" id="btnSlower" onclick="slowDown('videoId')"><span class="label">Slow Down</span></button>
+                <button class="btnFooter btnRate pixelBtn" id="btnFaster" onclick="speedUp('videoId')"><span class="label">Speed Up</span></button>
             </div>
         </div>
     </div>

@@ -29,12 +29,12 @@
 
             <!-- Header Button Bank -->
             <div class="headBank">
-                <img class="btnHeader" id="btnToCentralMenu" src="../../../../CommonFiles/Buttons/BTN_ToCentralMenu.jpg" onclick='executeClick("../../../CentralMenuX.html")'><span class="sr-only">Return to Main Menu</span>
-                <img class="btnHeader" id="btnTogTextLessonMenuT" src="../../../../CommonFiles/Buttons/BTN_TogLessonMenuT.jpg" onclick='executeClick("../../../../TextT/LessonsT/CellBiologyT/TransportProteinsT/TransportProteinsT.html")'><span class="sr-only">Hide Explanatory Text</span>
-                <img class="btnHeader" id="btnToPopUps" src="../../../../CommonFiles/Buttons/BTN_PopUp.jpg" onclick='executeClick("PopUpsTransportProteinsX.html")'><span class="sr-only">PopUps</span>
-                <img class="btnHeader" id="btnExcerpts" src="../../../../CommonFiles/Buttons/BTN_Excerpts.jpg" onclick='executeClick("ExcerptsTransportProteinsX.html")'><span class="sr-only">Excerpts</span>
-                <img class="btnHeader" id="btnQuestions" src="../../../../CommonFiles/Buttons/BTN_Questions.jpg" onclick='executeClick("QuestionsTransportProteinsX.html")'><span class="sr-only">Practice Questions</span>
-                <img class="btnHeader" id="btnFeedback" src="../../../../CommonFiles/Buttons/BTN_Feedback.jpg" onclick='executeClick("FeedbackTransportProteinsX.html")'><span class="sr-only">Provide Feedback</span>
+                <button class="btnHeader pixelBtn" id="btnToCentralMenu" onclick='executeClick("../../../CentralMenuX.html")'><span class="label">Return to Main Menu</span></button>
+                <button class="btnHeader pixelBtn" id="btnTogTextLessonMenuT" onclick='executeClick("../../../../TextT/LessonsT/CellBiologyT/TransportProteinsT/TransportProteinsT.html")'><span class="label">Hide Explanatory Text</span></button>
+                <button class="btnHeader pixelBtn" id="btnToPopUps" onclick='executeClick("PopUpsTransportProteinsX.html")'><span class="label">PopUps</span></button>
+                <button class="btnHeader pixelBtn" id="btnExcerpts" onclick='executeClick("ExcerptsTransportProteinsX.html")'><span class="label">Excerpts</span></button>
+                <button class="btnHeader pixelBtn" id="btnQuestions" onclick='executeClick("QuestionsTransportProteinsX.html")'><span class="label">Practice Questions</span></button>
+                <button class="btnHeader pixelBtn" id="btnFeedback" onclick='executeClick("FeedbackTransportProteinsX.html")'><span class="label">Provide Feedback</span></button>
             </div>
 
             <!-- Lesson Menu -->
@@ -92,12 +92,12 @@ Video tag not supported
                 </video>
             </div>
             <div class="lessonButtons">
-                <img class="btnFooter" id="btnLessonMenu" src="../../../../CommonFiles/Buttons/BTN_LessonMenu.jpg" onclick="self.location.href='TransportProteinsX.html'"><span class="sr-only">Return to Main Menu</span>
-                <img class="btnFooter" id="btnBack" src="../../../../CommonFiles/Buttons/BTN_Back.jpg"><span class="sr-only">Go back to last scene</span>
-                <img class="btnFooter btnRate" id="btnSlower" src="../../../../CommonFiles/Buttons/BTN_Slow.jpg" onclick="slowDown('videoId')"><span class="sr-only">Speed Up</span>
-                <img class="btnFooter btnRate" id="btnFaster" src="../../../../CommonFiles/Buttons/BTN_Fast.jpg" onclick="speedUp('videoId')"><span class="sr-only">Slow Down</span>
+                <button class="btnFooter pixelBtn" id="btnLessonMenu" onclick="self.location.href='TransportProteinsX.html'"><span class="label">Return to Main Menu</span></button>
+                <button class="btnFooter pixelBtn" id="btnBack"><span class="label">Go back to last scene</span></button>
+                <button class="btnFooter btnRate pixelBtn" id="btnSlower" onclick="slowDown('videoId')"><span class="label">Slow Down</span></button>
+                <button class="btnFooter btnRate pixelBtn" id="btnFaster" onclick="speedUp('videoId')"><span class="label">Speed Up</span></button>
 
-                <a><img class="btnFooter btnSide" id="btnSideFpump" src="Fpump/BTN_Fpump.jpg"><span class="sr-only">ATPase Pumps</span>
+                <a><button class="btnFooter btnSide pixelBtn" id="btnSideFpump"><span class="label">ATPase Pumps</span></button>
             </div>
         </div>
 
@@ -110,7 +110,7 @@ Video tag not supported
             </div>
             
             <div class="lessonButtons">
-                <a><img class="btnFooter btnSideBack" id="btnSideBackFpump" src="../../../../CommonFiles/Buttons/BTN_Back.jpg"><span class="sr-only">Go back to last scene</span>
+                <a><button class="btnFooter btnSideBack pixelBtn" id="btnSideBackFpump"><span class="label">Go back to last scene</span></button>
             </div>
         </div>
  

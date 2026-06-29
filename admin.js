@@ -744,7 +744,7 @@ async function displayAvailableVideos() {
                 <button type="button" class="btn btn-secondary btn-ghost btn-sm video-item-preview" data-video="${escPath}">
                     <span class="btn-label">Preview</span>
                 </button>
-                <button type="button" class="btn btn-secondary btn-sm video-item-delete dev-only" data-video="${escPath}">
+                <button type="button" class="btn btn-danger btn-sm video-item-delete" data-video="${escPath}">
                     <span class="btn-label">Delete</span>
                 </button>
             </div>

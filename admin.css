@@ -3776,7 +3776,30 @@ body:not(.dev-mode) .srcarray-editor-toolbar {
 /* ---- Spacing: comfortable, consistent controls row ---- */
 .controls-section {
     gap: 0.75rem;
-    padding: 1rem 1.25rem;
+    padding: 0.75rem 1rem;
+    /* Compact, centered toolbar instead of a wide bar with empty space */
+    width: -moz-fit-content;
+    width: fit-content;
+    max-width: 100%;
+    margin: 0 auto 1.25rem;
+    justify-content: center;
+}
+
+/* Make the two primary actions feel deliberate and equally weighted */
+.controls-section .btn {
+    min-width: 11rem;
+    justify-content: center;
+}
+
+@media (max-width: 560px) {
+    .controls-section {
+        width: 100%;
+        flex-direction: column;
+    }
+    .controls-section .btn {
+        width: 100%;
+        min-width: 0;
+    }
 }
 
 /* ---- Variant toggle (Text / No-Text) ---- */
@@ -3823,5 +3846,256 @@ body:not(.dev-mode) .srcarray-editor-toolbar {
     letter-spacing: 0.05em;
     text-transform: uppercase;
     white-space: nowrap;
+}
+
+/* ===== Sidebar controls: clean, labeled, vertical stack ===== */
+.sidebar-controls.search-filter-controls {
+    margin-top: 0;
+    flex-direction: column;
+    align-items: stretch;
+    flex-wrap: nowrap;
+    gap: 0.85rem;
+    padding: 0.85rem 1rem 1rem;
+}
+
+.sidebar-control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.sidebar-control-label {
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--biome-text-muted);
+}
+
+/* Search field: tidy, full width, comfortable */
+.sidebar-controls .search-input {
+    flex: none;
+    width: 100%;
+    min-width: 0;
+    padding: 0.5rem 0.7rem;
+    font-size: 0.85rem;
+    border-radius: var(--biome-radius) !important;
+}
+
+/* Filters as a segmented control that matches the Video type toggle */
+.sidebar-controls .filter-buttons {
+    display: flex;
+    width: 100%;
+    gap: 0;
+    border: 1px solid var(--biome-line);
+    border-radius: var(--biome-radius);
+    overflow: hidden;
+}
+
+.sidebar-controls .filter-btn {
+    flex: 1;
+    padding: 0.42rem 0.3rem;
+    font-size: 0.74rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    background: #2a3b50;
+    color: #cbd5e1;
+    border: none;
+    border-right: 1px solid var(--biome-line);
+    border-radius: 0;
+}
+
+.sidebar-controls .filter-btn:last-child {
+    border-right: none;
+}
+
+.sidebar-controls .filter-btn:hover {
+    background: #33485f;
+    color: #ffffff;
+}
+
+.sidebar-controls .filter-btn.active {
+    background: var(--biome-bg-active);
+    color: var(--biome-cyan-soft);
+}
+
+/* The Video type toggle already fills width; keep it flush with its group */
+.sidebar-control-group .variant-toggle {
+    margin: 0;
+}
+
+/* ============================================================
+   Dashboard footer — Dev mode toggle anchored at the very bottom
+   ============================================================ */
+.dashboard-footer {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-top: 2.5rem;
+    padding: 1.25rem 0 0.5rem;
+    border-top: 1px solid var(--biome-line);
+}
+
+.dashboard-footer-dev {
+    opacity: 0.85;
+}
+
+.dashboard-footer-dev:hover {
+    opacity: 1;
+}
+
+/* ============================================================
+   Instructions modal — tabbed, read-through platform document
+   ============================================================ */
+.instructions-tabs {
+    display: flex;
+    gap: 0.4rem;
+    margin-top: 0.85rem;
+}
+
+.instructions-tab {
+    appearance: none;
+    -webkit-appearance: none;
+    border: 1px solid var(--biome-line);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--biome-text-muted);
+    padding: 0.4rem 0.95rem;
+    border-radius: var(--biome-radius-lg);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.instructions-tab:hover {
+    background: var(--biome-bg-hover);
+    color: var(--biome-text);
+}
+
+.instructions-tab.active {
+    background: var(--biome-bg-active);
+    border-color: var(--biome-line-strong);
+    color: var(--biome-text-heading);
+}
+
+/* The document body itself */
+.inst-doc {
+    font-size: 0.92rem;
+    line-height: 1.68;
+    color: #d4dde8;
+    max-width: 72ch;
+}
+
+.inst-doc-meta {
+    margin: 0 0 1rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--biome-cyan-dim);
+}
+
+.inst-lead {
+    margin: 0 0 1.6rem;
+    padding-left: 0.95rem;
+    border-left: 3px solid var(--biome-line-strong);
+    font-size: 0.96rem;
+    color: #aebccd;
+    font-style: italic;
+}
+
+.inst-doc h2 {
+    margin: 1.9rem 0 0.65rem;
+    padding-bottom: 0.4rem;
+    font-size: 1.18rem;
+    font-weight: 700;
+    color: var(--biome-text-heading) !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.inst-doc > h2:first-of-type {
+    margin-top: 0;
+}
+
+.inst-doc h3 {
+    margin: 1.25rem 0 0.4rem;
+    font-size: 1.02rem;
+    font-weight: 600;
+    color: var(--biome-text) !important;
+}
+
+.inst-doc p {
+    margin: 0 0 0.85rem;
+}
+
+.inst-doc ul,
+.inst-doc ol {
+    margin: 0 0 1rem 1.4rem;
+    padding: 0;
+}
+
+.inst-doc li {
+    margin-bottom: 0.4rem;
+}
+
+.inst-doc strong {
+    color: var(--biome-text);
+    font-weight: 600;
+}
+
+.inst-doc em {
+    color: #c3d0de;
+}
+
+.inst-doc code {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--biome-cyan-soft);
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+    font-family: 'Consolas', 'Menlo', monospace;
+    font-size: 0.86em;
+}
+
+/* Numbered everyday-flow steps in the Workflow tab */
+.inst-flow {
+    counter-reset: inst-flow;
+    list-style: none;
+    margin-left: 0;
+}
+
+.inst-flow > li {
+    position: relative;
+    padding: 0.65rem 0.85rem 0.65rem 2.9rem;
+    margin-bottom: 0.6rem;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-left: 3px solid var(--biome-line-strong);
+    border-radius: var(--biome-radius-lg);
+}
+
+.inst-flow > li::before {
+    counter-increment: inst-flow;
+    content: counter(inst-flow);
+    position: absolute;
+    left: 0.7rem;
+    top: 0.6rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.55rem;
+    height: 1.55rem;
+    border-radius: 50%;
+    background: var(--biome-bg-active);
+    color: var(--biome-cyan-soft);
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.inst-doc-footnote {
+    margin-top: 1.4rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 0.86rem;
+    color: var(--biome-text-muted);
 }
 

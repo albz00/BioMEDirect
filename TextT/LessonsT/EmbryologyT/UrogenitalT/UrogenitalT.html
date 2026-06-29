@@ -29,12 +29,12 @@ html<!DOCTYPE html>
 
             <!-- Header Button Bank -->
             <div class="headBank">
-                <a><img class="btnHeader" id="btnToCentralMenu" src="../../../..//CommonFiles/Buttons/BTN_ToCentralMenu.jpg" onclick='executeClick("../../../CentralMenuT.html")'><span class="sr-only">Return to Main Menu</span></a>
-                <a><img class="btnHeader" id="btnTogTextLessonMenuX" src="../../../..//CommonFiles/Buttons/BTN_TogLessonMenuX.jpg" onclick='executeClick("../../../../TextX/LessonsX/EmbryologyX/UrogenitalX/UrogenitalX.html")'><span class="sr-only">Hide Explanatory Text</span></a>
-                <a><img class="btnHeader" id="btnToPopUps" src="../../../..//CommonFiles/Buttons/BTN_PopUp.jpg" onclick='executeClick("PopUpsUrogenitalT.html")'></img></a>
-                <a><img class="btnHeader" id="btnExcerpts" src="../../../..//CommonFiles/Buttons/BTN_Excerpts.jpg" onclick='executeClick("ExcerptsUrogenitalT.html")'><span class="sr-only">Excerpts</span></a>
-                <a><img class="btnHeader" id="btnQuestions" src="../../../..//CommonFiles/Buttons/BTN_Questions.jpg" onclick='executeClick("QuestionsUrogenitalT.html")'><span class="sr-only">Practice Questions</span></a>
-                <a><img class="btnHeader" id="btnFeedback" src="../../../..//CommonFiles/Buttons/BTN_Feedback.jpg" onclick='executeClick("FeedbackUrogenitalT.html")'><span class="sr-only">Provide Feedback</span></a>
+                <a><button class="btnHeader pixelBtn" id="btnToCentralMenu" onclick='executeClick("../../../CentralMenuT.html")'><span class="label">Return to Main Menu</span></button></a>
+                <a><button class="btnHeader pixelBtn" id="btnTogTextLessonMenuX" onclick='executeClick("../../../../TextX/LessonsX/EmbryologyX/UrogenitalX/UrogenitalX.html")'><span class="label">Hide Explanatory Text</span></button></a>
+                <a><button class="btnHeader pixelBtn" id="btnToPopUps" onclick='executeClick("PopUpsUrogenitalT.html")'><span class="label"></span></button></img></a>
+                <a><button class="btnHeader pixelBtn" id="btnExcerpts" onclick='executeClick("ExcerptsUrogenitalT.html")'><span class="label">Excerpts</span></button></a>
+                <a><button class="btnHeader pixelBtn" id="btnQuestions" onclick='executeClick("QuestionsUrogenitalT.html")'><span class="label">Practice Questions</span></button></a>
+                <a><button class="btnHeader pixelBtn" id="btnFeedback" onclick='executeClick("FeedbackUrogenitalT.html")'><span class="label">Provide Feedback</span></button></a>
             </div>
 
             <!-- Lesson Menu -->
@@ -105,15 +105,15 @@ html<!DOCTYPE html>
                 </video>
             </div>
             <div class="lessonButtons">
-                <a><img class="btnFooter" id="btnLessonMenu" src="../../../..//CommonFiles/Buttons/BTN_LessonMenu.jpg" onclick="self.location.href='UrogenitalT.html'"><span class="sr-only">Return to Main Menu</span></a>
-                <a><img class="btnFooter" id="btnBack" src="../../../..//CommonFiles/Buttons/BTN_Back.jpg"><span class="sr-only">Go back to last scene</span></a>
-                <a><img class="btnFooter btnRate" id="btnSlower" src="../../../..//CommonFiles/Buttons/BTN_Slow.jpg" onclick="slowDown('videoId')"><span class="sr-only">Slow Down</span></a>
-                <a><img class="btnFooter btnRate" id="btnFaster" src="../../../..//CommonFiles/Buttons/BTN_Fast.jpg" onclick="speedUp('videoId')"><span class="sr-only">Speed Up</span></a>
+                <a><button class="btnFooter pixelBtn" id="btnLessonMenu" onclick="self.location.href='UrogenitalT.html'"><span class="label">Return to Main Menu</span></button></a>
+                <a><button class="btnFooter pixelBtn" id="btnBack"><span class="label">Go back to last scene</span></button></a>
+                <a><button class="btnFooter btnRate pixelBtn" id="btnSlower" onclick="slowDown('videoId')"><span class="label">Slow Down</span></button></a>
+                <a><button class="btnFooter btnRate pixelBtn" id="btnFaster" onclick="speedUp('videoId')"><span class="label">Speed Up</span></button></a>
 
-                <a><img class="btnFooter btnSide" id="btnSideNephronReabsorption" src="NephronReabsorption/BTN_NephronReabsorption.jpg"><span class="sr-only">Nephron Reabsorption Ancillary Lesson</span></a>
-                <a><img class="btnFooter btnSide" id="btnSideMultiplier" src="Multiplier/BTN_Multiplier.jpg"><span class="sr-only">Counter Current Multiplier Ancillary Lesson</span></a>
-                <a><img class="btnFooter btnSide" id="btnSideHorseshoe" src="Horseshoe/BTN_Horseshoe.jpg"><span class="sr-only">Horseshoe Kidney Ancillary Lesson</span></a>
-                <a><img class="btnFooter btnSide" id="btnSideTestesDescent" src="TestesDescent/BTN_TestesDescent.jpg"><span class="sr-only">Testes Descent Ancillary Lesson</span></a>
+                <a><button class="btnFooter btnSide pixelBtn" id="btnSideNephronReabsorption"><span class="label">Nephron Reabsorption Ancillary Lesson</span></button></a>
+                <a><button class="btnFooter btnSide pixelBtn" id="btnSideMultiplier"><span class="label">Counter Current Multiplier Ancillary Lesson</span></button></a>
+                <a><button class="btnFooter btnSide pixelBtn" id="btnSideHorseshoe"><span class="label">Horseshoe Kidney Ancillary Lesson</span></button></a>
+                <a><button class="btnFooter btnSide pixelBtn" id="btnSideTestesDescent"><span class="label">Testes Descent Ancillary Lesson</span></button></a>
             </div>
         </div>
 
@@ -126,7 +126,7 @@ html<!DOCTYPE html>
                 </video>
             </div>
             <div class="lessonButtons">
-                <a><img class="btnFooter btnSideBack" id="btnSideBackNephronReabsorption" src="../../../..//CommonFiles/Buttons/BTN_Back.jpg"><span class="sr-only">Go back to last scene</span></a>
+                <a><button class="btnFooter btnSideBack pixelBtn" id="btnSideBackNephronReabsorption"><span class="label">Go back to last scene</span></button></a>
             </div>
         </div>
 
@@ -138,7 +138,7 @@ html<!DOCTYPE html>
                 </video>
             </div>
             <div class="lessonButtons">
-                <a><img class="btnFooter btnSideBack" id="btnSideBackMultiplier" src="../../../..//CommonFiles/Buttons/BTN_Back.jpg"><span class="sr-only">Go back to last scene</span></a>
+                <a><button class="btnFooter btnSideBack pixelBtn" id="btnSideBackMultiplier"><span class="label">Go back to last scene</span></button></a>
             </div>
         </div>
 
@@ -150,7 +150,7 @@ html<!DOCTYPE html>
                 </video>
             </div>
             <div class="lessonButtons">
-                <a><img class="btnFooter btnSideBack" id="btnSideBackHorseshoe" src="../../../..//CommonFiles/Buttons/BTN_Back.jpg"><span class="sr-only">Go back to last scene</span></a>
+                <a><button class="btnFooter btnSideBack pixelBtn" id="btnSideBackHorseshoe"><span class="label">Go back to last scene</span></button></a>
             </div>
         </div>
 
@@ -162,7 +162,7 @@ html<!DOCTYPE html>
                 </video>
             </div>
             <div class="lessonButtons">
-                <a><img class="btnFooter btnSideBack" id="btnSideBackTestesDescent" src="../../../..//CommonFiles/Buttons/BTN_Back.jpg"><span class="sr-only">Go back to last scene</span></a>
+                <a><button class="btnFooter btnSideBack pixelBtn" id="btnSideBackTestesDescent"><span class="label">Go back to last scene</span></button></a>
             </div>
         </div>
     </div>

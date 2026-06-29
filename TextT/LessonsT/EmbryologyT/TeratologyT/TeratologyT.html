@@ -29,12 +29,12 @@ html<!DOCTYPE html>
 
             <!-- Header Button Bank -->
             <div class="headBank">
-                <a><img class="btnHeader" id="btnToCentralMenu" src="../../../..//CommonFiles/Buttons/BTN_ToCentralMenu.jpg" onclick='executeClick("../../../CentralMenuT.html")'><span class="sr-only">Return to Main Menu</span></a>
-                <a><img class="btnHeader" id="btnTogTextLessonMenuX" src="../../../..//CommonFiles/Buttons/BTN_TogLessonMenuX.jpg" onclick='executeClick("../../../../TextX/LessonsX/EmbryologyX/TeratologyX/TeratologyX.html")'><span class="sr-only">Hide Explanatory Text</span></a>
-                <a><img class="btnHeader" id="btnToPopUps" src="../../../..//CommonFiles/Buttons/BTN_PopUp.jpg" onclick='executeClick("PopUpsTeratologyT.html")'></img></a>
-                <a><img class="btnHeader" id="btnExcerpts" src="../../../..//CommonFiles/Buttons/BTN_Excerpts.jpg" onclick='executeClick("ExcerptsTeratologyT.html")'><span class="sr-only">Excerpts</span></a>
-                <a><img class="btnHeader" id="btnQuestions" src="../../../..//CommonFiles/Buttons/BTN_Questions.jpg" onclick='executeClick("QuestionsTeratologyT.html")'><span class="sr-only">Practice Questions</span></a>
-                <a><img class="btnHeader" id="btnFeedback" src="../../../..//CommonFiles/Buttons/BTN_Feedback.jpg" onclick='executeClick("FeedbackTeratologyT.html")'><span class="sr-only">Provide Feedback</span></a>
+                <a><button class="btnHeader pixelBtn" id="btnToCentralMenu" onclick='executeClick("../../../CentralMenuT.html")'><span class="label">Return to Main Menu</span></button></a>
+                <a><button class="btnHeader pixelBtn" id="btnTogTextLessonMenuX" onclick='executeClick("../../../../TextX/LessonsX/EmbryologyX/TeratologyX/TeratologyX.html")'><span class="label">Hide Explanatory Text</span></button></a>
+                <a><button class="btnHeader pixelBtn" id="btnToPopUps" onclick='executeClick("PopUpsTeratologyT.html")'><span class="label"></span></button></img></a>
+                <a><button class="btnHeader pixelBtn" id="btnExcerpts" onclick='executeClick("ExcerptsTeratologyT.html")'><span class="label">Excerpts</span></button></a>
+                <a><button class="btnHeader pixelBtn" id="btnQuestions" onclick='executeClick("QuestionsTeratologyT.html")'><span class="label">Practice Questions</span></button></a>
+                <a><button class="btnHeader pixelBtn" id="btnFeedback" onclick='executeClick("FeedbackTeratologyT.html")'><span class="label">Provide Feedback</span></button></a>
             </div>
 
             <!-- Lesson Menu -->
@@ -64,10 +64,10 @@ html<!DOCTYPE html>
                 </video>
             </div>
             <div class="lessonButtons">
-                <a><img class="btnFooter" id="btnLessonMenu" src="../../../..//CommonFiles/Buttons/BTN_LessonMenu.jpg" onclick="self.location.href='TeratologyT.html'"><span class="sr-only">Return to Main Menu</span></a>
-                <a><img class="btnFooter" id="btnBack" src="../../../..//CommonFiles/Buttons/BTN_Back.jpg"><span class="sr-only">Go back to last scene</span></a>
-                <a><img class="btnFooter btnRate" id="btnSlower" src="../../../..//CommonFiles/Buttons/BTN_Slow.jpg" onclick="slowDown('videoId')"><span class="sr-only">Slow Down</span></a>
-                <a><img class="btnFooter btnRate" id="btnFaster" src="../../../..//CommonFiles/Buttons/BTN_Fast.jpg" onclick="speedUp('videoId')"><span class="sr-only">Speed Up</span></a>
+                <a><button class="btnFooter pixelBtn" id="btnLessonMenu" onclick="self.location.href='TeratologyT.html'"><span class="label">Return to Main Menu</span></button></a>
+                <a><button class="btnFooter pixelBtn" id="btnBack"><span class="label">Go back to last scene</span></button></a>
+                <a><button class="btnFooter btnRate pixelBtn" id="btnSlower" onclick="slowDown('videoId')"><span class="label">Slow Down</span></button></a>
+                <a><button class="btnFooter btnRate pixelBtn" id="btnFaster" onclick="speedUp('videoId')"><span class="label">Speed Up</span></button></a>
             </div>
         </div>
     </div>
