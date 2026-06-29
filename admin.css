@@ -1569,6 +1569,44 @@ html {
     font-style: italic;
 }
 
+/* Videos tab: Text vs No-Text groups */
+.videos-group + .videos-group {
+    margin-top: 1.25rem;
+}
+
+.videos-group-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #94a3b8;
+    padding: 0.4rem 0.25rem;
+    margin-bottom: 0.5rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.videos-group-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.5rem;
+    height: 1.25rem;
+    padding: 0 0.4rem;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: #cbd5e1;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+}
+
+.videos-group-empty {
+    padding: 0.75rem;
+    font-size: 0.85rem;
+}
+
 .video-item {
     display: flex;
     align-items: center;
@@ -2460,6 +2498,122 @@ html {
     color: #fca5a5;
 }
 
+/* Glossary: live coded UI example on the left, definition on the right */
+.inst-intro {
+    margin: 0;
+}
+
+.inst-subhead {
+    margin: 1rem 0 0.4rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #94a3b8;
+}
+
+.inst-glossary {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+}
+
+.inst-glossary-row {
+    display: grid;
+    grid-template-columns: minmax(140px, 220px) 1fr;
+    align-items: center;
+    gap: 0.85rem;
+    padding: 0.5rem 0.6rem;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+}
+
+.inst-glossary--cols .inst-glossary-row {
+    grid-template-columns: minmax(120px, 180px) 1fr;
+    padding: 0.4rem 0.6rem;
+}
+
+.inst-glossary-eg {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.inst-glossary-def {
+    font-size: 0.88rem;
+    line-height: 1.5;
+}
+
+/* Make embedded example controls non-interactive (they're illustrations only) */
+.inst-glossary-eg .btn,
+.inst-glossary-eg .filter-btn,
+.inst-glossary-eg .variant-btn,
+.inst-glossary-eg .variant-toggle {
+    pointer-events: none;
+    cursor: default;
+}
+
+/* Static stand-ins for inputs/selects in the glossary */
+.inst-eg-input {
+    display: inline-block;
+    padding: 0.3rem 0.55rem;
+    font-size: 0.8rem;
+    color: #94a3b8;
+    background: rgba(15, 23, 42, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 6px;
+    min-width: 120px;
+}
+
+.inst-eg-chevron {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.8rem;
+    height: 1.8rem;
+    color: #cbd5e1;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+}
+
+.inst-eg-aistatus {
+    display: inline-block;
+    padding: 0.2rem 0.55rem;
+    font-size: 0.78rem;
+    border-radius: 6px;
+}
+
+.inst-eg-group {
+    margin: 0;
+    border-bottom: none;
+}
+
+.inst-tag-dev {
+    display: inline-block;
+    padding: 0.05rem 0.4rem;
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #c4b5fd;
+    background: rgba(124, 58, 237, 0.25);
+    border-radius: 4px;
+}
+
+@media (max-width: 640px) {
+    .inst-glossary-row,
+    .inst-glossary--cols .inst-glossary-row {
+        grid-template-columns: 1fr;
+        gap: 0.45rem;
+    }
+}
+
 .instructions-body code {
     background: rgba(255, 255, 255, 0.1);
     color: #cbd5e1;
@@ -2981,6 +3135,7 @@ body::before {
     background: #2d3f54 !important;
     border: 1px solid var(--biome-line) !important;
     border-left-width: 3px !important;
+    border-left-color: var(--biome-cyan) !important;
 }
 .inst-section h3 { color: var(--biome-text) !important; }
 .inst-num {

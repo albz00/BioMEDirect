@@ -106,13 +106,14 @@ body::before {
 	z-index: 30;
 	min-width: 100%;
 	width: max-content;
-	max-width: 28vmin;
-	padding: 0.8vmin 1vmin 1vmin;
-	background: rgba(0, 0, 0, 0.94);
-	border: 0.12vmin solid rgba(2, 232, 229, 0.55);
+	max-width: 40vmin;
+	padding: 1vmin 1.4vmin 1.2vmin;
+	background: transparent;
+	border: none;
 	border-radius: 0;
 	box-shadow: none;
-	max-height: 32vmin;
+	/* Short lists size to content; long lists cap to the viewport and scroll internally. */
+	max-height: min(60vmin, calc(100vmin - 22vmin));
 	overflow-x: hidden;
 	overflow-y: auto;
 	-webkit-overflow-scrolling: touch;
@@ -159,7 +160,7 @@ body::before {
 .chapterDropdown li {
 	display: block;
 	list-style: none;
-	margin: 0;
+	margin: 0.35vmin 0;
 	padding: 0;
 }
 
@@ -206,12 +207,13 @@ body::before {
 	background: transparent;
 	border: none;
 	font-weight: bold;
-	font-size: 3.6vmin;
+	font-size: 4.2vmin;
 	margin: 0;
 	padding: 0.8vmin 1.2vmin 0.2vmin;
 	cursor: default;
 	transition: color 0.25s ease;
 	white-space: nowrap;
+	text-shadow: 0 0.15vmin 0.5vmin rgba(0, 0, 0, 0.85);
 }
 
 .menuLists > h1::after {
@@ -297,8 +299,10 @@ button.linksLarge {
 	border: none;
 	font-weight: bold;
 	font-size: 2.3vw;
-	font-size: 2.3vh;
+	font-size: 2.6vh;
 	padding: 0;
+	/* Box behind text removed — shadow keeps lessons legible over the background art */
+	text-shadow: 0 0.12vmin 0.5vmin rgba(0, 0, 0, 0.9), 0 0 0.9vmin rgba(0, 0, 0, 0.75);
 }
 
 button:hover.linksLarge {
@@ -319,8 +323,10 @@ button.linksSmall {
 	border: none;
 	font-weight: bold;
 	font-size: 2vw;
-	font-size: 2vh;
+	font-size: 2.3vh;
 	padding: 0;
+	/* Box behind text removed — shadow keeps lessons legible over the background art */
+	text-shadow: 0 0.12vmin 0.5vmin rgba(0, 0, 0, 0.9), 0 0 0.9vmin rgba(0, 0, 0, 0.75);
 }
 
 button:hover.linksSmall {

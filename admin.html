@@ -426,66 +426,212 @@
                 </div>
             </div>
             <div class="modal-body instructions-body" id="instructionsContent">
-                <section class="inst-section inst-section--login">
-                    <h3><span class="inst-num">1</span> Logging In</h3>
-                    <ul>
-                        <li>Sign in with your admin email and password.</li>
-                        <li>Check <strong>Remember Me</strong> if you want to stay signed in on this device.</li>
-                    </ul>
+                <section class="inst-section inst-section--intro">
+                    <h3><span class="inst-num">1</span> How it works</h3>
+                    <p class="inst-intro">
+                        Every lesson on the site is backed by one video in Firebase Storage and a
+                        <strong>timeline</strong> (the list of chapter cards detected in that video).
+                        This panel lets you upload videos, attach them to lessons, build the timeline,
+                        and link each menu chapter to the exact moment it appears in the video.
+                        Each lesson exists in two variants: <strong>Text</strong> (video with on-screen
+                        text, IDs ending <code>_t</code>) and <strong>No-Text</strong> (IDs ending
+                        <code>_x</code>). The <strong>Text / No-Text</strong> toggle switches which
+                        variant every action targets.
+                    </p>
                 </section>
 
                 <section class="inst-section inst-section--workflow">
-                    <h3><span class="inst-num">2</span> Typical Workflow</h3>
+                    <h3><span class="inst-num">2</span> Typical workflow</h3>
                     <ol class="inst-steps">
-                        <li><strong>Scan All Sections + Lessons</strong> — Discovers every lesson from the main menu so you can manage them here.</li>
-                        <li><strong>Refresh Available Videos</strong> — Loads the list of videos you can assign to lessons.</li>
-                        <li><strong>Assign or update videos</strong> — Select a lesson in the list, pick a video from the dropdown, and click <strong>Assign</strong> or <strong>Update</strong>.</li>
-                        <li><strong>Optional:</strong> Use <strong>Map Segment Links</strong> to copy menu labels into the timeline, or <strong>Detect Video Titles</strong> to auto-fill chapter names from the video.</li>
+                        <li><strong>Scan / Refresh</strong> — load every lesson and every Storage video.</li>
+                        <li>Pick the <strong>Text</strong> or <strong>No-Text</strong> variant in the sidebar.</li>
+                        <li><strong>Upload Video</strong> (or select an existing one) and <strong>Assign</strong> it to a lesson. A file named <code>name_x.mp4</code> is stored under <code>videos/x/</code> automatically.</li>
+                        <li><strong>Generate source</strong> — detect the yellow/green/red cards and build the timeline.</li>
+                        <li><strong>Run AI green&rarr;menu mapping</strong> — match each green title card to a menu chapter.</li>
+                        <li><strong>Save menu mapping</strong>, then <strong>Save all</strong> to persist the timeline.</li>
                     </ol>
                 </section>
 
-                <section class="inst-section inst-section--controls">
-                    <h3><span class="inst-num">3</span> Top Buttons</h3>
-                    <ul class="inst-list">
-                        <li><strong>Scan All Sections + Lessons</strong> — Refreshes the lesson list from the menu. Do this first so you see all lessons. Lessons missing a video appear at the top.</li>
-                        <li><strong>Refresh Available Videos</strong> — Updates the video list. Do this before assigning so your dropdown shows all current videos.</li>
-                        <li><strong>Map Segment Links</strong> — Fills in chapter labels from the lesson menu. Use after you’ve assigned videos.</li>
-                        <li><strong>Detect Video Titles (OCR)</strong> — Tries to read titles from the video and set chapter names. Best used after scan and video assignment.</li>
+                <section class="inst-section inst-section--header">
+                    <h3><span class="inst-num">3</span> Header</h3>
+                    <ul class="inst-glossary">
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="btn btn-secondary btn-sm">Instructions</span></span>
+                            <span class="inst-glossary-def"><strong>Instructions</strong> — opens this reference.</span>
+                        </li>
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="btn btn-secondary btn-sm">Changelog</span></span>
+                            <span class="inst-glossary-def"><strong>Changelog</strong> — history of what has changed in the panel.</span>
+                        </li>
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="btn btn-secondary btn-sm">View Main Menu</span></span>
+                            <span class="inst-glossary-def"><strong>View Main Menu</strong> — opens the live student-facing central menu in a new view.</span>
+                        </li>
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="btn btn-secondary btn-sm">Profile</span></span>
+                            <span class="inst-glossary-def"><strong>Profile</strong> — shows your signed-in account and a <strong>Logout</strong> button.</span>
+                        </li>
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="btn btn-secondary btn-sm">Dev mode</span></span>
+                            <span class="inst-glossary-def"><strong>Dev mode</strong> — toggles developer-only tools (raw detection tables, calibration inputs, Cursor export buttons). Off by default; leave it off for normal content work.</span>
+                        </li>
                     </ul>
                 </section>
 
-                <section class="inst-section inst-section--lessons">
-                    <h3><span class="inst-num">4</span> Working With a Lesson</h3>
-                    <ul class="inst-list">
-                        <li>Click a lesson in the sidebar to select it. Use <strong>Search</strong> to find a lesson by name.</li>
-                        <li><strong>Filters:</strong> Show <strong>All</strong> lessons, only <strong>Missing</strong> (no video), or only <strong>Has Video</strong>.</li>
-                        <li>Change the <strong>Section name</strong> or <strong>Lesson name</strong> if you want a different label in the menu, then click <strong>Save Lesson Name</strong>.</li>
-                        <li>Pick a video from the dropdown and click <strong>Assign</strong> or <strong>Update</strong> to link that video to the lesson.</li>
-                        <li>Open <strong>Timeline / srcArray Editor</strong> below to view or edit chapter start/end times and titles.</li>
+                <section class="inst-section inst-section--actionbar">
+                    <h3><span class="inst-num">4</span> Action bar</h3>
+                    <ul class="inst-glossary">
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="btn btn-primary btn-sm">Scan / Refresh</span></span>
+                            <span class="inst-glossary-def"><strong>Scan / Refresh</strong> — rebuilds the lesson list from the main menu and reloads the videos in Storage. Run this first; lessons missing a video sort to the top.</span>
+                        </li>
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="btn btn-secondary btn-sm">Upload Video</span></span>
+                            <span class="inst-glossary-def"><strong>Upload Video</strong> — uploads one or more <code>.mp4</code> files. A file ending in <code>_x.mp4</code> is filed under <code>videos/x/</code> (No-Text); anything else goes in <code>videos/</code> (Text). If a single file's name matches a lesson ID it is auto-assigned.</span>
+                        </li>
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="inst-status inst-status--ready">Ready</span></span>
+                            <span class="inst-glossary-def"><strong>Status</strong> — progress, success and error messages appear as a pop-up in the bottom-right corner so you can keep scrolling while a task runs.</span>
+                        </li>
                     </ul>
                 </section>
 
-                <section class="inst-section inst-section--videos">
-                    <h3><span class="inst-num">5</span> Available Videos</h3>
-                    <p>This list shows all videos that can be assigned. Expand the section to see it. Click a video to preview it. To attach a video to a lesson, use the dropdown in the <strong>Selected Lesson</strong> box above.</p>
-                </section>
-
-                <section class="inst-section inst-section--status">
-                    <h3><span class="inst-num">6</span> Status Message</h3>
-                    <ul class="inst-status-list">
-                        <li><span class="inst-status inst-status--ready">Ready</span> — Nothing running.</li>
-                        <li><span class="inst-status inst-status--scanning">Scanning…</span> — A task is in progress; wait for it to finish.</li>
-                        <li><span class="inst-status inst-status--success">Green</span> — The last action completed successfully.</li>
-                        <li><span class="inst-status inst-status--error">Red</span> — Something went wrong; check the message and try again.</li>
+                <section class="inst-section inst-section--sidebar">
+                    <h3><span class="inst-num">5</span> Sidebar (Lessons)</h3>
+                    <ul class="inst-glossary">
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="variant-toggle"><span class="variant-btn active">Text</span><span class="variant-btn">No-Text</span></span></span>
+                            <span class="inst-glossary-def"><strong>Text / No-Text toggle</strong> — chooses which video variant every action targets. <strong>Text</strong> = with on-screen text (<code>_t</code>); <strong>No-Text</strong> = without (<code>_x</code>). Your choice is remembered on this device.</span>
+                        </li>
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="search-input inst-eg-input">Search lessons…</span></span>
+                            <span class="inst-glossary-def"><strong>Search</strong> — filters the lesson tree by name as you type.</span>
+                        </li>
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="filter-buttons"><span class="filter-btn active">All</span><span class="filter-btn">Missing</span><span class="filter-btn">Has Video</span></span></span>
+                            <span class="inst-glossary-def"><strong>Filters</strong> — <strong>All</strong> shows every lesson; <strong>Missing</strong> shows only lessons without a video; <strong>Has Video</strong> shows only lessons that have one.</span>
+                        </li>
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="lesson-status missing">Missing</span> <span class="lesson-status has-video">Has Video</span></span>
+                            <span class="inst-glossary-def"><strong>Status badge</strong> — each lesson shows whether a video is attached for the current variant.</span>
+                        </li>
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="sidebar-toggle inst-eg-chevron">&#10094;</span></span>
+                            <span class="inst-glossary-def"><strong>Collapse arrow</strong> — hides the sidebar to give the editor more room.</span>
+                        </li>
                     </ul>
                 </section>
 
-                <section class="inst-section inst-section--safety">
-                    <h3><span class="inst-num">7</span> Tips</h3>
+                <section class="inst-section inst-section--lessoncard">
+                    <h3><span class="inst-num">6</span> Lesson &amp; Video card</h3>
+                    <ul class="inst-glossary">
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="inst-eg-input">Lesson Name</span></span>
+                            <span class="inst-glossary-def"><strong>Lesson Name</strong> — display name shown in the menu. Edit it, then <strong>Save Lesson Name</strong>; the underlying source files are not touched.</span>
+                        </li>
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="inst-eg-input">Select a video…</span></span>
+                            <span class="inst-glossary-def"><strong>Video dropdown</strong> — lists every Storage video. No-Text videos are prefixed with <code>x/</code>.</span>
+                        </li>
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="btn btn-primary btn-sm">Assign</span> <span class="btn btn-primary btn-sm">Update</span></span>
+                            <span class="inst-glossary-def"><strong>Assign / Update</strong> — links the selected video to the lesson (saved to the <code>videoPaths</code> override). Shows <strong>Assign</strong> when none is set, <strong>Update</strong> otherwise.</span>
+                        </li>
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="btn btn-secondary btn-sm">Use default path</span></span>
+                            <span class="inst-glossary-def"><strong>Use default path</strong> (Dev) — clears the override so the lesson uses its default path (<code>videos/&lt;id&gt;.mp4</code>, or <code>videos/x/&lt;id&gt;.mp4</code> for No-Text). Keeps the timeline.</span>
+                        </li>
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="btn btn-danger btn-sm">Reset for reattach</span></span>
+                            <span class="inst-glossary-def"><strong>Reset for reattach</strong> (Dev) — detaches the video and wipes all timeline/detection data so you can attach a fresh video. Chapter names are kept.</span>
+                        </li>
+                    </ul>
+                </section>
+
+                <section class="inst-section inst-section--timeline">
+                    <h3><span class="inst-num">7</span> Timeline editor</h3>
+                    <ul class="inst-glossary">
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="btn btn-secondary btn-sm">Generate source</span></span>
+                            <span class="inst-glossary-def"><strong>Generate source</strong> — runs the three colour detectors on the assigned video (yellow = freeze, green = freeze + menu anchor, red = loop) and rebuilds the timeline rows.</span>
+                        </li>
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="btn btn-secondary btn-sm">Run AI green&rarr;menu mapping</span></span>
+                            <span class="inst-glossary-def"><strong>Run AI green&rarr;menu mapping</strong> — uses GPT vision to read each green title card and match it to one of the lesson's chapter titles. Fills the mapping table below; it never changes the timeline.</span>
+                        </li>
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="btn btn-primary btn-sm">Save menu mapping</span></span>
+                            <span class="inst-glossary-def"><strong>Save menu mapping</strong> — saves the green&rarr;menu links. Every chapter with a selection becomes a live link that jumps to that timestamp during playback.</span>
+                        </li>
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="btn btn-primary btn-sm">Save all</span></span>
+                            <span class="inst-glossary-def"><strong>Save all</strong> — saves the edited timeline rows below to Firestore.</span>
+                        </li>
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="btn btn-danger btn-sm">Wipe timeline</span></span>
+                            <span class="inst-glossary-def"><strong>Wipe timeline</strong> — deletes all timeline + detection data for the lesson but keeps the assigned video, so you can Generate source again from a clean state.</span>
+                        </li>
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="ai-mapping-idle inst-eg-aistatus">Idle</span></span>
+                            <span class="inst-glossary-def"><strong>AI status</strong> — shows the live state of the AI mapping run (Idle / running / done / error).</span>
+                        </li>
+                    </ul>
+                    <p class="inst-subhead">Timeline table columns</p>
+                    <ul class="inst-glossary inst-glossary--cols">
+                        <li class="inst-glossary-row"><span class="inst-glossary-eg"><code>index</code></span><span class="inst-glossary-def">Row order of the detected card.</span></li>
+                        <li class="inst-glossary-row"><span class="inst-glossary-eg"><code>type / card</code></span><span class="inst-glossary-def">Card colour: yellow, green, or red.</span></li>
+                        <li class="inst-glossary-row"><span class="inst-glossary-eg"><code>start (playback)</code></span><span class="inst-glossary-def">When playback of the content after the card begins.</span></li>
+                        <li class="inst-glossary-row"><span class="inst-glossary-eg"><code>end (playback)</code></span><span class="inst-glossary-def">When that content ends.</span></li>
+                        <li class="inst-glossary-row"><span class="inst-glossary-eg"><code>flag</code> <span class="inst-tag-dev">Dev</span></span><span class="inst-glossary-def">Manual marker used while diagnosing detection.</span></li>
+                        <li class="inst-glossary-row"><span class="inst-glossary-eg"><code>lock</code> <span class="inst-tag-dev">Dev</span></span><span class="inst-glossary-def">Prevents a row's timing from being overwritten on regenerate.</span></li>
+                        <li class="inst-glossary-row"><span class="inst-glossary-eg"><code>card / debug</code> <span class="inst-tag-dev">Dev</span></span><span class="inst-glossary-def">Raw detection source/confidence for that event.</span></li>
+                    </ul>
+                </section>
+
+                <section class="inst-section inst-section--greenmap">
+                    <h3><span class="inst-num">8</span> Green &rarr; menu mapping table</h3>
+                    <p>Appears after you run AI mapping. Each row is one detected green title card.</p>
+                    <ul class="inst-glossary inst-glossary--cols">
+                        <li class="inst-glossary-row"><span class="inst-glossary-eg"><code>green #</code></span><span class="inst-glossary-def">Which green card this is, in order.</span></li>
+                        <li class="inst-glossary-row"><span class="inst-glossary-eg"><code>greenStart</code></span><span class="inst-glossary-def">Timestamp where the green card begins.</span></li>
+                        <li class="inst-glossary-row"><span class="inst-glossary-eg"><code>seek (post-card)</code></span><span class="inst-glossary-def">The exact time a chapter click will jump to (just after the card).</span></li>
+                        <li class="inst-glossary-row"><span class="inst-glossary-eg"><code>AI matched title</code></span><span class="inst-glossary-def">The title GPT read from the card.</span></li>
+                        <li class="inst-glossary-row"><span class="inst-glossary-eg"><code>menu chapter</code></span><span class="inst-glossary-def">Dropdown to confirm or override which menu chapter this green links to. Set <em>&mdash; none &mdash;</em> to leave that chapter at the start.</span></li>
+                        <li class="inst-glossary-row"><span class="inst-glossary-eg"><code>conf.</code></span><span class="inst-glossary-def">AI confidence in the match.</span></li>
+                        <li class="inst-glossary-row"><span class="inst-glossary-eg"><code>reviewed</code></span><span class="inst-glossary-def">Optional checkbox to mark a row as human-checked. Does not affect playback.</span></li>
+                        <li class="inst-glossary-row"><span class="inst-glossary-eg"><code>reason</code></span><span class="inst-glossary-def">Short explanation of why the AI chose that chapter.</span></li>
+                    </ul>
+                </section>
+
+                <section class="inst-section inst-section--availvideos">
+                    <h3><span class="inst-num">9</span> Available Videos</h3>
+                    <p>Expand this card to browse Storage. Videos are split into two groups:</p>
+                    <ul class="inst-glossary">
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="videos-group-header inst-eg-group">Text <span class="videos-group-count">12</span></span></span>
+                            <span class="inst-glossary-def"><strong>Text</strong> — videos stored directly in <code>videos/</code> (with on-screen text).</span>
+                        </li>
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="videos-group-header inst-eg-group">No-Text <span class="videos-group-count">3</span></span></span>
+                            <span class="inst-glossary-def"><strong>No-Text</strong> — videos stored under <code>videos/x/</code> (no on-screen text).</span>
+                        </li>
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="btn btn-secondary btn-ghost btn-sm">Preview</span></span>
+                            <span class="inst-glossary-def"><strong>Preview</strong> — plays the video in a pop-up without assigning it.</span>
+                        </li>
+                        <li class="inst-glossary-row">
+                            <span class="inst-glossary-eg"><span class="btn btn-secondary btn-sm">Delete</span></span>
+                            <span class="inst-glossary-def"><strong>Delete</strong> (Dev) — permanently removes the video and its timeline; clears any lesson using it.</span>
+                        </li>
+                    </ul>
+                </section>
+
+                <section class="inst-section inst-section--tips">
+                    <h3><span class="inst-num">10</span> Tips</h3>
                     <ul>
-                        <li>Stay signed in with an admin account so your changes save correctly.</li>
-                        <li>Changes apply immediately for anyone using the site.</li>
-                        <li>If you have a test site, try changes there first.</li>
+                        <li>Stay signed in with an admin account so your changes save.</li>
+                        <li>Changes apply immediately for everyone using the site.</li>
+                        <li>Set the <strong>Text / No-Text</strong> variant before uploading or assigning so the video lands in the right place.</li>
                     </ul>
                 </section>
             </div>
@@ -570,7 +716,25 @@
                         <strong>OCR-based title detection</strong> – Cloud Function to detect and refine video segment titles using on-screen text.
                     </li>
                     <li>
-                        <strong>Scan + status UX improvements</strong> – Clear “Missing / Has Video” badges, search/filter controls, and rich status messages while long tasks run.</strong>
+                        <strong>Scan + status UX improvements</strong> – Clear “Missing / Has Video” badges, search/filter controls, and rich status messages while long tasks run.
+                    </li>
+                    <li>
+                        <strong>AI green&rarr;menu mapping</strong> – GPT vision reads each detected green title card and matches it to a menu chapter, building a green&rarr;menu seek map. Each mapped chapter becomes a live link that jumps to that timestamp; a runtime fix in <code>masterUIcontrol.js</code> now honors saved mappings.
+                    </li>
+                    <li>
+                        <strong>Admin UI redesign</strong> – Bottom-right pop-up (toast) status that stays visible while scrolling, a unified non-dev action bar (Generate source, AI mapping, Save mapping, Save all, Wipe timeline), Dev mode off by default, and a cleaner minimal theme with the glow removed.
+                    </li>
+                    <li>
+                        <strong>Text / No-Text dual-variant support</strong> – A Text/No-Text toggle re-keys every action to the <code>_t</code> or <code>_x</code> variant, with per-variant lesson IDs, paths, and video assignment.
+                    </li>
+                    <li>
+                        <strong>No-Text live pages migrated to Firebase</strong> – All 51 TextX main lesson pages now load their main video and timeline from Firebase (mirroring TextT) while keeping side-video arrays intact.
+                    </li>
+                    <li>
+                        <strong>Separate No-Text video folder</strong> – No-Text videos are stored under <code>videos/x/</code>; the Videos tab now shows two groups (Text and No-Text), and uploads route <code>*_x.mp4</code> files there automatically.
+                    </li>
+                    <li>
+                        <strong>Instructions rewritten as a glossary</strong> – Every control is defined with a live coded example of what it looks like, alongside an updated workflow.
                     </li>
                 </ul>
                 <p class="changelog-note">

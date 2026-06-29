@@ -2249,7 +2249,10 @@ function deterministicGuessChapterIndex1Based(eventIndexZeroBased, chapterCount)
 
 async function downloadLessonVideoToTemp(lessonId) {
   const vpDoc = await db.collection("videoPaths").doc(lessonId).get();
-  let videoPath = `videos/${lessonId}.mp4`;
+  // No-Text variant videos (lessonId ending in _x) live under videos/x/.
+  let videoPath = /_x$/.test(String(lessonId || ""))
+    ? `videos/x/${lessonId}.mp4`
+    : `videos/${lessonId}.mp4`;
   if (vpDoc.exists && vpDoc.data().videoPath) {
     videoPath = String(vpDoc.data().videoPath).trim();
   }

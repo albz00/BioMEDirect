@@ -423,9 +423,11 @@ function setupEventListeners() {
             setStatus(`Uploading ${files.length} video${files.length > 1 ? 's' : ''}...`, 'scanning');
 
             try {
-                const storageRef = storage.ref().child('videos');
                 for (const file of files) {
-                    const fileRef = storageRef.child(file.name);
+                    // No-Text uploads (basename ends with _x) go to videos/x/; everything else to videos/.
+                    const baseName = file.name.replace(/\.mp4$/i, '');
+                    const folder = videoFolderForLessonId(baseName);
+                    const fileRef = storage.ref().child(folder ? `videos/${folder}/${file.name}` : `videos/${file.name}`);
                     const metadata = (files.length === 1 && selectedLessonId)
                         ? { customMetadata: { lessonId: selectedLessonId } }
                         : undefined;
@@ -442,7 +444,7 @@ function setupEventListeners() {
                         l.lessonId === baseName ||
                         (l.variants && (l.variants.t.lessonId === baseName || l.variants.x.lessonId === baseName)));
                     if (lesson) {
-                        const videoPath = `videos/${files[0].name}`;
+                        const videoPath = defaultVideoPathForLessonId(baseName);
                         await db.collection('videoPaths').doc(baseName).set({ videoPath }, { merge: true });
                     }
                 }
@@ -651,19 +653,24 @@ async function loadAvailableVideos() {
     refreshVideosBtn.disabled = true;
     
     try {
-        const videosRef = storage.ref().child('videos');
-        const listResult = await videosRef.listAll();
-        
         availableVideos = [];
-        
-        for (const itemRef of listResult.items) {
-            const fileName = itemRef.name;
-            if (fileName.endsWith('.mp4')) {
-                availableVideos.push(fileName);
-            }
+
+        // Text / existing videos live directly under videos/. No-Text videos live under videos/x/.
+        const rootResult = await storage.ref().child('videos').listAll();
+        for (const itemRef of rootResult.items) {
+            if (itemRef.name.endsWith('.mp4')) availableVideos.push({ name: itemRef.name, folder: '' });
         }
-        
-        availableVideos.sort();
+        try {
+            const xResult = await storage.ref().child('videos/x').listAll();
+            for (const itemRef of xResult.items) {
+                if (itemRef.name.endsWith('.mp4')) availableVideos.push({ name: itemRef.name, folder: 'x' });
+            }
+        } catch (xErr) {
+            // videos/x/ may not exist yet (no No-Text uploads) — that's fine.
+            console.log('No videos/x/ folder yet:', xErr && xErr.code);
+        }
+
+        availableVideos.sort((a, b) => (a.folder === b.folder ? a.name.localeCompare(b.name) : a.folder.localeCompare(b.folder)));
         await displayAvailableVideos();
         setStatus(`Loaded ${availableVideos.length} videos`, 'success');
     } catch (error) {
@@ -687,16 +694,22 @@ function formatDuration(seconds) {
     return m + ':' + (s < 10 ? '0' : '') + s;
 }
 
+/** Full Storage path for an availableVideos entry ({name, folder}). */
+function videoEntryPath(entry) {
+    if (!entry) return '';
+    const folder = entry.folder ? entry.folder + '/' : '';
+    return `videos/${folder}${entry.name}`;
+}
+
 function getAssignedVideoCount() {
     if (!lessonsData.length || !availableVideos.length) return 0;
-    const assignedFilenames = new Set();
+    const assignedPaths = new Set();
     lessonsData.forEach(lesson => {
         const path = lesson.currentPath || '';
-        const match = path.match(/videos\/([^/]+)$/);
-        if (match) assignedFilenames.add(match[1]);
+        if (/^videos\//.test(path)) assignedPaths.add(path);
     });
     // Count how many of the *available* videos (in Storage) are tied to at least one lesson
-    return availableVideos.filter((fileName) => assignedFilenames.has(fileName)).length;
+    return availableVideos.filter((entry) => assignedPaths.has(videoEntryPath(entry))).length;
 }
 
 function updateVideosCountDisplay() {
@@ -718,30 +731,40 @@ async function displayAvailableVideos() {
         return;
     }
 
-    videosList.innerHTML = availableVideos.map(video => {
-        const esc = video.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-        return `<div class="video-item" data-video="${esc}" title="Click to play">
+    const renderItem = (entry) => {
+        const fullPath = videoEntryPath(entry); // e.g. videos/x/foo.mp4
+        const escPath = fullPath.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const escName = entry.name.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        return `<div class="video-item" data-video="${escPath}" title="Click to play">
             <div class="video-item-main">
-                <span class="video-item-name">${esc}</span>
-                <span class="video-item-meta"><span class="video-item-size" data-video="${esc}">—</span> · <span class="video-item-duration" data-video="${esc}">—:—</span></span>
+                <span class="video-item-name">${escName}</span>
+                <span class="video-item-meta"><span class="video-item-size" data-video="${escPath}">—</span> · <span class="video-item-duration" data-video="${escPath}">—:—</span></span>
             </div>
             <div class="video-item-actions">
-                <button type="button" class="btn btn-secondary btn-ghost btn-sm video-item-preview" data-video="${esc}">
+                <button type="button" class="btn btn-secondary btn-ghost btn-sm video-item-preview" data-video="${escPath}">
                     <span class="btn-label">Preview</span>
                 </button>
-                <button type="button" class="btn btn-secondary btn-sm video-item-delete dev-only" data-video="${esc}">
+                <button type="button" class="btn btn-secondary btn-sm video-item-delete dev-only" data-video="${escPath}">
                     <span class="btn-label">Delete</span>
                 </button>
             </div>
         </div>`;
-    }).join('');
+    };
+
+    const textVideos = availableVideos.filter(v => v.folder !== 'x');
+    const noTextVideos = availableVideos.filter(v => v.folder === 'x');
+    const group = (label, list) => `
+        <div class="videos-group">
+            <div class="videos-group-header">${label} <span class="videos-group-count">${list.length}</span></div>
+            ${list.length ? list.map(renderItem).join('') : '<p class="placeholder videos-group-empty">None yet</p>'}
+        </div>`;
+    videosList.innerHTML = group('Text', textVideos) + group('No-Text', noTextVideos);
 
     // Preview click (video row, or Preview button)
     videosList.querySelectorAll('.video-item-preview').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
-            const file = btn.getAttribute('data-video');
-            openVideoPreview(file);
+            openVideoPreview(btn.getAttribute('data-video'));
         });
     });
 
@@ -749,23 +772,24 @@ async function displayAvailableVideos() {
     videosList.querySelectorAll('.video-item-delete').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
-            const file = btn.getAttribute('data-video');
-            deleteVideo(file, btn);
+            deleteVideo(btn.getAttribute('data-video'), btn);
         });
     });
 
-    // Load size and duration for each video (size from Storage metadata, duration from video element)
+    // Load size and duration for each video (size from Storage metadata, duration from video element).
+    // data-video carries the full Storage path (videos/... or videos/x/...).
     const BATCH = 4;
     for (let i = 0; i < availableVideos.length; i += BATCH) {
         const batch = availableVideos.slice(i, i + BATCH);
-        await Promise.all(batch.map(async (fileName) => {
-            const ref = storage.ref().child('videos/' + fileName);
+        await Promise.all(batch.map(async (entry) => {
+            const fullPath = videoEntryPath(entry);
+            const ref = storage.ref().child(fullPath);
             try {
                 const meta = await ref.getMetadata();
-                const sizeEl = videosList.querySelector(`.video-item-size[data-video="${CSS.escape(fileName)}"]`);
+                const sizeEl = videosList.querySelector(`.video-item-size[data-video="${CSS.escape(fullPath)}"]`);
                 if (sizeEl) sizeEl.textContent = formatBytes(meta.size);
             } catch (e) {
-                const sizeEl = videosList.querySelector(`.video-item-size[data-video="${CSS.escape(fileName)}"]`);
+                const sizeEl = videosList.querySelector(`.video-item-size[data-video="${CSS.escape(fullPath)}"]`);
                 if (sizeEl) sizeEl.textContent = '—';
             }
         }));
@@ -773,18 +797,18 @@ async function displayAvailableVideos() {
 
     for (let i = 0; i < availableVideos.length; i += BATCH) {
         const batch = availableVideos.slice(i, i + BATCH);
-        await Promise.all(batch.map((fileName) => loadVideoDuration(fileName)));
+        await Promise.all(batch.map((entry) => loadVideoDuration(videoEntryPath(entry))));
     }
 }
 
-function loadVideoDuration(fileName) {
+function loadVideoDuration(fullPath) {
     return new Promise((resolve) => {
-        const durationEl = videosList.querySelector(`.video-item-duration[data-video="${CSS.escape(fileName)}"]`);
+        const durationEl = videosList.querySelector(`.video-item-duration[data-video="${CSS.escape(fullPath)}"]`);
         if (!durationEl) {
             resolve();
             return;
         }
-        const ref = storage.ref().child('videos/' + fileName);
+        const ref = storage.ref().child(fullPath);
         ref.getDownloadURL()
             .then((url) => {
                 const video = document.createElement('video');
@@ -810,19 +834,19 @@ function loadVideoDuration(fileName) {
     });
 }
 
-async function openVideoPreview(fileName) {
-    if (!fileName) return;
+async function openVideoPreview(fullPath) {
+    if (!fullPath) return;
     const modal = document.getElementById('videoPreviewModal');
     const titleEl = document.getElementById('videoPreviewTitle');
     const player = document.getElementById('videoPreviewPlayer');
     if (!modal || !player) return;
-    titleEl.textContent = fileName;
+    titleEl.textContent = fullPath.replace(/^videos\//, '');
     player.removeAttribute('src');
     player.load();
     modal.classList.remove('hidden');
     modal.setAttribute('aria-hidden', 'false');
     try {
-        const ref = storage.ref().child('videos/' + fileName);
+        const ref = storage.ref().child(fullPath);
         const url = await ref.getDownloadURL();
         player.src = url;
         // Do not autoplay; user can press play in the modal
@@ -832,16 +856,18 @@ async function openVideoPreview(fileName) {
     }
 }
 
-// Delete a video from Storage and its associated srcArray (lessons doc), then refresh lists
-async function deleteVideo(fileName, btn) {
+// Delete a video from Storage and its associated srcArray (lessons doc), then refresh lists.
+// fullPath is the full Storage path (videos/foo.mp4 or videos/x/foo.mp4).
+async function deleteVideo(fullPath, btn) {
     try {
         requireAuth();
     } catch (error) {
         alert('Authentication required. Please log in again.');
         return;
     }
-    if (!fileName) return;
+    if (!fullPath) return;
 
+    const fileName = fullPath.replace(/^videos\/(?:x\/)?/, '');
     const confirmed = window.confirm(`Delete video "${fileName}" from Storage and its srcArray? This cannot be undone.`);
     if (!confirmed) return;
 
@@ -849,7 +875,7 @@ async function deleteVideo(fileName, btn) {
     setStatus(`Deleting video ${fileName}...`, 'scanning');
 
     try {
-        const storageRef = storage.ref().child('videos/' + fileName);
+        const storageRef = storage.ref().child(fullPath);
         // Delete video file from Storage
         await storageRef.delete();
 
@@ -868,7 +894,7 @@ async function deleteVideo(fileName, btn) {
         // Clear any lesson assignments that used this video
         const tasks = [];
         lessonsData.forEach(lesson => {
-            if ((lesson.currentPath || '') === `videos/${fileName}`) {
+            if ((lesson.currentPath || '') === fullPath) {
                 lesson.currentPath = '';
                 lesson.hasVideo = false;
                 tasks.push(
@@ -883,7 +909,7 @@ async function deleteVideo(fileName, btn) {
         }
 
         // Remove from availableVideos and refresh UI
-        availableVideos = availableVideos.filter(v => v !== fileName);
+        availableVideos = availableVideos.filter(v => videoEntryPath(v) !== fullPath);
         await displayAvailableVideos();
         renderSidebarTree();
         displaySelectedLesson();
@@ -982,6 +1008,17 @@ function toVariantLessonId(baseTId, variant) {
         return /_t$/.test(baseTId) ? baseTId.replace(/_t$/, '_x') : baseTId + '_x';
     }
     return baseTId;
+}
+
+/** Storage subfolder for a variant. No-Text (*_x) videos live under videos/x/; everything else in videos/. */
+function videoFolderForLessonId(lessonId) {
+    return /_x$/.test(String(lessonId || '')) ? 'x' : '';
+}
+
+/** Default Storage path for a lesson's video (variant-aware: *_x -> videos/x/{id}.mp4). */
+function defaultVideoPathForLessonId(lessonId) {
+    const folder = videoFolderForLessonId(lessonId);
+    return folder ? `videos/${folder}/${lessonId}.mp4` : `videos/${lessonId}.mp4`;
 }
 
 /** Map a canonical TextT lesson page path to the requested variant ('t' | 'x').
@@ -1104,7 +1141,7 @@ async function scanLessons() {
                             lessonId,
                             path,
                             hasVideo: videoCheck.exists,
-                            currentPath: customVideoPath || `videos/${lessonId}.mp4`,
+                            currentPath: customVideoPath || defaultVideoPathForLessonId(lessonId),
                             error: videoCheck.error
                         };
                     };
@@ -1209,7 +1246,7 @@ async function refreshDashboard() {
 async function checkVideoAvailability(lessonId, customVideoPath) {
     try {
         const storageRef = storage.ref();
-        const videoPath = customVideoPath || `videos/${lessonId}.mp4`;
+        const videoPath = customVideoPath || defaultVideoPathForLessonId(lessonId);
         const fileRef = storageRef.child(videoPath);
         
         // Try to get download URL - if it fails, video doesn't exist
@@ -1330,9 +1367,11 @@ function getLessonCardHTML(lesson, playbackOpts) {
     const statusText = lesson.hasVideo ? 'Has Video' : 'Missing';
     const forceAtZero = playbackOpts && playbackOpts.forceFirstChapterStartAtZero === true;
     const forceAtZeroChecked = forceAtZero ? ' checked' : '';
-    const videoOptions = availableVideos.map(video => {
-        const selected = lesson.currentPath === `videos/${video}` ? 'selected' : '';
-        return `<option value="${video}" ${selected}>${video}</option>`;
+    const videoOptions = availableVideos.map(entry => {
+        const fullPath = videoEntryPath(entry); // videos/foo.mp4 or videos/x/foo.mp4
+        const selected = lesson.currentPath === fullPath ? 'selected' : '';
+        const label = entry.folder ? `${entry.folder}/ ${entry.name}` : entry.name;
+        return `<option value="${fullPath}" ${selected}>${label}</option>`;
     }).join('');
     const safeName = lesson.name.replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const safeLessonId = lesson.lessonId.replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -1372,7 +1411,7 @@ function getLessonCardHTML(lesson, playbackOpts) {
                         ${videoOptions}
                     </select>
                     <button class="assign-btn" onclick="assignVideo('${escId}', this)" id="assign-btn-${lesson.lessonId}">${lesson.hasVideo ? 'Update' : 'Assign'}</button>
-                    <button type="button" class="btn btn-secondary btn-sm dev-only" onclick="resetLessonAssignment('${escId}', this)" title="Restore the default video path (videos/${safeLessonId}.mp4). Does not wipe the timeline or detection data."><span class="btn-label">Use default path</span></button>
+                    <button type="button" class="btn btn-secondary btn-sm dev-only" onclick="resetLessonAssignment('${escId}', this)" title="Restore the default video path (${defaultVideoPathForLessonId(lesson.lessonId)}). Does not wipe the timeline or detection data."><span class="btn-label">Use default path</span></button>
                     <button type="button" class="btn btn-danger btn-sm dev-only" onclick="resetLessonForReattach('${escId}', this)" title="Detach the current video AND wipe all timeline/detection data so you can attach or upload a fresh video. Chapter metadata is kept."><span class="btn-label">Reset for reattach</span></button>
                     <!-- Regenerate-from-yellow disabled now that generation handles yellow in a single path -->
                 </div>
@@ -1421,7 +1460,7 @@ async function getVideoPathForLesson(lessonId) {
     const videoPathDoc = await db.collection('videoPaths').doc(lessonId).get();
     return (videoPathDoc.exists && videoPathDoc.data().videoPath)
         ? videoPathDoc.data().videoPath
-        : `videos/${lessonId}.mp4`;
+        : defaultVideoPathForLessonId(lessonId);
 }
 
 /** Same ordering as Cloud Function loadOrderedChapterTitles (chapter editor is source of truth for names). */
@@ -3175,9 +3214,9 @@ async function assignVideo(lessonId, btn) {
         return;
     }
     
-    const selectedVideo = selectElement.value;
-    const videoPath = `videos/${selectedVideo}`;
-    
+    // The select option value is the full Storage path (videos/foo.mp4 or videos/x/foo.mp4).
+    const videoPath = selectElement.value;
+
     setButtonLoading(buttonElement, true);
     try {
         // Update videoPaths collection with custom videoPath (not lessons collection)
@@ -3248,8 +3287,8 @@ async function resetLessonAssignment(lessonId, btn) {
             videoPath: firebase.firestore.FieldValue.delete()
         }, { merge: true });
 
-        // Default path is videos/<lessonId>.mp4
-        const defaultPath = `videos/${lessonId}.mp4`;
+        // Default path is videos/<lessonId>.mp4 (or videos/x/<lessonId>.mp4 for No-Text)
+        const defaultPath = defaultVideoPathForLessonId(lessonId);
         const availability = await checkVideoAvailability(lessonId, null);
 
         lesson.currentPath = availability.exists ? defaultPath : '';

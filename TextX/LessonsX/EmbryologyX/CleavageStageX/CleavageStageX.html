@@ -141,7 +141,7 @@ Video tag not supported
                 videoPath = videoPathDoc.data().videoPath;
             } else {
                 // Fall back to default path
-                videoPath = `videos/${lessonId}.mp4`;
+                videoPath = `videos/x/${lessonId}.mp4`;
             }
 
             const storageRef = firebase.storage().ref();
