@@ -64,20 +64,20 @@ body::before {
 
 .centralMenu {
 	display: flex;
+	/* Headings are large and may wrap onto a second row — that's fine, since each
+	   dropdown drops flush under its OWN title (contiguous, no gap). */
 	flex-wrap: wrap;
 	justify-content: center;
 	align-items: flex-start;
 	align-content: flex-start;
-	gap: 1.5vmin 4vmin;
+	gap: 1.4vmin 3.5vmin;
 	position: absolute;
-	/* Centred below mid-height so the menu never rides up under the title /
-	   Show-Hide-text toggle that sit in normal flow at the top. */
-	top: 57%;
+	/* Centred a bit above mid-height, below the title / Show-Hide-text toggle. */
+	top: 52%;
 	left: 50%;
 	transform: translate(-50%, -50%);
-	width: 92%;
-	max-width: 120vmin;
-	max-height: min(calc(72.72vw - 30vmin), calc(100vmin - 30vmin));
+	width: 94%;
+	max-width: 128vmin;
 	overflow: visible;
 	padding: 0 3vmin;
 	z-index: 3;
@@ -85,8 +85,8 @@ body::before {
 
 .centralMenu > div {
 	line-height: 2.8vmin;
-	/* static so the absolute .chapterDropdown anchors to .centralMenu (the box) */
-	position: static;
+	/* relative so the dropdown anchors directly under its own title */
+	position: relative;
 	flex: 0 0 auto;
 	overflow: visible;
 }
@@ -100,72 +100,80 @@ body::before {
 	vertical-align: top;
 }
 
-/* Lessons panel: fills the menu box below the title row. CentralMenuChapterNav.js
-   anchors it to .centralMenu and sizes it to the box. Lessons flow left-to-right
-   and wrap onto new rows, staying inside the box width (never off-screen) and
-   centered. Every lesson is shown; no scrollbar. */
+/* Per-title dropdown: hovering a section title drops its lessons directly beneath
+   it as a compact panel that sits ON TOP of everything (sibling titles, art, footer)
+   and is fully clickable. It's anchored to its column (position:relative) so it
+   tracks the title; a tiny overlap keeps the hover contiguous with the title. Very
+   long lists wrap into a second column instead of scrolling. */
 .chapterDropdown {
-	display: flex;
-	flex-flow: row wrap;
-	align-content: flex-start;
-	justify-content: center;
-	align-items: baseline;
-	gap: 0.6vmin 3vmin;
-	/* Anchored to .centralMenu and sized by CentralMenuChapterNav.js */
 	position: absolute;
-	z-index: 60;
-	padding: 1vmin 1.6vmin;
+	top: 100%;
+	left: 50%;
+	transform: translate(-50%, -0.4vmin);
+	margin-top: -0.3vmin;              /* slight overlap with title = no dead gap */
+	display: flex;
+	flex-flow: column wrap;            /* single column; wraps only if a list is huge */
+	max-height: 70vmin;
+	align-items: stretch;              /* items fill their column width */
+	align-content: flex-start;
+	justify-content: flex-start;
+	gap: 0.1vmin 2vmin;
+	width: max-content;
+	max-width: 92vmin;
 	box-sizing: border-box;
-	overflow: visible;
-	text-align: center;
-	border-radius: 1.6vmin;
+	padding: 1.1vmin 1.4vmin;
+	background: rgba(4, 13, 17, 0.95);
+	border: 0.14vmin solid rgba(2, 232, 229, 0.5);
+	border-radius: 1.4vmin;
+	box-shadow:
+		0 0.7vmin 2.4vmin rgba(0, 0, 0, 0.8),
+		0 0 1.6vmin rgba(2, 232, 229, 0.25);
+	-webkit-backdrop-filter: blur(5px);
+	backdrop-filter: blur(5px);
+	z-index: 90;
 	visibility: hidden;
 	opacity: 0;
 	pointer-events: none;
-	transform: translateY(-0.6vmin);
 	transition:
-		opacity 0.26s ease,
-		transform 0.26s ease,
-		visibility 0s linear 0.26s;
+		opacity 0.18s ease,
+		transform 0.18s ease,
+		visibility 0s linear 0.18s;
 }
 
 .chapterDropdown li {
 	display: block;
-	flex: 0 0 auto;
 	list-style: none;
 	margin: 0;
 	padding: 0;
+	border-radius: 0.8vmin;
+	transition: background 0.14s ease;
 }
 
-/* The hovered section's title, promoted to the top-center of the open card so it
-   reads as a clear header above its lessons (never overlapped by lesson text).
-   CentralMenuChapterNav.js fills its text on open; order:-1 keeps it on top and
-   flex-basis:100% forces the lessons to wrap onto the rows beneath it. */
-.chapterDropdown .cd-head {
-	flex: 0 0 100%;
-	order: -1;
+.chapterDropdown li:hover {
+	background: rgba(2, 232, 229, 0.14);
+}
+
+.chapterDropdown button.linksLarge,
+.chapterDropdown button.linksSmall {
+	display: block;
 	width: 100%;
-	margin: 0 0 1.4vmin;
-	padding: 0;
+	padding: 0.55vmin 1.4vmin;
+	white-space: nowrap;
 	text-align: center;
-	font-family: var(--biome-rounded);
-	font-weight: 800;
-	color: #9DFFFF;
-	font-size: clamp(1.25rem, 3.7vmin, 2.2rem);
-	line-height: 1.1;
-	letter-spacing: 0.01em;
-	text-shadow: 0 0.15vmin 0.6vmin rgba(0, 0, 0, 0.92);
-	pointer-events: none;
 }
 
-.chapterDropdown .cd-head:empty {
-	display: none;
+/* Inside the dropdown, highlight via the row background (above) rather than scaling,
+   which would jitter the list. */
+.chapterDropdown button:hover.linksLarge,
+.chapterDropdown button:hover.linksSmall {
+	color: #FFFFFF;
+	transform: none;
 }
 
 /* Shown on hover of the section column (desktop), tap (.is-open, touch), or focus.
-   Hovering the column stays true while the pointer is over the panel — a DOM
-   descendant of the column — so moving from the title down into the lessons can
-   never lose the hover and close the panel. */
+   Hovering the column stays true while the pointer is over the dropdown — a DOM
+   descendant of the column — so moving from the title into the lessons can never
+   lose the hover and close it. */
 .centralMenu > div:hover .chapterDropdown,
 .group-custom:hover .chapterDropdown,
 .menuLists.is-open .chapterDropdown,
@@ -173,48 +181,26 @@ body::before {
 	visibility: visible;
 	opacity: 1;
 	pointer-events: auto;
-	transform: translateY(0);
-	/* Soft, edge-fading scrim (not a hard box): keeps lessons readable over the
-	   background art without a rectangle. */
-	background: radial-gradient(120% 100% at 50% 42%, rgba(0, 10, 14, 0.82) 0%, rgba(0, 10, 14, 0.5) 55%, rgba(0, 10, 14, 0) 86%);
-	-webkit-backdrop-filter: blur(6px);
-	backdrop-filter: blur(6px);
+	transform: translate(-50%, 0);
 	transition:
-		opacity 0.28s ease,
-		transform 0.28s ease,
+		opacity 0.2s ease,
+		transform 0.2s ease,
 		visibility 0s;
 }
 
-/* While a section is open, clearly dim the OTHER section titles, and hide the
-   "hover for lessons" hint. Driven by hover (desktop) or .is-open/.menu-active
-   (touch). */
-.centralMenu:hover .menuLists > h1,
-.centralMenu.menu-active .menuLists:not(.is-open) > h1 {
-	opacity: 0.28;
-	transition: opacity 0.22s ease;
-}
-
-.centralMenu:hover .menuLists > h1::after,
-.centralMenu.menu-active .menuLists:not(.is-open) > h1::after {
-	opacity: 0;
-}
-
-/* The hovered/open section's title "moves" to the card header (.cd-head), so fade
-   out its copy in the title row. Use opacity (NOT visibility/display) so it stays
-   a live hover target. The hovered-column rule is more specific than the dim rule
-   above, so it wins. */
-.centralMenu > div:hover .menuLists > h1,
-.group-custom:hover .menuLists > h1,
-.centralMenu.menu-active .menuLists.is-open > h1 {
-	opacity: 0;
-	transition: opacity 0.18s ease;
-}
-
-/* When a section is open, lift the whole menu (and its lessons panel) above the
-   header art and footer links so nothing overlaps the open lessons. */
+/* When a section is open, lift the whole menu above the header art and footer links
+   so the dropdown overlaps everything. */
 .centralMenu:hover,
 .centralMenu.menu-active {
 	z-index: 50;
+}
+
+/* Raise the hovered/open column above its sibling columns so its dropdown paints
+   on top of the other titles (columns are position:relative). */
+.centralMenu > div:hover,
+.group-custom:hover,
+.menuLists.is-open {
+	z-index: 90;
 }
 
 .menuLists > h1 {
@@ -223,44 +209,22 @@ body::before {
 	background: transparent;
 	border: none;
 	font-weight: bold;
-	font-size: clamp(1.35rem, 4.2vmin, 2.6rem);
+	font-size: clamp(1.6rem, 5.6vmin, 3.4rem);
 	margin: 0;
-	padding: 0.8vmin 1.2vmin 0.2vmin;
-	cursor: default;
-	transition: color 0.25s ease;
+	padding: 0.6vmin 0.6vmin 0.2vmin;
+	cursor: pointer;
+	transition: color 0.2s ease, text-shadow 0.2s ease;
 	white-space: nowrap;
 	text-shadow: 0 0.15vmin 0.5vmin rgba(0, 0, 0, 0.85);
-}
-
-.menuLists > h1::after {
-	content: 'hover for lessons';
-	display: block;
-	font-family: Arial, sans-serif;
-	font-size: clamp(0.7rem, 1.5vmin, 1rem);
-	font-weight: normal;
-	color: #02E8E5;
-	opacity: 0.7;
-	margin-top: 0.5vmin;
-	letter-spacing: 0.02em;
-	transition: opacity 0.22s ease;
-}
-
-@media (hover: none) {
-	.menuLists > h1::after {
-		content: 'tap for lessons';
-	}
 }
 
 .menuLists:hover > h1,
 .menuLists:focus-within > h1,
 .menuLists.is-open > h1 {
-	color: #9DFFFF;
-}
-
-.menuLists:hover > h1::after,
-.menuLists:focus-within > h1::after,
-.menuLists.is-open > h1::after {
-	display: none;
+	color: #FFFFFF;
+	text-shadow:
+		0 0.15vmin 0.5vmin rgba(0, 0, 0, 0.9),
+		0 0 1.6vmin rgba(2, 232, 229, 0.85);
 }
 
 h1 {
@@ -291,7 +255,7 @@ h1 {
     }
 
     .centralMenu {
-        top: 60% !important;
+        top: 55% !important;
     }
 
     .centralMenuTitle {
@@ -592,7 +556,7 @@ button.linksLarge {
 /* Custom (admin-added) section columns share the standard column sizing */
 .group-custom {
 	line-height: 2.8vmin;
-	position: static;
+	position: relative;
 	flex: 0 0 auto;
 	overflow: visible;
 }
