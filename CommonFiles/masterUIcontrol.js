@@ -59,7 +59,7 @@ var markerDebugFlashTimer = null;
  * Set to false to return to opt-in behavior (requires ?debugMarkers=1 / window.DEBUG_MARKERS).
  * Override at runtime with ?debugMarkers=0 or window.DEBUG_MARKERS = false.
  */
-var TEMP_MARKER_DEBUG_OVERLAY_DEFAULT_ON = true;
+var TEMP_MARKER_DEBUG_OVERLAY_DEFAULT_ON = false;
 
 function markerDebugOverlayEnabled() {
     if (typeof window !== "undefined" && window.DEBUG_MARKERS === true) return true;
@@ -328,7 +328,7 @@ function cardMaskEnabled() {
 function injectCardMaskStyles() {
     if (typeof document === "undefined" || document.getElementById("cardMaskStyles")) return;
     var css = "#cardMaskCover{position:fixed;left:0;top:0;width:0;height:0;z-index:6;" +
-        "pointer-events:none;opacity:0;background:#000;transition:opacity .04s linear;}" +
+        "pointer-events:none;opacity:0;background:#000;transition:none;}" +
         "#cardMaskCover.show{opacity:1;}";
     var style = document.createElement("style");
     style.id = "cardMaskStyles";
@@ -417,6 +417,8 @@ function cardMaskTick() {
         if (cardMaskEnabled() && cardMask.canvas && typeof videoId !== "undefined" && videoId) {
             if (videoTimeInsideCardSpan(Number(videoId.currentTime))) {
                 showCardMask(); // hold the last clean frame (do NOT draw the card frame)
+            } else if (cardMask.visible && (videoId.seeking || Number(videoId.readyState) < 2)) {
+                // Keep covering the video until the post-card seek has decoded its landing frame.
             } else {
                 hideCardMask();
                 refreshCardMaskCleanFrame(Date.now());
